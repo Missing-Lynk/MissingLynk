@@ -1,0 +1,25 @@
+screenshots
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Proprietary vendor firmware, do NOT commit (copyright). Dump from your own
+# device; patched binaries are reproducible via firmware/patches/apply-patches.py
+firmware/images/
+firmware/bin/*
+!firmware/bin/README.md
+firmware/fonts/
+
+# Compiled native helpers (build with native/build.sh)
+native/fbtext
+native/minidhcpd
+native/mtdtool
+native/mlmenu/mlmenu
+
+# Compiled glue helpers (build with make -C glue)
+glue/build/
+
+# Local per-machine glue config (copy from glue.env.example)
+glue/glue.env

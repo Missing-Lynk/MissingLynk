@@ -1,0 +1,8 @@
+[submodule "kernel"]
+	path = kernel
+	url = git@github.com:Missing-Lynk/ml-kernel.git
+	branch = master
+[submodule "rootfs"]
+	path = rootfs
+	url = git@github.com:Missing-Lynk/ml-rootfs.git
+	branch = master
