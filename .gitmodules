@@ -10,3 +10,7 @@
 	path = userspace
 	url = git@github.com:Missing-Lynk/ml-userspace.git
 	branch = master
+[submodule "datasheets"]
+	path = datasheets
+	url = git@github.com:Missing-Lynk/ml-datasheets.git
+	branch = master

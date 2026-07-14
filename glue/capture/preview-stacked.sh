@@ -29,6 +29,7 @@ ffmpeg -v warning -y \
     -map "[v]" -c:v libx264 -pix_fmt yuv420p -r 30 "$OUT"
 rm -f "$C0" "$C1"
 echo "[+] wrote $OUT"
+
 if command -v ffplay >/dev/null; then
     echo "[*] playing (close the window to exit) ..."
     ffplay -autoexit -loglevel error "$OUT" || true
