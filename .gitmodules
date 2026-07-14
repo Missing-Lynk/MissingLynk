@@ -6,3 +6,7 @@
 	path = rootfs
 	url = git@github.com:Missing-Lynk/ml-rootfs.git
 	branch = master
+[submodule "userspace"]
+	path = userspace
+	url = git@github.com:Missing-Lynk/ml-userspace.git
+	branch = master
