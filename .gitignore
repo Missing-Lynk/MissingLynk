@@ -14,6 +14,7 @@ firmware/fonts/
 
 # Compiled native helpers (build with native/build.sh)
 native/build/
+native/umtprd/build/
 
 # Compiled glue helpers (build with make -C glue)
 glue/build/
