@@ -5,10 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# mtdtool is built static (standalone, runs in any device state).
+# Outputs land in native/build/ (gitignored). mtdtool + air-qpower are static (standalone, run in any
+# device state / on the air unit).
+mkdir -p build
 docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work gcc:7 sh -c '
-    gcc -O2 fbtext.c -o fbtext -lm &&
-    gcc -O2 -Wall minidhcpd.c -o minidhcpd &&
-    gcc -O2 -Wall -static mtdtool.c -o mtdtool &&
-    gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o mlmenu/mlmenu -lm'
-file fbtext minidhcpd mtdtool mlmenu/mlmenu
+    gcc -O2 fbtext.c -o build/fbtext -lm &&
+    gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
+    gcc -O2 -Wall -static mtdtool.c -o build/mtdtool &&
+    gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
+    gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
+    gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
+file build/fbtext build/minidhcpd build/mtdtool build/air-qpower build/ml-rfcmd build/mlmenu
