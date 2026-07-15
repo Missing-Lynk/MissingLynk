@@ -30,7 +30,7 @@ esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-MTDTOOL="$REPO/native/mtdtool"
+MTDTOOL="$REPO/native/build/mtdtool"
 WDTRESET="$HERE/../build/wdt-reset"
 GPTPARSE="$REPO/glue/flash/gpt_setactive.py"
 SCRATCH="$(mktemp -d)"

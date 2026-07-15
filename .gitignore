@@ -13,10 +13,7 @@ firmware/bin/*
 firmware/fonts/
 
 # Compiled native helpers (build with native/build.sh)
-native/fbtext
-native/minidhcpd
-native/mtdtool
-native/mlmenu/mlmenu
+native/build/
 
 # Compiled glue helpers (build with make -C glue)
 glue/build/

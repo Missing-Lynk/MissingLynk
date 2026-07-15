@@ -53,7 +53,7 @@ DTB="${2:-$BUILD_DIR/linux/arch/arm64/boot/proxima-9311.dtb}"
 }
 
 DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
-MTDTOOL="$REPO/native/mtdtool"
+MTDTOOL="$REPO/native/build/mtdtool"
 MKKERNEL="$HERE/mkkernel.py"
 PY="$REPO/.venv/bin/python3"
 SCRATCH="$(mktemp -d)"

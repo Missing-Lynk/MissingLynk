@@ -4,6 +4,7 @@
 #
 # Build (cross-builds need docker with arm64 emulation via qemu binfmt):
 #   make native       device tools (native/build.sh: mtdtool, fbtext, minidhcpd, mlmenu)
+#   make umtprd       uMTP-Responder for the MTP-over-USB recordings gadget (clones upstream)
 #   make userspace    the on-device programs (make -C userspace: daemons, gstreamer, hud)
 #   make kernel       the open kernel Image + dtb + out-of-tree modules
 #   make rootfs       the slim Alpine slot-B rootfs (production; integrates native + userspace + kernel)
@@ -34,6 +35,12 @@ all:
 
 native:
 	./native/build.sh
+
+# uMTP-Responder for the MTP-over-USB recordings gadget. Kept out of `native`/`all`: it clones a
+# pinned upstream from the network, so it must not break the offline-cacheable common build.
+# Build once; rootfs/build.sh stages native/umtprd/build/umtprd if present.
+umtprd:
+	./native/umtprd/build.sh
 
 userspace:
 	$(MAKE) -C userspace
@@ -70,10 +77,11 @@ flashboot:
 clean:
 	-$(MAKE) -C userspace clean
 	rm -f native/fbtext native/minidhcpd native/mtdtool native/mlmenu/mlmenu
+	rm -rf native/umtprd/build
 	rm -rf rootfs/build
 	-kernel/modules/build.sh clean
 
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all native userspace kernel fetch-blobs rootfs rootfs-dev flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all native umtprd userspace kernel fetch-blobs rootfs rootfs-dev flash-rootfs ramboot flash-kernel flashboot clean distclean
