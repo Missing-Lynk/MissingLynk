@@ -12,7 +12,12 @@ _UBOOT_DROP="$_UBOOT_LIB_DIR/../boot/drop-to-uboot.sh"
 
 # bootm does not get partitions from the dtb (unlike an SPL flash boot), so supply the full
 # static mtdparts here. ubi.mtd=18 = userapp1 (slot B rootfs).
-ML_BOOTARGS_DEFAULT="earlycon keep_bootcon ignore_loglevel console=ttyS0,1152000 mem=148m ubi.mtd=18 root=ubi:rootfs rootfstype=ubifs rw mtdparts=spi32766.1:256k@0(spl0),256k(spl1),256k(spl2),256k(spl3),256k(gpt0),256k(gpt1),512K(vendor),6M(factory),384K(env0),384K(env1),768K(uboot0),768K(uboot1),6M(kernel0),6M(kernel1),384K(dtb0),384K(dtb1),45M(userapp0),45M(userapp1),6M(usr_data),6M(usr_log)"
+# No mem= cap: kernel RAM is bounded by the DTB (truthful 256 MiB memory node + no-map mmz
+# carveout). These args therefore REQUIRE a DTB with that memory node; an older DTB whose
+# memory node claims 1 GiB would let the kernel run into nonexistent RAM - pass
+# BOOTARGS="... mem=148m ..." explicitly if you must boot one (e.g. an old flashed dtb1
+# via ram-boot-flashed-b.sh).
+ML_BOOTARGS_DEFAULT="earlycon keep_bootcon ignore_loglevel console=ttyS0,1152000 ubi.mtd=18 root=ubi:rootfs rootfstype=ubifs rw mtdparts=spi32766.1:256k@0(spl0),256k(spl1),256k(spl2),256k(spl3),256k(gpt0),256k(gpt1),512K(vendor),6M(factory),384K(env0),384K(env1),768K(uboot0),768K(uboot1),6M(kernel0),6M(kernel1),384K(dtb0),384K(dtb1),45M(userapp0),45M(userapp1),6M(usr_data),6M(usr_log)"
 
 # Drive uboot_boot.py (load/cmd/...) with the repo venv python.
 ub() {

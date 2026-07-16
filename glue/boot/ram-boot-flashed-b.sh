@@ -28,7 +28,12 @@ KERNEL1_OFFSET=0x1040000          # kernel1 flash offset (fixed by the mtdparts 
 KERNEL1_SIZE=0x600000             # 6 MiB
 DTB1_OFFSET=0x16a0000             # dtb1 flash offset
 DTB1_SIZE=0x60000                 # 384 KiB
-BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT}}"
+
+# This script boots whatever is FLASHED in kernel1/dtb1, which may predate the
+# truthful-256-MiB memory node in the DTS. Append mem=148m to the default args:
+# harmless with a new DTB (identical truncation), and it stops a stale 1 GiB-node
+# dtb1 from letting the kernel run into nonexistent RAM.
+BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT mem=148m}}"
 
 [ -x "$ML_UBOOT_PY" ] || { echo "[!] missing $ML_UBOOT_PY"; exit 1; }
 
