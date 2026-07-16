@@ -1,5 +1,12 @@
 screenshots
 
+# Legacy
+archive
+plans
+CLAUDE.md
+CODING_STYLE.md
+.claude/agents/
+
 # Python
 __pycache__/
 *.pyc

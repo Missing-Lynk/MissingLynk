@@ -14,5 +14,6 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work gcc:7 sh -c '
     gcc -O2 -Wall -static mtdtool.c -o build/mtdtool &&
     gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
     gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
+    gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
     gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
 file build/fbtext build/minidhcpd build/mtdtool build/air-qpower build/ml-rfcmd build/mlmenu
