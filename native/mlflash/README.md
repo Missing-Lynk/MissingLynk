@@ -7,12 +7,15 @@ A single standalone static binary that flashes an `.mlimg` bundle (built by `glu
 ```
 mlflash --inspect <image.mlimg>              print the manifest, re-verify every component sha256
 mlflash --dry-run <image.mlimg> [--slot a|b] device preflight (below); NO writes
-mlflash --flash   <image.mlimg> [--slot a|b] flash the inactive slot, verify, no flip
+mlflash --flash   <image.mlimg> [--slot a|b] [--flip] [--force-a]  flash the inactive slot, verify
+mlflash --flip                  [--slot a|b] set the inactive slot active (no write, gpt0 only)
 ```
 
 `--inspect` needs no device; it parses the bundle and checks each component's hash (the same digests `mlimg.py inspect` prints).
 
-`--flash` writes every component to the inactive slot behind a full preflight (running/GPT-slot agreement, target != running slot, board-identity match, and every component's hash/method/target resolved) - nothing is written unless all checks pass. The raw partitions (env/dtb/kernel/uboot) are written and SHA-256 readback-verified; the `userapp` rootfs is written through vendored mtd-utils `ubiformat` (bad-block skipping, PEB distribution, EC headers - not a raw write, so no byte-for-byte readback: the image bytes are verified against the manifest in preflight, correctness on-flash is ubiformat's own per-eraseblock write path). It does not flip the active slot. Slot-A writes (`--force-a`) and the flip (`--flip`) are not in this build yet.
+`--flash` writes every component to the inactive slot behind a full preflight (running/GPT-slot agreement, target != running slot, board-identity match, and every component's hash/method/target resolved) - nothing is written unless all checks pass. The raw partitions (env/dtb/kernel/uboot) are written and SHA-256 readback-verified; the `userapp` rootfs is written through vendored mtd-utils `ubiformat` (bad-block skipping, PEB distribution, EC headers - not a raw write, so no byte-for-byte readback: the image bytes are verified against the manifest in preflight, correctness on-flash is ubiformat's own per-eraseblock write path). By default it does NOT flip the active slot.
+
+`--flip` sets the inactive slot active and re-reads `gpt0` to confirm; it writes only gpt0, never partition data. Use it standalone (`mlflash --flip`) as the last step of the flash -> flashboot -> flip workflow - flash the slot, prove it with a flashboot, then flip the already-proven slot without rewriting it - or combined (`--flash ... --flip`) to flip immediately after a verified flash. It refuses if the running and GPT-active slots disagree (finish/reboot out of a flashboot first). A verified flash proves the bytes landed, not that the slot boots, so a flip can leave an unproven slot active (HARD RULE 2); prove the slot with a flashboot first (`make flashboot`, which boots the flashed kernel1/dtb1/rootfs with slot A still active). `--force-a` permits writing an INACTIVE slot A, allowed only while the running slot is B so slot A is never the live target. Both flags act on the flag alone (no interactive prompt, so mlflash can run unattended); the guardrails are structural: `--flip` and `--force-a` are mutually exclusive, so slot A always stays an intact, recoverable keystone.
 
 `--dry-run` is the on-device preflight: it reads the running slot from `/proc/cmdline` (`ubi.mtd=`, name-resolved against `userapp0`/`userapp1`), cross-checks it against the GPT active bit in `gpt0` (hard-abort if they disagree), selects the target slot (the inactive one, or `--slot`), refuses a target equal to the running slot, resolves every component's target partition by name in `/proc/mtd`, and verifies the image hashes. It performs no writes.
 
@@ -25,7 +28,7 @@ Sources live in `src/`:
 | `mlflash.c` | commands (`--inspect`, `--dry-run`) and `main` |
 | `util.{h,c}` | file slurp, SHA-256 (OpenSSL), little-endian readers |
 | `mlimg.{h,c}` | the `.mlimg` bundle: ustar tar reader + `manifest.json` (cJSON) |
-| `slot.{h,c}` | A/B slot detection: mtd names, running slot, GPT active bit, guarded target resolve |
+| `slot.{h,c}` | A/B slots: mtd names, running slot, GPT active bit (read + flip), guarded target resolve |
 | `mtd.{h,c}` | raw MTD partition write + SHA-256 readback verify (mirrors `mtdtool`) |
 | `ubi.{h,c}` | `userapp` UBI write: streams the image into vendored mtd-utils `ubiformat` |
 | `board.{h,c}` | device-identity gate: manifest `target_device` vs the device's `product_version` |
@@ -46,8 +49,56 @@ Three third-party deps, none committed into the tree:
 
 ## Safety
 
-The write path is fenced by the project A/B slot rules (`CLAUDE.md`, `glue/docs/flash-and-verify-slots.md`): `--flash` writes only the inactive slot (target != running slot is asserted from `/proc/cmdline` and refused), and refuses slot A outright in this build. `--flash` never flips the active slot - prove the slot by RAM-boot first, then flip by hand. Writing slot A (`--force-a`, permitted only from a slot-B running system) and the active-slot flip (`--flip`, off by default, typed confirmation) are not in this build yet.
+The write path is fenced by the project A/B slot rules (`glue/docs/flash-and-verify-slots.md`): `--flash` writes only the inactive slot (target != running slot is asserted from `/proc/cmdline` and refused). Slot A is refused unless `--force-a` is given, and `--force-a` is honoured only while the running slot is B (so A is always an inactive target, never the live one). The active-slot flip (`--flip`) is off by default; when given it re-reads `gpt0` to confirm the new active slot and prints the recovery path, because it can make an unproven slot active (HARD RULE 2). Neither `--flip` nor `--force-a` prompts - the flag is the authorization, so mlflash can run unattended - but `--flip` and `--force-a` are mutually exclusive, so a run can never both write slot A and flip: slot A stays an intact BootROM-recovery keystone. The gold-standard proof before any flip is a flashboot (`make flashboot` / `glue/boot/ram-boot-flashed-b.sh`), which boots the flashed kernel1/dtb1/rootfs from flash with the current slot still active. (It does not exercise the flashed uboot1/SPL - only the eventual flip does - which is why slot A stays the recovery net.)
 
 ## Build
 
 `native/build.sh` (arm64 gcc:7 container, static). Output: `native/build/mlflash` (git-ignored). Push it to the goggle to run.
+
+## Getting it onto the device
+
+The goggle's SSH server is a legacy Dropbear that only speaks old algorithms, and a current OpenSSH client refuses them by default. Every `ssh`/`scp` invocation must re-enable them:
+
+```
+-o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1
+-o HostKeyAlgorithms=+ssh-rsa,ssh-dss
+-o PubkeyAcceptedAlgorithms=+ssh-rsa
+-o Ciphers=+aes128-ctr,aes128-cbc,3des-cbc
+-o MACs=+hmac-sha1
+```
+
+There is also no `scp` or sftp subsystem on the device, so copy by streaming the bytes over a plain SSH channel with `cat`. The device is at `192.168.3.100`; root's password is `artosyn` on the stock slot A and `libre` on the open slot B. `mlflash` runs on either slot, so pick the password for whichever slot is currently booted. `/tmp` is an exec-allowed tmpfs on the open slot; use any writable, exec-mounted path.
+
+Put those options in a shell array, not a plain string: zsh (the goggle project's default shell) does not word-split an unquoted `$var`, so `ssh $STRING ...` collapses them into one bad `-o` argument. An array expanded as `"${sshopts[@]}"` works in both zsh and bash.
+
+Push both the binary and the `.mlimg` to `/tmp` over SSH, one `cat` stream each - ideally with the video pipeline stopped, since a large sustained push concurrent with video can wedge the USB gadget. `mlflash` `mmap`s the image rather than copying it into the heap, so staging it in `/tmp` (tmpfs) costs only the file's own size in RAM, not double - which is why a tens-of-MB image loads fine on stock slot A:
+
+```
+sshopts=(-o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1
+  -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o PubkeyAcceptedAlgorithms=+ssh-rsa
+  -o Ciphers=+aes128-ctr,aes128-cbc,3des-cbc -o MACs=+hmac-sha1
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+img=mlimg-P1_GND_VR04-<ver>.tar
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 'cat > /tmp/mlflash && chmod +x /tmp/mlflash' < native/build/mlflash
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 "cat > /tmp/$img" < "$img"
+```
+
+`/tmp` is RAM-backed, so its pages are not reclaimable while the file sits there; on stock slot A (where the primary flash-B-from-A path runs) there is room, but the open slot B mounts a smaller `/tmp` tmpfs - if a large image will not fit there, stage it on the persistent `/usrdata` instead (mlflash reads it the same way). `glue/dev/push.sh native/build/mlflash` wraps the binary push (it defaults to the open slot B password `libre`; for stock slot A run `ROOT_PASS=artosyn glue/dev/push.sh native/build/mlflash`).
+
+Then run it over the same SSH connection - start with the read-only checks before any write:
+
+```
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 "/tmp/mlflash --inspect /tmp/$img"
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 "/tmp/mlflash --dry-run /tmp/$img"
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 "/tmp/mlflash --flash   /tmp/$img"
+```
+
+Then prove slot B before committing to it, and only then flip - attach the serial console first, since a flip is the one step that can leave an unbootable active slot:
+
+```
+make flashboot                       # host: boot the flashed kernel1/dtb1/rootfs, A still active; confirm B is reachable
+# reboot back to A (watchdog), then:
+sshpass -p artosyn ssh "${sshopts[@]}" root@192.168.3.100 "/tmp/mlflash --flip"   # set B active (gpt0 only)
+```
+
+`--flip` and `--force-a` take no prompt - the flag alone authorizes the action, so these run fine over a non-interactive SSH command (suited to automation).

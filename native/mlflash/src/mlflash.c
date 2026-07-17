@@ -39,7 +39,7 @@
 static int cmd_inspect(const char *path)
 {
     size_t img_len = 0;
-    unsigned char *img = read_all(path, &img_len);
+    unsigned char *img = map_file(path, &img_len);
     if (!img) {
         return 1;
     }
@@ -48,13 +48,13 @@ static int cmd_inspect(const char *path)
     size_t manifest_len;
     if (tar_find(img, img_len, "manifest.json", &manifest_data, &manifest_len) != 0) {
         fprintf(stderr, "%s: no manifest.json (not an .mlimg?)\n", path);
-        free(img);
+        unmap_file(img, img_len);
         return 1;
     }
 
     struct manifest m;
     if (manifest_parse(manifest_data, manifest_len, &m) != 0) {
-        free(img);
+        unmap_file(img, img_len);
         return 1;
     }
 
@@ -87,7 +87,7 @@ static int cmd_inspect(const char *path)
     }
 
     printf("  => %s\n", ok ? "all components verified" : "VERIFICATION FAILED");
-    free(img);
+    unmap_file(img, img_len);
 
     return ok ? 0 : 1;
 }
@@ -95,7 +95,7 @@ static int cmd_inspect(const char *path)
 static int cmd_dry_run(const char *path, const char *want_slot)
 {
     size_t img_len = 0;
-    unsigned char *img = read_all(path, &img_len);
+    unsigned char *img = map_file(path, &img_len);
     if (!img) {
         return 1;
     }
@@ -104,13 +104,13 @@ static int cmd_dry_run(const char *path, const char *want_slot)
     size_t manifest_len;
     if (tar_find(img, img_len, "manifest.json", &manifest_data, &manifest_len) != 0) {
         fprintf(stderr, "%s: no manifest.json\n", path);
-        free(img);
+        unmap_file(img, img_len);
         return 1;
     }
 
     struct manifest m;
     if (manifest_parse(manifest_data, manifest_len, &m) != 0) {
-        free(img);
+        unmap_file(img, img_len);
         return 1;
     }
 
@@ -127,7 +127,7 @@ static int cmd_dry_run(const char *path, const char *want_slot)
         printf("  ABORT: cannot determine the running slot; refusing to plan a write.\n");
         fail = 1;
     } else if (gpt_slot >= 0 && gpt_slot != running) {
-        printf("  ABORT: GPT-active and running slot disagree (post-flip / RAM-boot window); "
+        printf("  ABORT: GPT-active and running slot disagree (post-flip / flashboot window); "
                "resolve by hand.\n");
         fail = 1;
     }
@@ -200,7 +200,7 @@ static int cmd_dry_run(const char *path, const char *want_slot)
     }
 
     printf("=> dry-run %s (no writes performed)\n", fail ? "found blockers" : "plan is clean");
-    free(img);
+    unmap_file(img, img_len);
 
     return fail ? 1 : 0;
 }
@@ -211,9 +211,12 @@ static int cmd_dry_run(const char *path, const char *want_slot)
  * board identity, and verify every component's hash, write method, and target partition. On a
  * clean pass fills `m`, `devpath` (one resolved /dev/mtdN per component), and `*target`; returns
  * 0. Returns 1 (message already printed) on any blocker.
+ *
+ * `force_a` relaxes the slot-A refusal to allow writing an INACTIVE slot A (only while running on
+ * B); it never lets the target equal the running slot.
  */
 static int flash_preflight(const unsigned char *img, size_t img_len, const char *want_slot,
-                           struct manifest *m, char devpath[][32], int *target)
+                           int force_a, struct manifest *m, char devpath[][32], int *target)
 {
     const unsigned char *manifest_data;
     size_t manifest_len;
@@ -245,8 +248,17 @@ static int flash_preflight(const unsigned char *img, size_t img_len, const char 
     }
 
     if (tgt == 0) {
-        fprintf(stderr, "flash: refusing to write slot A (this build has no --force-a).\n");
-        return 1;
+        if (!force_a) {
+            fprintf(stderr, "flash: refusing to write slot A without --force-a "
+                    "(A is the BootROM-recovery keystone).\n");
+            return 1;
+        }
+        if (running != 1) {
+            fprintf(stderr, "flash: --force-a is allowed only while running on slot B "
+                    "(so A is an inactive, recoverable target); running slot is %s.\n",
+                    running == 0 ? "A" : "unknown");
+            return 1;
+        }
     }
 
     int board = board_matches(m->target_device);
@@ -329,18 +341,63 @@ static int flash_commit(const unsigned char *img, size_t img_len, const struct m
     }
 
     printf("flash: OK - slot %s written and readback-verified. NOT flipped; prove it by "
-           "RAM-boot, then flip by hand.\n", target ? "B" : "A");
+           "flashboot (make flashboot), then flip by hand.\n", target ? "B" : "A");
     return 0;
 }
 
 /*
- * Flash the bundle to the inactive slot (or --slot): preflight, then commit only on a clean pass.
- * Owns the image buffer so the two stages can early-return without cleanup bookkeeping.
+ * Warn (loudly, non-interactively) that --force-a is about to write the INACTIVE slot A. The
+ * structural guards (--force-a required, running slot is B, mutual exclusion with --flip) live in
+ * the preflight and arg parsing; this only surfaces the risk in the log.
  */
-static int cmd_flash(const char *path, const char *want_slot)
+static void flash_warn_force_a(void)
+{
+    printf("\nflash: --force-a: writing the INACTIVE slot A.\n");
+    printf("  Slot A is the BootROM-recovery keystone. This is only safe because you are running\n");
+    printf("  on slot B (A is inactive) and this run cannot also flip. A partial or failed A write\n");
+    printf("  is a mixed state that only BootROM recovery clears (glue/recovery/RECOVERY.md).\n");
+}
+
+/*
+ * Flip the active slot to `target` after a verified flash. This makes a not-yet-booted slot the
+ * active one (HARD RULE 2); the flag itself is the authorization (no prompt, so it can run
+ * unattended). The gpt0 write is re-read to confirm the new active slot before declaring success.
+ * Returns 0 on success, 1 otherwise.
+ */
+static int flash_flip(int target)
+{
+    printf("\nflash: --flip: making slot %s the ACTIVE boot slot.\n", target ? "B" : "A");
+    printf("  A readback-verified flash proves the BYTES landed, NOT that the slot boots. Prove it\n");
+    printf("  by flashboot first (make flashboot: boots the flashed kernel1/dtb1/rootfs, A stays\n");
+    printf("  active); if a flipped slot does not boot, recover per glue/recovery/RECOVERY.md\n");
+    printf("  (works while slot A is intact).\n");
+
+    if (gpt_set_active(target) != 0) {
+        return 1;
+    }
+
+    int now = gpt_active_slot();
+    if (now != target) {
+        fprintf(stderr, "flash: post-flip gpt0 readback shows active=%s (expected %s); "
+                "verify by hand before rebooting.\n",
+                now == 0 ? "A" : now == 1 ? "B" : "unknown", target ? "B" : "A");
+        return 1;
+    }
+
+    printf("flash: OK - active slot is now %s (gpt0 re-read confirmed). Reboot via the watchdog "
+           "to boot it.\n", target ? "B" : "A");
+    return 0;
+}
+
+/*
+ * Flash the bundle to the inactive slot (or --slot): preflight, then commit only on a clean pass,
+ * then flip only if --flip and the commit succeeded. Owns the image buffer so the stages can
+ * early-return without cleanup bookkeeping.
+ */
+static int cmd_flash(const char *path, const char *want_slot, int want_flip, int force_a)
 {
     size_t img_len = 0;
-    unsigned char *img = read_all(path, &img_len);
+    unsigned char *img = map_file(path, &img_len);
     if (!img) {
         return 1;
     }
@@ -349,13 +406,52 @@ static int cmd_flash(const char *path, const char *want_slot)
     char devpath[MAX_COMPONENTS][32];
     int target = -1;
 
-    int rc = flash_preflight(img, img_len, want_slot, &m, devpath, &target);
+    int rc = flash_preflight(img, img_len, want_slot, force_a, &m, devpath, &target);
+    if (rc == 0 && target == 0) {
+        flash_warn_force_a();
+    }
+
     if (rc == 0) {
         rc = flash_commit(img, img_len, &m, devpath, target);
     }
 
-    free(img);
+    if (rc == 0 && want_flip) {
+        rc = flash_flip(target);
+    }
+
+    unmap_file(img, img_len);
     return rc;
+}
+
+/*
+ * Standalone flip (no image write): confirm the running/GPT slots agree, pick the inactive target
+ * (or --slot), and flip it active via the same gpt_set_active + post-flip readback as --flash
+ * --flip. This is the flip step of the flash -> flashboot -> flip workflow, so the slot was
+ * already written and proven separately; it never touches partition data, only gpt0.
+ */
+static int cmd_flip(const char *want_slot)
+{
+    int running = running_slot();
+    int gpt = gpt_active_slot();
+    if (running < 0) {
+        fprintf(stderr, "flip: cannot determine the running slot; refusing.\n");
+        return 1;
+    }
+
+    if (gpt >= 0 && gpt != running) {
+        fprintf(stderr, "flip: GPT-active and running slot disagree (still in a flashboot? reboot "
+                "to the active slot first); refusing.\n");
+        return 1;
+    }
+
+    int target = want_slot ? ((want_slot[0] == 'b' || want_slot[0] == 'B') ? 1 : 0) : !running;
+    if (target == running) {
+        fprintf(stderr, "flip: slot %s is already the running slot; nothing to flip.\n",
+                target ? "B" : "A");
+        return 1;
+    }
+
+    return flash_flip(target);
 }
 
 static void usage(void)
@@ -364,7 +460,12 @@ static void usage(void)
             "usage:\n"
             "  mlflash --inspect <image.mlimg>              print manifest, re-verify hashes\n"
             "  mlflash --dry-run <image.mlimg> [--slot a|b] device preflight, no writes\n"
-            "  mlflash --flash   <image.mlimg> [--slot a|b] flash the inactive slot (no flip)\n");
+            "  mlflash --flash   <image.mlimg> [--slot a|b] [--flip] [--force-a]\n"
+            "                                               flash the inactive slot, verify\n"
+            "  mlflash --flip                  [--slot a|b] set the inactive slot active, no write\n"
+            "    --flip     (with --flash) after a verified flash, set it active; or standalone\n"
+            "               to flip an already-flashed+proven slot (overrides Rule 2; no prompt)\n"
+            "    --force-a  permit writing an inactive slot A (only while running B; no prompt)\n");
 }
 
 int main(int argc, char **argv)
@@ -372,6 +473,8 @@ int main(int argc, char **argv)
     const char *mode = NULL;
     const char *image = NULL;
     const char *slot = NULL;
+    int want_flip = 0;
+    int force_a = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--inspect") || !strcmp(argv[i], "--dry-run") ||
@@ -379,6 +482,10 @@ int main(int argc, char **argv)
             mode = argv[i];
         } else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
             slot = argv[++i];
+        } else if (!strcmp(argv[i], "--flip")) {
+            want_flip = 1;
+        } else if (!strcmp(argv[i], "--force-a")) {
+            force_a = 1;
         } else if (argv[i][0] != '-') {
             image = argv[i];
         } else {
@@ -388,14 +495,37 @@ int main(int argc, char **argv)
         }
     }
 
+    if (slot && strcmp(slot, "a") && strcmp(slot, "A") &&
+        strcmp(slot, "b") && strcmp(slot, "B")) {
+        fprintf(stderr, "--slot must be a or b\n");
+        return 2;
+    }
+
+    /* Standalone flip: --flip with no flash/inspect/dry-run mode and no image. */
+    if (!mode && want_flip) {
+        if (force_a) {
+            fprintf(stderr, "--force-a does not apply to a standalone --flip (it writes no "
+                    "partitions, only gpt0)\n");
+            return 2;
+        }
+        return cmd_flip(slot);
+    }
+
     if (!mode || !image) {
         usage();
         return 2;
     }
 
-    if (slot && strcmp(slot, "a") && strcmp(slot, "A") &&
-        strcmp(slot, "b") && strcmp(slot, "B")) {
-        fprintf(stderr, "--slot must be a or b\n");
+    /* --flip and --force-a only make sense for a real flash (or --flip standalone, above). */
+    if ((want_flip || force_a) && strcmp(mode, "--flash")) {
+        fprintf(stderr, "--flip and --force-a are only valid with --flash\n");
+        return 2;
+    }
+
+    /* Keep slot A a recoverable keystone: never write A and flip in one run. */
+    if (want_flip && force_a) {
+        fprintf(stderr, "--flip and --force-a are mutually exclusive "
+                "(writing A and flipping in one run would leave no intact keystone)\n");
         return 2;
     }
 
@@ -404,7 +534,7 @@ int main(int argc, char **argv)
     }
 
     if (!strcmp(mode, "--flash")) {
-        return cmd_flash(image, slot);
+        return cmd_flash(image, slot, want_flip, force_a);
     }
 
     return cmd_dry_run(image, slot);

@@ -35,6 +35,10 @@ struct erase_info_user {
 #define MEMERASE       _IOW('M', 2, struct erase_info_user)
 #define MEMGETBADBLOCK _IOW('M', 11, int64_t)
 
+#ifndef BLKFLSBUF
+#define BLKFLSBUF      _IO(0x12, 97)   /* flush + invalidate a block device's buffer cache */
+#endif
+
 static int is_bad_block(int fd, uint64_t off)
 {
     int64_t offset = (int64_t)off;
@@ -140,6 +144,13 @@ static unsigned char *readback(const char *dev_path, int is_mtd, size_t len)
     if (fd < 0) {
         perror(rb_path);
         return NULL;
+    }
+
+    /* Invalidate any stale mtdblock cache from an earlier read (e.g. gpt0 read in preflight):
+     * the char-device write does not evict it, so read fresh from the device. Best-effort.
+     */
+    if (is_mtd) {
+        ioctl(fd, BLKFLSBUF);
     }
 
     unsigned char *buf = malloc(len);

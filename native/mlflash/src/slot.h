@@ -25,6 +25,16 @@ int running_slot(void);
 int gpt_active_slot(void);
 
 /**
+ * @brief Set the GPT active bit to `slot` (0/1): edit the A/B pair entries in the primary GPT of
+ *        gpt0, recompute the entry-array and header CRC32, and write the partition back
+ *        (byte-exact readback-verified). Mirrors mtdtool's setslot.
+ *
+ * This flips the boot slot - the caller must have already gated it (the --flip flag, Rule 2).
+ * @return 0 on success, -1 (message printed) on any failure.
+ */
+int gpt_set_active(int slot);
+
+/**
  * @brief Resolve slot-relative `base` (e.g. "kernel") for `slot` (0/1) to its mtd device path,
  *        applying the destructive-write guards.
  *

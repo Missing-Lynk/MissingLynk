@@ -64,7 +64,7 @@ static int find_pid(const char *name)
             continue;
         }
 
-        char path[64], comm[64];
+        char path[280], comm[64];    /* fits /proc/<d_name up to 255>/comm */
         snprintf(path, sizeof path, "/proc/%s/comm", e->d_name);
         int fd = open(path, O_RDONLY);
         if (fd < 0) {

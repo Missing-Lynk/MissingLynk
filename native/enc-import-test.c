@@ -116,7 +116,6 @@ int main(int argc, char **argv)
     int fd = open_encoder();
     int src_fd[N_OUT];
     void *cap_map[N_CAP];
-    unsigned cap_len[N_CAP];
     struct v4l2_format f;
     struct v4l2_requestbuffers rb;
     int type;
@@ -191,7 +190,6 @@ int main(int argc, char **argv)
             die("QUERYBUF(CAPTURE)");
         }
 
-        cap_len[i] = p.length;
         cap_map[i] = mmap(NULL, p.length, PROT_READ, MAP_SHARED, fd, p.m.mem_offset);
         if (cap_map[i] == MAP_FAILED) {
             die("mmap(CAPTURE)");
