@@ -33,11 +33,41 @@ mkdir -p vendor
 fetch_pinned "$CJSON_BASEURL/cJSON.c" vendor/cJSON.c "$CJSON_C_SHA256"
 fetch_pinned "$CJSON_BASEURL/cJSON.h" vendor/cJSON.h "$CJSON_H_SHA256"
 
-docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work gcc:7 sh -c '
+# mtd-utils supplies ubiformat + libmtd/libubi/libubigen/libscan for mlflash's userapp UBI write
+# (brick-capable NAND logic; vendored upstream, never reimplemented). Fetched as the pinned +
+# sha256-verified release tarball, extracted into vendor/mtd-utils/ (gitignored, cached).
+MTDUTILS_VERSION=v2.3.1
+MTDUTILS_TARBALL_SHA256=f53cde04802439fa6ac2ffbd80955f2b790262c02bd6fa2f7783a19fdc33716d
+
+if [ ! -f vendor/mtd-utils/ubi-utils/ubiformat.c ]; then
+    fetch_pinned "https://github.com/sigma-star/mtd-utils/archive/refs/tags/${MTDUTILS_VERSION}.tar.gz" \
+        vendor/mtd-utils.tar.gz "$MTDUTILS_TARBALL_SHA256"
+    rm -rf vendor/mtd-utils
+    mkdir -p vendor/mtd-utils
+    tar xzf vendor/mtd-utils.tar.gz -C vendor/mtd-utils --strip-components=1
+fi
+
+MTDUTILS_INC="-I vendor/mtd-utils/include -I vendor/mtd-utils/include/mtd"
+MTDUTILS_LIB="vendor/mtd-utils/lib/libmtd.c vendor/mtd-utils/lib/libmtd_legacy.c \
+vendor/mtd-utils/lib/libubi.c vendor/mtd-utils/lib/libubigen.c vendor/mtd-utils/lib/libscan.c \
+vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/lib/execinfo.c"
+
+# mlflash links vendored mtd-utils. Compile the upstream units with -w (their warnings are not
+# ours to fix) and -Dmain=ubiformat_main so ubiformat's main() links in as a callable function.
+docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
+    -e MTDUTILS_VERSION="$MTDUTILS_VERSION" -e MTDUTILS_INC="$MTDUTILS_INC" \
+    -e MTDUTILS_LIB="$MTDUTILS_LIB" gcc:7 sh -c '
     gcc -O2 fbtext.c -o build/fbtext -lm &&
     gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
     gcc -O2 -Wall -static mtdtool.c -o build/mtdtool &&
-    gcc -O2 -Wall -static -Ivendor mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c vendor/cJSON.c -o build/mlflash -lcrypto &&
+    for f in $MTDUTILS_LIB vendor/mtd-utils/ubi-utils/ubiformat.c; do
+        gcc -O2 -w -static -DVERSION=\"mtd-utils-$MTDUTILS_VERSION\" -Dmain=ubiformat_main \
+            $MTDUTILS_INC -c "$f" -o "build/mtdu-$(basename "$f" .c).o" || exit 1
+    done &&
+    gcc -O2 -Wall -static -Ivendor $MTDUTILS_INC \
+        mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c \
+        mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
+        vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
     gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
     gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&

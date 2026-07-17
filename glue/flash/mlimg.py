@@ -66,7 +66,9 @@ class Manifest(TypedDict):
 
 
 FORMAT_VERSION = 1
-DEFAULT_DEVICE = "P1_GND_VR04"       # the goggle (P1_GND); the air unit is P1_SKY.
+# Must equal the target device's sdk_version.json "product_version": mlflash's board gate compares
+# target_device to that field verbatim. "P1_GND_VR04" is the goggle; the air unit is P1_SKY.
+DEFAULT_DEVICE = "P1_GND_VR04"
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 

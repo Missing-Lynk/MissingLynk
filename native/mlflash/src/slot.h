@@ -24,4 +24,15 @@ int running_slot(void);
  */
 int gpt_active_slot(void);
 
+/**
+ * @brief Resolve slot-relative `base` (e.g. "kernel") for `slot` (0/1) to its mtd device path,
+ *        applying the destructive-write guards.
+ *
+ * Refuses unless the partition exists, differs from its 0/1 sibling, is not the whole-flash
+ * mtd0, and is at least `min_size` bytes. On success writes "/dev/mtdN" into `dev_path`.
+ * @return 0 on success, -1 (message printed) on any guard failure.
+ */
+int slot_resolve_target(const char *base, int slot, unsigned long min_size,
+            char *dev_path, size_t dev_sz);
+
 #endif

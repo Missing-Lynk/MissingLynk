@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #include "slot.h"
 #include "util.h"
@@ -169,4 +170,41 @@ int gpt_active_slot(void)
 
     free(buf);
     return active;
+}
+
+int slot_resolve_target(const char *base, int slot, unsigned long min_size,
+                        char *dev_path, size_t dev_sz)
+{
+    char name[48], sibling[48];
+    int num, sib_num;
+    unsigned long size, sib_size;
+
+    snprintf(name, sizeof name, "%s%d", base, slot ? 1 : 0);
+    if (mtd_by_name(name, &num, &size) != 0) {
+        fprintf(stderr, "flash: target %s not found in /proc/mtd\n", name);
+        return -1;
+    }
+
+    /* Never let the target collide with its 0/1 sibling (a partition-table surprise). */
+    snprintf(sibling, sizeof sibling, "%s%d", base, slot ? 0 : 1);
+    if (mtd_by_name(sibling, &sib_num, &sib_size) == 0 && sib_num == num) {
+        fprintf(stderr, "flash: %s and %s both resolve to mtd%d - refusing\n",
+                name, sibling, num);
+        return -1;
+    }
+
+    /* Never the whole-flash device alias. */
+    if (num == 0) {
+        fprintf(stderr, "flash: %s resolved to mtd0 (whole flash) - refusing\n", name);
+        return -1;
+    }
+
+    /* The partition must hold the image. */
+    if (size < min_size) {
+        fprintf(stderr, "flash: %s is %lu B, image needs %lu B\n", name, size, min_size);
+        return -1;
+    }
+
+    snprintf(dev_path, dev_sz, "/dev/mtd%d", num);
+    return 0;
 }
