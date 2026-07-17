@@ -10,9 +10,11 @@
 #   make rootfs       the slim Alpine slot-B rootfs (production; integrates native + userspace + kernel)
 #   make rootfs-dev   the dev rootfs (adds scp/sftp, strace/tcpdump/htop for bring-up)
 #   make all          native + userspace + kernel, then the slim rootfs
+#   make image        all + capture vendor slot blobs + assemble one flashable .mlimg bundle
 #
 # Prerequisite (needs the device connected; blobs persist in firmware/bin/):
 #   make fetch-blobs  pull the vendor firmware blobs the rootfs stages (chagall, ...)
+#   make image-blobs  dump the raw slot partitions the .mlimg's vendor components need
 #
 # Device bring-up (writes slot B only; slot A is never touched, and no target flips the active
 # slot - that stays a deliberate manual step once the flashed kernel is proven):
@@ -58,6 +60,23 @@ rootfs:
 rootfs-dev:
 	FLAVOR=dev ./rootfs/build.sh
 
+# One flashable .mlimg bundle (uboot + env + kernel + dtb + rootfs, everything a vendor slot
+# carries except SPL): build every component, capture the vendor slot blobs, then assemble and
+# self-verify. The blob capture needs the device connected once; it persists in firmware/bin/
+# and is skipped on later runs, so a rebuild after the first capture needs no device.
+image: all image-blobs
+	uv run python glue/flash/mlimg.py build
+
+# Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
+# Captured from a connected device into firmware/bin/<P1_GND>/; skipped when already present.
+image-blobs:
+	@if [ -n "$$(find firmware/bin -name 'uboot.bin' -o -name '*uboot0.bin' -o -name '*uboot1.bin' 2>/dev/null | head -1)" ]; then \
+	  echo "[image] vendor slot blobs already in firmware/bin (skipping dump)"; \
+	else \
+	  echo "[image] capturing vendor slot blobs from the connected device..."; \
+	  uv run missinglynk dump-partitions --dest firmware/bin; \
+	fi
+
 flash-rootfs:
 	glue/flash/flash-rootfs-b.sh
 
@@ -84,4 +103,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all native umtprd userspace kernel fetch-blobs rootfs rootfs-dev flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all native umtprd userspace kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean

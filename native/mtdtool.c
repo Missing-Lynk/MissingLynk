@@ -1,16 +1,20 @@
 /*
  * mtdtool: raw-NAND erase/write + A/B slot flip for the Artosyn goggle/air boot flash.
  *
- * The on-device BusyBox has the UBI applets (ubiattach/ubiupdatevol) but no
- * flash_erase/nandwrite, and two things need raw-NAND access:
- *   - writing raw partitions that are not UBI volumes (e.g. gpt0, kernel0/1, dtb0/1), and
- *   - flipping the active boot slot, which lives in the GPT (gpt0) attribute bits.
+ * The on-device BusyBox has neither flash_erase/nandwrite nor the UBI applets (the open slot-B
+ * rootfs builds without them, and mtd-utils is not installed), and three things need raw-NAND
+ * or UBI-control access:
+ *   - writing raw partitions that are not UBI volumes (e.g. gpt0, kernel0/1, dtb0/1),
+ *   - flipping the active boot slot, which lives in the GPT (gpt0) attribute bits, and
+ *   - attaching a UBI device, which the kernel only does at boot for the ubi.mtd= bootargs.
  *
  * Commands:
  *   mtdtool info    <target>            show MTD geometry
  *   mtdtool erase   <target>            erase the whole partition (-> 0xff)
  *   mtdtool write   <target> <image>    erase covering blocks, then write the image
  *   mtdtool setslot <target> a|b        flip the GPT active slot (reads, edits, writes back)
+ *   mtdtool attach  <mtdnum> [ubinum]   attach an MTD as a UBI device (prints the ubi number)
+ *   mtdtool detach  <ubinum>            detach a UBI device
  *
  * <target> is normally /dev/mtdN. For testing, setslot/write also accept a plain file (the
  * MTD ioctls are skipped and the file is edited in place), so the slot flip can be verified
@@ -493,15 +497,97 @@ static int cmd_setslot(int fd, int is_mtd, const struct mtd_info_user *mi,
     return rc ? 1 : 0;
 }
 
+/* UBI control ioctls (include/uapi/mtd/ubi-user.h), defined inline so the build needs no
+ * extra headers. The attach request is 24 bytes; the kernel returns the assigned ubi number.
+ */
+#define UBI_CTRL_IOC_MAGIC 'o'
+#define UBI_IOCATT         _IOW(UBI_CTRL_IOC_MAGIC, 64, struct ubi_attach_req)
+#define UBI_IOCDET         _IOW(UBI_CTRL_IOC_MAGIC, 65, int32_t)
+
+struct ubi_attach_req {
+    int32_t ubi_num;
+    int32_t mtd_num;
+    int32_t vid_hdr_offset;
+    int16_t max_beb_per1024;
+    int8_t  padding[10];
+};
+
+/* Attach mtd_num as a UBI device. ubi_num < 0 lets the kernel pick the next free one. Attaching
+ * an already-attached MTD fails with EEXIST, which the caller treats as success (idempotent).
+ */
+static int cmd_attach(int mtd_num, int ubi_num)
+{
+    int fd = open("/dev/ubi_ctrl", O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "open /dev/ubi_ctrl: %s\n", strerror(errno));
+        return 1;
+    }
+
+    struct ubi_attach_req req;
+    memset(&req, 0, sizeof req);
+    req.ubi_num = ubi_num;
+    req.mtd_num = mtd_num;
+    req.vid_hdr_offset = 0;
+    req.max_beb_per1024 = 0;
+
+    int rc = ioctl(fd, UBI_IOCATT, &req);
+    int err = errno;
+    close(fd);
+
+    if (rc < 0) {
+        fprintf(stderr, "attach mtd%d: %s\n", mtd_num, strerror(err));
+        return err == EEXIST ? 0 : 1;
+    }
+
+    /* The ioctl's return carries the assigned ubi number only when the kernel picked it; with an
+     * explicit request it is 0 on success, so report what was asked for rather than that 0.
+     */
+    printf("%d\n", ubi_num >= 0 ? ubi_num : rc);
+    return 0;
+}
+
+static int cmd_detach(int ubi_num)
+{
+    int fd = open("/dev/ubi_ctrl", O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "open /dev/ubi_ctrl: %s\n", strerror(errno));
+        return 1;
+    }
+
+    int32_t num = ubi_num;
+    int rc = ioctl(fd, UBI_IOCDET, &num);
+    int err = errno;
+    close(fd);
+
+    if (rc < 0) {
+        fprintf(stderr, "detach ubi%d: %s\n", ubi_num, strerror(err));
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) {
         fprintf(stderr,
-                "usage: mtdtool info|erase|write|setslot <target> [image | a|b]\n");
+                "usage: mtdtool info|erase|write|setslot <target> [image | a|b]\n"
+                "       mtdtool attach <mtdnum> [ubinum]\n"
+                "       mtdtool detach <ubinum>\n");
         return 2;
     }
 
     const char *cmd = argv[1];
+
+    /* attach/detach take numbers, not an MTD path: dispatch before open_target(). */
+    if (!strcmp(cmd, "attach")) {
+        return cmd_attach(atoi(argv[2]), argc >= 4 ? atoi(argv[3]) : -1);
+    }
+
+    if (!strcmp(cmd, "detach")) {
+        return cmd_detach(atoi(argv[2]));
+    }
+
     const char *target = argv[2];
     struct mtd_info_user mi;
     int is_mtd = 0;

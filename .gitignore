@@ -12,16 +12,23 @@ __pycache__/
 *.pyc
 .venv/
 
-# Proprietary vendor firmware, do NOT commit (copyright). Dump from your own
-# device; patched binaries are reproducible via firmware/patches/apply-patches.py
-firmware/images/
-firmware/bin/*
-!firmware/bin/README.md
-firmware/fonts/
+# Proprietary vendor firmware, do NOT commit (copyright). firmware/ is a transient capture
+# dir for your own device dumps (fetch-blobs, dump-partitions); nothing in it is distributable.
+# (If tracked patch tooling is ever added under firmware/, give it an explicit !exception.)
+firmware/
+
+# Dumped vendor partitions (missinglynk dump-partitions default dest, out/<P1_GND|P1_SKY>/);
+# raw uboot/kernel/userapp/rootfs bytes, proprietary, never commit.
+out/
+
+# Built slot bundles (glue/flash/mlimg.py): embed vendor uboot/env blobs, not redistributable
+mlimg-*.tar
 
 # Compiled native helpers (build with native/build.sh)
 native/build/
 native/umtprd/build/
+# Shared third-party deps fetched pinned at build time (native/build.sh), never committed
+native/vendor/
 
 # Compiled glue helpers (build with make -C glue)
 glue/build/
