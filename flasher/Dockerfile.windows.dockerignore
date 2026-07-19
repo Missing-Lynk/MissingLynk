@@ -1,0 +1,14 @@
+# Build context for flasher/Dockerfile (context root is the repo root). Without
+# this the context would be the whole repo (kernel/, archive/, .git - many GB).
+# Keep only the flasher sources and the mlflash binary the image embeds.
+*
+!flasher
+!native
+native/*
+!native/build
+native/build/*
+!native/build/mlflash
+
+# Artifacts the image rebuilds itself.
+flasher/build
+flasher/internal/payload/mlflash

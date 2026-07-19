@@ -53,6 +53,9 @@ userspace:
 flasher:
 	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile --output type=local,dest=flasher/build .
 
+flasher-windows:
+	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows --output type=local,dest=flasher/build .
+
 kernel:
 	kernel/scripts/build.sh
 	kernel/modules/build.sh
@@ -109,4 +112,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all native umtprd userspace flasher kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all native umtprd userspace flasher flasher-windows kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean

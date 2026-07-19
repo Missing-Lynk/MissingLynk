@@ -1,0 +1,35 @@
+# Cross-build ml-flasher.exe (Windows/amd64) in a container - the reproducible
+# Windows build, needing nothing on the host but Docker. Context root is the repo
+# root (it needs native/build/mlflash to embed). Driven by `make flasher-windows`,
+# which extracts flasher/build/ml-flasher.exe:
+#
+#   DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows \
+#       --output type=local,dest=flasher/build .
+#
+# native/build/mlflash must exist first (make native).
+
+FROM golang:1.26-bookworm AS build
+
+# Fyne is a cgo GUI; cross-compiling for Windows needs the mingw-w64 toolchain.
+# The Windows GUI/OpenGL libraries it links (opengl32, gdi32, ...) come from mingw.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Module graph first, for layer caching.
+COPY flasher/go.mod flasher/go.sum ./flasher/
+RUN cd flasher && go mod download
+
+# Sources + the on-device binary to embed.
+COPY flasher ./flasher
+COPY native/build/mlflash ./native/build/mlflash
+RUN cp native/build/mlflash flasher/internal/payload/mlflash \
+    && cd flasher \
+    && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+       go build -tags migrated_fynedo -trimpath -ldflags "-H windowsgui" -o /out/ml-flasher.exe .
+
+# Export-only stage: `--output type=local` writes this stage's root to the host.
+FROM scratch AS export
+COPY --from=build /out/ml-flasher.exe /ml-flasher.exe
