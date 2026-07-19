@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -99,7 +100,7 @@ static uint32_t crc32_buf(const unsigned char *buf, size_t n)
     return ~crc;
 }
 
-static int is_bad_block(int fd, uint64_t off)
+static bool is_bad_block(int fd, uint64_t off)
 {
     int64_t offset = (int64_t)off;
 
@@ -217,7 +218,7 @@ static unsigned char *read_all(const char *path, long *out_len)
 
 /* True if `name` is one of the A/B dual partitions; sets *is_b for the '1' member.
  */
-static int is_pair_member(const char *name, int *is_b)
+static bool is_pair_member(const char *name, int *is_b)
 {
     static const char *bases[] = { "env", "uboot", "kernel", "dtb", "userapp", NULL };
     size_t len = strlen(name);

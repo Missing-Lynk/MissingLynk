@@ -11,6 +11,7 @@
 #include "draw.h"
 #include "config.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,7 +77,7 @@ static long now_ms(void)
 }
 
 /* a key went down; return 1 if held >= hold_ms (open gesture), 0 if released first */
-static int is_long_press(int fd, int key, int hold_ms)
+static bool is_long_press(int fd, int key, int hold_ms)
 {
     long t0 = now_ms();
     for (;;) {

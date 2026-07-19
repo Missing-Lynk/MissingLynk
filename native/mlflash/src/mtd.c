@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -39,7 +40,7 @@ struct erase_info_user {
 #define BLKFLSBUF      _IO(0x12, 97)   /* flush + invalidate a block device's buffer cache */
 #endif
 
-static int is_bad_block(int fd, uint64_t off)
+static bool is_bad_block(int fd, uint64_t off)
 {
     int64_t offset = (int64_t)off;
 

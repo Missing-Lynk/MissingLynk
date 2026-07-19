@@ -25,6 +25,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,7 +118,7 @@ static int heap_range(int pid, uint64_t *start, uint64_t *end)
 }
 
 /* True if buf is a NUL-terminated, printable version string: starts with a digit, has a '.'. */
-static int looks_version(const uint8_t *buf, int len)
+static bool is_version_string(const uint8_t *buf, int len)
 {
     if (!isdigit(buf[0])) {
         return 0;
@@ -163,7 +164,7 @@ static uint64_t find_handle(int fd, uint64_t start, uint64_t end)
             if (pread(fd, ver, sizeof ver, (off_t) (a + o + OFF_SWVER)) != (ssize_t) sizeof ver) {
                 continue;
             }
-            if (looks_version(ver, sizeof ver)) {
+            if (is_version_string(ver, sizeof ver)) {
                 handle = a + o;   /* +0x00 = "V1.x", +0x20 = sw version -> struct base */
                 break;
             }
