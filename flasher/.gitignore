@@ -1,0 +1,6 @@
+# Build output.
+/build/
+
+# The on-device mlflash binary is copied in from native/build/ during the Docker
+# build and embedded; it is never committed here.
+/internal/payload/mlflash

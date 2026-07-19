@@ -20,10 +20,12 @@
  *                                      image hashes; print the plan; NO writes
  *   mlflash --flash   <image.mlimg>    flash every component to the inactive slot (raw partitions
  *                                      readback-verified, userapp via ubiformat), behind the full
- *                                      preflight; does NOT flip the active slot
+ *                                      preflight; flips the active slot only with --flip
+ *   mlflash --flip                     standalone: set the inactive slot active (gpt0 write +
+ *                                      readback), no component writes
  *
- * Still absent: any slot-A write (--force-a) and the active-slot flip (--flip). Static build,
- * see native/build.sh.
+ * Guards: writing slot A requires --force-a, which is permitted only while running on slot B and
+ * is mutually exclusive with --flip. Static build, see native/build.sh.
  */
 #include <stdio.h>
 #include <stdlib.h>

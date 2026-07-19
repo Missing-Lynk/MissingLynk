@@ -47,6 +47,12 @@ umtprd:
 userspace:
 	$(MAKE) -C userspace
 
+# Host-side flashing GUI (ml-flasher). Built reproducibly in a container (needs
+# only Docker on the host); embeds native/build/mlflash and extracts the binary to
+# flasher/build/ml-flasher. Kept out of `native`/`all` (needs Docker + network).
+flasher:
+	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile --output type=local,dest=flasher/build .
+
 kernel:
 	kernel/scripts/build.sh
 	kernel/modules/build.sh
@@ -103,4 +109,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all native umtprd userspace kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all native umtprd userspace flasher kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
