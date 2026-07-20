@@ -2,6 +2,10 @@
 # device bring-up. Component sources live in the submodules (kernel/, rootfs/) and the
 # in-tree userspace/, native/, and glue/ trees.
 #
+# DEVICE=<name> selects the target device (default betafpv-vr04-goggle); the manifest
+# devices/<name>/device.mk feeds the kernel (BOARD), the dtb name, and the rootfs profile.
+# List devices: `ls devices/`. Add one: see plans/device-hal.md.
+#
 # Build (cross-builds need docker with arm64 emulation via qemu binfmt):
 #   make native       device tools (native/build.sh: mtdtool, fbtext, minidhcpd, mlmenu)
 #   make umtprd       uMTP-Responder for the MTP-over-USB recordings gadget (clones upstream)
@@ -28,6 +32,12 @@
 #   make distclean    also remove the kernel build tree (forces a full kernel re-fetch + rebuild)
 
 SHELL := /bin/bash
+
+# Device selector: which supported device to build for. The name matches devices/<name>/ (the
+# manifest below), kernel/devices/<name>/ (DTS + config fragments), and the rootfs profile.
+# Default = the goggle, so a bare `make` is unchanged. Override: `make DEVICE=<name> ...`.
+DEVICE ?= betafpv-vr04-goggle
+include devices/$(DEVICE)/device.mk
 
 all:
 	$(MAKE) native
@@ -57,7 +67,7 @@ flasher-windows:
 	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows --output type=local,dest=flasher/build .
 
 kernel:
-	kernel/scripts/build.sh
+	BOARD=$(DEVICE) kernel/scripts/build.sh
 	kernel/modules/build.sh
 
 fetch-blobs:
@@ -92,12 +102,12 @@ flash-rootfs:
 ramboot:
 	@source kernel/scripts/pin.env && \
 	  glue/boot/ram-boot.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
-	                        "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/proxima-9311.dtb"
+	                        "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
 flash-kernel:
 	@source kernel/scripts/pin.env && \
 	  glue/flash/flash-kernel-b.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
-	                               "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/proxima-9311.dtb"
+	                               "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
 flashboot:
 	glue/boot/ram-boot-flashed-b.sh
