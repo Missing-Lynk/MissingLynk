@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 
+from . import devices
 from .connection import Goggle
 from .progress import printer
 
@@ -68,16 +69,20 @@ def identify(goggle: Goggle) -> str:
 
 # --- vendor blobs the open slot-B stack needs (ported from glue/fetch/fetch-vendor-blobs.sh) ---
 #
-# Selected by unit identity: the RF firmware/config file names embed the unit role
-# ("gnd" for the goggle P1_GND, "sky" for the air unit P1_SKY). The codec firmware and
-# the MPI libs live at the same paths on both. Requiring a known identity also guards
-# against running on the open Alpine slot B (which identifies as "unknown", no vendor files).
+# Selected by unit identity: the RF firmware/config file names embed the unit role ("gnd" for the
+# goggle P1_GND, "air" for the air unit P1_SKY - confirmed on-device: the AU ships
+# bb_demo_air_d.img / bb_config_air.json, NOT a "sky" variant). The codec firmware and the MPI
+# libs live at the same paths on both. Requiring a known identity also guards against running on
+# the open Alpine slot B (which identifies as "unknown", no vendor files).
+#
+# The {short-id: role} map is read from the per-device manifests (devices/<name>/device.mk,
+# DEV_PRODUCT + DEV_RF_ROLE) instead of being hardcoded - add a device by adding its manifest.
 _AR813X = "/usr/usrdata/ar813x"
-_ROLE: dict[str, str] = {"P1_GND": "gnd", "P1_SKY": "sky"}
+_ROLE: dict[str, str] = devices.role_map()
 
 
 def _blob_manifest(role: str) -> dict[str, tuple[str, ...]]:
-    """Return the required/optional remote paths for a unit role ("gnd" | "sky")."""
+    """Return the required/optional remote paths for a unit role ("gnd" | "air")."""
     return {
         "rf_required": (
             f"{_AR813X}/bb_demo_{role}_d.img",     # RF baseband firmware (debug build)

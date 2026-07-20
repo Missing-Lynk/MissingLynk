@@ -13,4 +13,4 @@ FIRMWARE_BIN: str = os.path.join(
 
 
 def connect(args: argparse.Namespace) -> Goggle:
-    return Goggle(ip=args.ip, password=args.password)
+    return Goggle(ip=args.ip, password=args.password, port=args.port)

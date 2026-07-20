@@ -11,8 +11,10 @@ missinglynk command-line interface.
   missinglynk dump-partitions [--full]  dump every MTD partition + the root squashfs
   missinglynk identify                  name the connected unit (goggle / air)
 
-Connection defaults to root@192.168.3.100 (override with --ip/--password).
-Run host network setup first so the link is reachable (see docs/05).
+Connection defaults to root@192.168.3.100:22 (override with --ip/--port/--password).
+Run host network setup first so the link is reachable (see docs/05). To reach the
+air unit (P1_SKY), start the goggle relay (ml-tcprelay 8822 10.0.0.100 22) and pass
+--port 8822 --password artosyn.
 
 Subcommands live in the `missinglynk.commands` package (one module per theme);
 this file only wires argparse and dispatches to each command's `func`.
@@ -31,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"missinglynk {__version__}")
     parser.add_argument("--ip", default=GOGGLE_IP, help=f"goggle IP (default {GOGGLE_IP})")
+    parser.add_argument("--port", type=int, default=22,
+                        help="SSH port (default 22; use the goggle relay port, e.g. 8822, "
+                             "to reach the air unit)")
     parser.add_argument("--password", default=GOGGLE_PASS, help="root password")
     parser.add_argument("--debug", action="store_true", help="show full tracebacks")
     subparsers = parser.add_subparsers(dest="cmd", required=True)

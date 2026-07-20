@@ -1,11 +1,21 @@
 // Package whitelist is the list of devices ml-flasher is allowed to flash, and
 // the single place to edit it.
 //
-// TO ADD A DEVICE: append a Device to Devices below, with the exact values from
-// its /usr/usrdata/sdk_version.json. A connected device whose (hardware,
-// software, product) triple is not listed here is detected and reported, but
-// never written to - an unknown or newer stock version may have changed the
-// partition map or blown a one-way fuse that would brick the open kernel.
+// This is a SAFETY GATE, deliberately hand-maintained and deliberately separate
+// from the device manifests (devices/<name>/device.mk). A manifest says "this
+// device exists / here is its identity"; membership here says "we have VALIDATED
+// that flashing this device is safe". The identity values below are the same
+// (hardware/software/product) triple the manifest carries - copy them from the
+// device's /usr/usrdata/sdk_version.json (or its device.mk DEV_HW/FW/PRODUCT) -
+// but a device is added here only after its flash path is proven, so this list is
+// intentionally NOT auto-populated from the manifests. A connected device whose
+// triple is not listed is detected and reported, but never written to - an
+// unknown or newer stock version may have changed the partition map or blown a
+// one-way fuse that would brick the open kernel.
+//
+// TO ADD A DEVICE: prove its flash path first, then append its triple below.
+// (The air unit P1_SKY is intentionally absent: its flash path is not yet
+// validated - see plans/air-unit-open-stack.md.)
 package whitelist
 
 // Device is one validated firmware identity, matched exactly against the

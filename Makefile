@@ -54,8 +54,13 @@ native:
 umtprd:
 	./native/umtprd/build.sh
 
+# The manifest's capability flags reach ml-hud as compile-time -D defines (device-agnostic UI code,
+# per-device caps). userspace/ builds standalone too, so its Makefile defaults these to the goggle.
 userspace:
-	$(MAKE) -C userspace
+	$(MAKE) -C userspace \
+	  DEV_HAS_DISPLAY=$(DEV_HAS_DISPLAY) DEV_HAS_CAMERA=$(DEV_HAS_CAMERA) \
+	  DEV_HAS_KEYPAD=$(DEV_HAS_KEYPAD) DEV_HAS_BUZZER=$(DEV_HAS_BUZZER) \
+	  DEV_HAS_LED=$(DEV_HAS_LED) DEV_HAS_DVR=$(DEV_HAS_DVR) DEV_HAS_FC_LINK=$(DEV_HAS_FC_LINK)
 
 # Host-side flashing GUI (ml-flasher). Built reproducibly in a container (needs
 # only Docker on the host); embeds native/build/mlflash and extracts the binary to
@@ -84,7 +89,7 @@ rootfs-dev:
 # self-verify. The blob capture needs the device connected once; it persists in firmware/bin/
 # and is skipped on later runs, so a rebuild after the first capture needs no device.
 image: all image-blobs
-	uv run python glue/flash/mlimg.py build
+	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET)
 
 # Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
 # Captured from a connected device into firmware/bin/<P1_GND>/; skipped when already present.
