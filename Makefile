@@ -74,10 +74,10 @@ fetch-blobs:
 	uv run missinglynk fetch-blobs
 
 rootfs:
-	FLAVOR=slim ./rootfs/build.sh
+	FLAVOR=slim ./rootfs/build.sh $(DEVICE)
 
 rootfs-dev:
-	FLAVOR=dev ./rootfs/build.sh
+	FLAVOR=dev ./rootfs/build.sh $(DEVICE)
 
 # One flashable .mlimg bundle (uboot + env + kernel + dtb + rootfs, everything a vendor slot
 # carries except SPL): build every component, capture the vendor slot blobs, then assemble and

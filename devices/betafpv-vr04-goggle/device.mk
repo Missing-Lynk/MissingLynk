@@ -29,10 +29,9 @@ DEV_HAS_LED        = 1
 DEV_HAS_DVR        = 1
 DEV_HAS_FC_LINK    = 0
 
-# Build pointers the selector resolves. Kernel: BOARD=$(DEV_NAME) -> kernel/devices/$(DEV_NAME)/
-# (its DTS + fragments). DEV_DTB is that DTS's built .dtb basename (ramboot/flash-kernel refs).
+# Build pointers. Kernel + rootfs both resolve by DEV_NAME (= DEVICE), no explicit path needed:
+#   kernel/devices/$(DEV_NAME)/  (DTS + fragments)   rootfs/devices/$(DEV_NAME)/ (board.conf + overlay/)
+# DEV_DTB is the built .dtb basename (ramboot/flash-kernel refs).
 DEV_DTB            = proxima-9311.dtb
-DEV_ROOTFS_PROFILE = artosyn-proxima-9311.conf   # rootfs/devices/<this> (renamed in step 3-rootfs)
-DEV_ROOTFS_OVERLAY = betafpv-vr04-goggle          # rootfs per-device overlay dir (step 3-rootfs)
 DEV_UI_BOARD       = betafpv_p1_hd                 # userspace/ml-hud/src/hal/board_<this>.c
 DEV_MLIMG_TARGET   = P1_GND_VR04
