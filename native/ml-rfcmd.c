@@ -4,6 +4,7 @@
  *
  *   ml-rfcmd 1 <0|1>    MLM_RF_SET_STANDBY  (0 disarm, 1 arm)
  *   ml-rfcmd 2 <mW>     MLM_RF_SET_POWER    (25 / 100 / 200)
+ *   ml-rfcmd 8 <0|1>    MLM_RF_BIND         (0 dry-run, 1 persist; AU must be in pair mode)
  *
  * Build: native/build.sh -> native/build/ml-rfcmd (static aarch64).
  */

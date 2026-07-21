@@ -70,6 +70,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
         vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
     gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
     gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
+    gcc -O2 -Wall -static -Ivendor ml-rf-persist.c vendor/cJSON.c -o build/ml-rf-persist &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
     gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
-file build/fbtext build/minidhcpd build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/mlmenu
+file build/fbtext build/minidhcpd build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/mlmenu
