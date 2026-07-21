@@ -39,7 +39,7 @@ BAUD = 1152000
 # One-shot SPL "run full U-Boot" trigger (the reboot-reason flag, same as glue/boot/uboot-trigger.c)
 TRIGGER_ADDR = 0x0A106138
 
-# RAM load addresses (within kernel RAM, below the 0x29400000 MMZ carveout)
+# RAM load addresses (within kernel RAM, below the MMZ carveout, per the DTS reserved-memory node)
 KADDR = 0x200a0000      # vendor kernel load addr (Image ~41 MiB -> ends ~0x23200000)
 RDADDR = 0x26000000     # initramfs: clear of the kernel footprint, below the DTB
 DTADDR = 0x28000000     # DTB high + clear of the (large) Image (vendor's 0x22080000 only fits a <~32 MiB kernel)

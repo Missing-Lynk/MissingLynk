@@ -46,7 +46,7 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 . "$(dirname "$0")/../lib/uboot.sh"
 
 KADDR="${KADDR:-0x24000000}"        # OTRA container load addr (bootm decompresses Image to 0x200a0000)
-DTADDR="${DTADDR:-0x28000000}"      # dtb load addr (below the 0x29400000 MMZ carveout)
+DTADDR="${DTADDR:-0x28000000}"      # dtb load addr (below the MMZ carveout, per the DTS reserved-memory node)
 RDADDR="${RDADDR:-0x26000000}"      # optional initramfs load addr (between container and dtb)
 BOOTARGS="${3:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT}}"
 INITRAMFS="${INITRAMFS:-}"          # unset = boot the flashed rootfs; set = boot this cpio.gz
