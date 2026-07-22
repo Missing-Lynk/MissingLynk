@@ -6,7 +6,7 @@ A native-window GUI (Go + Fyne) that flashes the MissingLynk open firmware onto 
 
 1. Detects the connected device over the USB-ethernet gadget (device at `192.168.3.100`; host takes `192.168.3.222/24`, assigned by the tool since stock firmware serves no DHCP).
 2. Reads `sdk_version.json` and gates on the firmware whitelist (see Supported devices).
-3. Streams the embedded `mlflash` and the chosen `.mlimg` to `/tmp` over the SSH channel (the device has no scp/sftp).
+3. Streams the embedded `mlflash` to `/tmp` and the chosen `.mlimg` to the device's SD card over the SSH channel. The image is staged on the SD card rather than the tmpfs `/tmp` because on a low-memory unit a ~45 MiB image held in RAM starves the system and the low-memory killer reaps the flasher mid-write. Flashing therefore requires an SD card and reports an error if none is inserted.
 4. Runs `mlflash`: `--inspect` (verify hashes) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
 
 The Flash button offers two modes. "Flash and switch" runs the full sequence above. "Flash only" stops after `--flash`: the inactive slot is written but not activated, and the device stays on its current slot. Use it to write a slot without committing to it (for example to prove the new slot by RAM-boot first); activate it later with the Switch slot button.

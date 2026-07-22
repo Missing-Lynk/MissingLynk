@@ -393,8 +393,24 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 			sdk.SoftwareVersion, sdk.HardwareVersion))
 	}
 
+	// The firmware image is large and must be staged on the SD card, not the tmpfs
+	// /tmp: on a low-memory unit a ~45 MiB image in RAM starves the system and the
+	// low-memory killer reaps the flasher mid-write. This requirement applies only
+	// to flashing (which stages the image); scanning and switching stage nothing
+	// large, so they do not need an SD card.
+	sdDir, err := sdCardDir(client)
+	if err != nil {
+		return fail(emit, err)
+	}
+
+	if sdDir == "" {
+		return fail(emit, fmt.Errorf("no SD card is inserted in the device; flashing needs one to stage "+
+			"the firmware image on (the image is kept off RAM so a low-memory unit is not killed mid-write). "+
+			"Insert an SD card and try again"))
+	}
+
 	emit(Event{Level: LevelStep, Msg: "Uploading flasher and image"})
-	remoteImg, err := pushPayload(client, opt.ImagePath, emit)
+	remoteImg, err := pushPayload(client, opt.ImagePath, sdDir, emit)
 	if err != nil {
 		return fail(emit, err)
 	}
@@ -408,6 +424,11 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	if err := runMlflash(client, emit, "--flash", remoteImg); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flash failed: %w", err))
 	}
+
+	// Remove the staged image now, while the SSH connection is still live (after a
+	// flip+reboot the client is dead). Best-effort: a leftover image on the SD card
+	// is harmless.
+	removeRemote(client, remoteImg)
 
 	if opt.FlashOnly {
 		emit(Event{Level: LevelDone, Msg: "Done - the open firmware is written to the inactive slot. " +
@@ -551,9 +572,9 @@ func pushMlflash(client *device.Client, emit Emit) error {
 	return nil
 }
 
-// pushPayload uploads the embedded mlflash and the image over cat streams and
-// returns the remote image path.
-func pushPayload(client *device.Client, imagePath string, emit Emit) (string, error) {
+// pushPayload uploads the embedded mlflash (to /tmp) and the image (to stageDir,
+// an SD-card mount) over cat streams and returns the remote image path.
+func pushPayload(client *device.Client, imagePath, stageDir string, emit Emit) (string, error) {
 	if err := pushMlflash(client, emit); err != nil {
 		return "", err
 	}
@@ -565,14 +586,63 @@ func pushPayload(client *device.Client, imagePath string, emit Emit) (string, er
 
 	defer imageFile.Close()
 	stat, _ := imageFile.Stat()
-	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Uploading %s (%d MiB)", filepath.Base(imagePath), stat.Size()/(1024*1024))})
+	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Uploading %s (%d MiB) to %s", filepath.Base(imagePath), stat.Size()/(1024*1024), stageDir)})
 
-	remoteImg := path.Join(remoteDir, filepath.Base(imagePath))
+	remoteImg := path.Join(stageDir, filepath.Base(imagePath))
 	if err := client.Push(imageFile, remoteImg, "644"); err != nil {
 		return "", fmt.Errorf("uploading image: %w", err)
 	}
 
 	return remoteImg, nil
+}
+
+// sdCardDir returns the mount path of an inserted SD card on the device (a
+// writable FAT/exFAT filesystem on a block device), or "" if none is mounted.
+// The flash image is staged there rather than in the tmpfs /tmp, which a
+// low-memory unit cannot spare.
+func sdCardDir(client *device.Client) (string, error) {
+	out, err := client.Run("mount")
+	if err != nil {
+		return "", fmt.Errorf("listing device mounts: %w", err)
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		// e.g. "/dev/mmcblk2 on /tmp/sdcard type exfat (rw,relatime,...)"
+		fields := strings.Fields(line)
+		if len(fields) < 6 || fields[1] != "on" || fields[3] != "type" {
+			continue
+		}
+
+		source, mountpoint, fstype, options := fields[0], fields[2], fields[4], fields[5]
+		if !strings.HasPrefix(source, "/dev/mmcblk") && !strings.HasPrefix(source, "/dev/sd") {
+			continue
+		}
+
+		if !isFatFilesystem(fstype) || !strings.HasPrefix(options, "(rw") {
+			continue
+		}
+
+		return mountpoint, nil
+	}
+
+	return "", nil
+}
+
+// isFatFilesystem reports whether fstype is a removable-media FAT variant, the
+// signature of an SD card (as opposed to the device's ubifs/squashfs partitions).
+func isFatFilesystem(fstype string) bool {
+	switch fstype {
+	case "vfat", "exfat", "msdos", "fat", "fuseblk":
+		return true
+
+	default:
+		return false
+	}
+}
+
+// removeRemote best-effort deletes a remote path (the staged image after flashing).
+func removeRemote(client *device.Client, remotePath string) {
+	_, _ = client.Run("rm -f '" + strings.ReplaceAll(remotePath, "'", `'\''`) + "'")
 }
 
 // runMlflash runs the on-device flasher with args and relays its output as info
