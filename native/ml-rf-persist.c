@@ -39,6 +39,7 @@
 #include <sys/stat.h>
 
 #include "vendor/cJSON.h"
+#include "mlfile.h"
 
 #define PROG        "ml-rf-persist"
 #define FW_DIR      "/lib/firmware"
@@ -51,122 +52,6 @@ static const char *const CFG_FILES[] = {
     "bb_config_gnd.json.usr_cfg.json",
     "bb_config_gnd.json.normal_cfg.json",
 };
-
-/**
- * @brief Read a whole file into a NUL-terminated malloc'd buffer.
- * @return the buffer (caller frees), or NULL if the file cannot be read.
- */
-static char *read_file(const char *path)
-{
-    FILE *fp = fopen(path, "rb");
-    long len;
-    char *buf;
-
-    if (fp == NULL) {
-        return NULL;
-    }
-
-    if (fseek(fp, 0, SEEK_END) != 0 || (len = ftell(fp)) < 0) {
-        fclose(fp);
-        return NULL;
-    }
-
-    rewind(fp);
-    buf = malloc((size_t)len + 1);
-    if (buf == NULL) {
-        fclose(fp);
-        return NULL;
-    }
-
-    if (fread(buf, 1, (size_t)len, fp) != (size_t)len) {
-        free(buf);
-        fclose(fp);
-        return NULL;
-    }
-
-    fclose(fp);
-    buf[len] = '\0';
-
-    return buf;
-}
-
-/**
- * @brief fsync the directory containing @p path so a rename into it is durable. Best-effort.
- */
-static void fsync_dir(const char *path)
-{
-    char dir[512];
-    char *slash;
-    int fd;
-
-    if ((size_t) snprintf(dir, sizeof dir, "%s", path) >= sizeof dir) {
-        return;
-    }
-
-    slash = strrchr(dir, '/');
-    if (slash == NULL) {
-        return;
-    }
-
-    /* keep the root slash if the file is directly under "/" */
-    *(slash == dir ? slash + 1 : slash) = '\0';
-
-    fd = open(dir, O_RDONLY | O_DIRECTORY);
-    if (fd < 0) {
-        return;
-    }
-
-    fsync(fd);
-    close(fd);
-}
-
-/**
- * @brief Write @p data to @p path atomically (temp file, fsync, rename).
- * @return 0 on success, -1 otherwise.
- */
-static int write_file_atomic(const char *path, const char *data)
-{
-    char tmp[512];
-    FILE *fp;
-    int fd;
-    size_t len = strlen(data);
-
-    if ((size_t)snprintf(tmp, sizeof tmp, "%s.tmp", path) >= sizeof tmp) {
-        return -1;
-    }
-
-    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        fprintf(stderr, PROG ": open %s: %s\n", tmp, strerror(errno));
-        return -1;
-    }
-
-    fp = fdopen(fd, "wb");
-    if (fp == NULL) {
-        close(fd);
-        unlink(tmp);
-        return -1;
-    }
-
-    if (fwrite(data, 1, len, fp) != len || fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
-        fclose(fp);
-        unlink(tmp);
-        return -1;
-    }
-
-    fclose(fp);
-    if (rename(tmp, path) != 0) {
-        fprintf(stderr, PROG ": rename %s: %s\n", path, strerror(errno));
-        unlink(tmp);
-        return -1;
-    }
-
-    /* fsync the containing directory so the rename is durable across a power loss - otherwise a
-     * bind reported as persisted could vanish on a cut right after the rename. */
-    fsync_dir(path);
-
-    return 0;
-}
 
 /**
  * @brief Locate the candidate.slot array in a parsed config tree.
@@ -266,10 +151,10 @@ static int persist_one(const char *cfg, const char *mac)
         return -1;
     }
 
-    text = read_file(dst);
+    text = ml_read_file(dst);
     from_baked = 0;
     if (text == NULL) {
-        text = read_file(baked);
+        text = ml_read_file(baked);
         from_baked = 1;
     }
 
@@ -303,10 +188,10 @@ static int persist_one(const char *cfg, const char *mac)
     /* Back up the pre-edit config once, so a bad edit is recoverable. */
     if (snprintf(backup, sizeof backup, "%s.pre-bind", dst) < (int)sizeof backup
         && access(backup, F_OK) != 0 && access(dst, F_OK) == 0) {
-        char *cur = read_file(dst);
+        char *cur = ml_read_file(dst);
 
         if (cur != NULL) {
-            write_file_atomic(backup, cur);
+            ml_write_file_atomic(backup, cur);
             free(cur);
         }
     }
@@ -317,7 +202,7 @@ static int persist_one(const char *cfg, const char *mac)
         return -1;
     }
 
-    if (write_file_atomic(dst, out) != 0) {
+    if (ml_write_file_atomic(dst, out) != 0) {
         free(out);
         return -1;
     }
@@ -350,6 +235,8 @@ static int mac_valid(const char *mac)
 int main(int argc, char **argv)
 {
     int rc = 0;
+
+    ml_prog = PROG;
 
     if (argc != 2 || !mac_valid(argv[1])) {
         fprintf(stderr, "usage: " PROG " <mac>   (8 lowercase hex digits, e.g. e515815c)\n");
