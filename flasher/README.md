@@ -9,6 +9,10 @@ A native-window GUI (Go + Fyne) that flashes the MissingLynk open firmware onto 
 3. Streams the embedded `mlflash` and the chosen `.mlimg` to `/tmp` over the SSH channel (the device has no scp/sftp).
 4. Runs `mlflash`: `--inspect` (verify hashes) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
 
+## Switching slots without reflashing
+
+Detection also probes the inactive slot (`mlflash --slots`, read-only): the dtb model string identifies the installed image, and the kernel and rootfs magics confirm it is complete. When the other slot holds a complete recognized image, the "Switch slot" button activates it without writing any image data (only the GPT active bit changes) and reboots into it. This covers both directions: a device switched back to stock returns to the MissingLynk firmware without a reflash, and a device on the MissingLynk firmware returns to stock the same way. The switch requires confirming a dialog; switching to the MissingLynk slot warns that the slot is activated without re-verification, so a slot that no longer boots leaves the device unbootable until recovered.
+
 ## Build
 
 Built reproducibly in a container; the host needs only Docker. The Fyne cgo toolchain (OpenGL, X11 and Wayland headers) lives inside the image, so nothing beyond Docker is installed on the host.

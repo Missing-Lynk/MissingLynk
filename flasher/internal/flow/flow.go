@@ -7,6 +7,7 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -26,6 +27,19 @@ const (
 	DefaultHostCIDR = "192.168.3.222/24"
 	remoteDir       = "/tmp"
 	remoteMlflash   = "/tmp/mlflash"
+)
+
+// Per-slot reboot commands. A plain `reboot` is a no-op on this hardware (sysrq
+// is out); the reliable reset is the watchdog, fired WITHOUT setting the SPL
+// reboot-reason flag so the SPL Falcon-boots the GPT-active slot (setting that
+// flag would instead drop to U-Boot).
+const (
+	// The vendor slot has ar_wdt_service: arm the watchdog for 1s and stop petting
+	// it. The connection drops as the SoC resets, so the command error is ignored.
+	stockRebootCmd = "sync; /usr/bin/ar_wdt_service -t 1 >/dev/null 2>&1 & sleep 1; killall ar_wdt_service"
+
+	// The open slot ships the self-contained wdt-reset helper.
+	openRebootCmd = "sync; /usr/local/bin/wdt-reset"
 )
 
 // Level classifies an event for rendering.
@@ -70,6 +84,33 @@ type DeviceInfo struct {
 	Flashable   bool   `json:"flashable"`
 	AlreadyOpen bool   `json:"alreadyOpen"` // already running our open firmware
 	Note        string `json:"note"`        // why not flashable / status detail
+
+	// The inactive slot's contents (from mlflash --slots), for the switch-slot
+	// feature. OtherContent is "open", "vendor", "empty", or "unknown"; Switchable
+	// is true only when that slot holds a complete recognized image the device can
+	// be switched to.
+	OtherSlot    string `json:"otherSlot"`
+	OtherContent string `json:"otherContent"`
+	Switchable   bool   `json:"switchable"`
+}
+
+// slotState mirrors the JSON object mlflash --slots prints.
+type slotState struct {
+	Running       string `json:"running"`
+	GptActive     string `json:"gpt_active"`
+	Consistent    bool   `json:"consistent"`
+	OtherSlot     string `json:"other_slot"`
+	OtherContent  string `json:"other_content"`
+	OtherModel    string `json:"other_model"`
+	OtherComplete bool   `json:"other_complete"`
+}
+
+// isSwitchTarget reports whether the inactive slot holds a complete recognized
+// image (ours or the vendor's) and the slot bookkeeping is sane, so flipping to
+// it is offerable.
+func (s *slotState) isSwitchTarget() bool {
+	return s.Consistent && s.OtherComplete &&
+		(s.OtherContent == "open" || s.OtherContent == "vendor")
 }
 
 func (o *Options) applyDefaults() {
@@ -107,6 +148,16 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 			Note: "This device is already running the MissingLynk firmware.",
 		}
 
+		// The inactive slot should be the untouched stock firmware; if it is, offer
+		// switching back to it. Goggle only (the device-tree model names the unit),
+		// matching the gate on the stock branch.
+		if strings.Contains(strings.ToLower(info.Name), "goggle") {
+			fillOtherSlot(client, info, "vendor", emit)
+		}
+		if info.Switchable {
+			info.Note += " The stock firmware is on the other slot; it can be switched back."
+		}
+
 		emit(Event{Level: LevelDone, Msg: info.Note})
 		return info, nil
 	}
@@ -136,6 +187,15 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		info.Note = "Ready to flash."
 	}
 
+	// A previously flashed open image may still be intact on the inactive slot; if
+	// it is (goggle only), the device can be switched to it without reflashing.
+	if sdk.Identify() == device.UnitGoggle {
+		fillOtherSlot(client, info, "open", emit)
+		if info.Switchable {
+			info.Note += " The MissingLynk firmware is on the other slot; it can be switched to directly."
+		}
+	}
+
 	// Close out the scan log with the outcome, so it does not just stop.
 	if info.Flashable {
 		emit(Event{Level: LevelDone, Msg: info.Note})
@@ -144,6 +204,126 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	}
 
 	return info, nil
+}
+
+// fillOtherSlot probes the inactive slot and records what it holds on info.
+// Switchable is set only when that slot carries a complete image of the expected
+// kind (wantContent), i.e. the opposite of what is running. A failed probe is a
+// warning, not an error: the device card just shows no other-slot line.
+func fillOtherSlot(client *device.Client, info *DeviceInfo, wantContent string, emit Emit) {
+	state, err := probeSlots(client, emit)
+	if err != nil {
+		emit(Event{Level: LevelWarn, Msg: fmt.Sprintf("inactive-slot probe failed: %v", err)})
+		return
+	}
+
+	info.OtherSlot = state.OtherSlot
+	info.OtherContent = state.OtherContent
+	info.Switchable = state.isSwitchTarget() && state.OtherContent == wantContent
+}
+
+// probeSlots uploads mlflash and runs its read-only --slots report. Nothing is
+// written on the device beyond the mlflash binary itself (in /tmp).
+func probeSlots(client *device.Client, emit Emit) (*slotState, error) {
+	if err := pushMlflash(client, emit); err != nil {
+		return nil, err
+	}
+
+	out, err := client.Run(remoteMlflash + " --slots")
+	// mlflash exits non-zero when the probe could not complete, but the JSON line
+	// still carries what it determined, so parse before judging the exit status.
+	var state slotState
+	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(out)), &state); jsonErr != nil {
+		if err != nil {
+			return nil, fmt.Errorf("mlflash --slots failed: %w", err)
+		}
+
+		return nil, fmt.Errorf("parsing mlflash --slots output %q: %w", strings.TrimSpace(out), jsonErr)
+	}
+
+	return &state, nil
+}
+
+// OtherSlotDescription is the human name of an inactive-slot classification, for
+// the GUI's device card and dialogs.
+func OtherSlotDescription(content string) string {
+	switch content {
+	case "open":
+		return "the MissingLynk open firmware"
+
+	case "vendor":
+		return "the stock firmware"
+
+	case "empty":
+		return "nothing (erased)"
+
+	default:
+		return "unrecognized data"
+	}
+}
+
+// SwitchSlot makes the inactive slot the active boot slot without writing any
+// image data (gpt0 is the only partition written) and reboots into it. Detect
+// must have reported Switchable; the slot state is re-verified here right before
+// the flip (defence in depth, mirroring how Flash re-verifies identity).
+// switchToOpen is the direction the user consented to (true = activate the open
+// slot); if the device's actual state implies the other direction, the switch is
+// refused, so the consent dialog the user saw always matches what happens.
+func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) error {
+	opt.applyDefaults()
+
+	emit(Event{Level: LevelStep, Msg: "Preparing"})
+	if err := ensureLink(ctx, opt, emit); err != nil {
+		return err
+	}
+
+	client, runningOpen, err := connect(opt.DeviceIP)
+	if err != nil {
+		return fail(emit, fmt.Errorf("SSH connect to %s failed: %w", opt.DeviceIP, err))
+	}
+
+	defer client.Close()
+	if !runningOpen != switchToOpen {
+		return fail(emit, fmt.Errorf("the device's firmware changed since the scan "+
+			"(the confirmed switch direction no longer applies); re-scan and try again"))
+	}
+
+	emit(Event{Level: LevelStep, Msg: "Re-checking the slots"})
+	state, err := probeSlots(client, emit)
+	if err != nil {
+		return fail(emit, err)
+	}
+
+	wantContent := "open"
+	if runningOpen {
+		wantContent = "vendor"
+	}
+
+	if !state.isSwitchTarget() || state.OtherContent != wantContent {
+		return fail(emit, fmt.Errorf("slot %s does not hold a complete image of %s (found: %s); refusing to switch",
+			state.OtherSlot, OtherSlotDescription(wantContent), OtherSlotDescription(state.OtherContent)))
+	}
+
+	emit(Event{Level: LevelStep, Msg: fmt.Sprintf("Making slot %s the active boot slot", state.OtherSlot)})
+	if err := runMlflash(client, emit, "--flip"); err != nil {
+		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
+	}
+
+	// The reboot mechanism and the password of the firmware we land on differ by
+	// direction.
+	rebootCmd, targetPassword := stockRebootCmd, device.OpenPassword
+	doneMsg := "Done - the device is now running the MissingLynk open firmware."
+	if runningOpen {
+		rebootCmd, targetPassword = openRebootCmd, device.StockPassword
+		doneMsg = "Done - the device is now running the stock firmware."
+	}
+
+	if err := rebootAndWait(client, opt.DeviceIP, rebootCmd, targetPassword, emit); err != nil {
+		return fail(emit, err)
+	}
+
+	emit(Event{Level: LevelDone, Msg: doneMsg})
+	return nil
 }
 
 // Flash performs the real slot-B write and the active-slot flip for opt.ImagePath.
@@ -211,7 +391,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	if err := rebootAndWait(client, opt.DeviceIP, emit); err != nil {
+	if err := rebootAndWait(client, opt.DeviceIP, stockRebootCmd, device.OpenPassword, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -327,13 +507,22 @@ func isAuthError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "unable to authenticate")
 }
 
-// pushPayload uploads the embedded mlflash and the image over cat streams and
-// returns the remote image path.
-func pushPayload(client *device.Client, imagePath string, emit Emit) (string, error) {
+// pushMlflash uploads the embedded on-device flasher to /tmp on the device.
+func pushMlflash(client *device.Client, emit Emit) error {
 	mlflashBin, mlflashSize := payload.Mlflash()
 	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Uploading mlflash (%d KiB)", mlflashSize/1024)})
 	if err := client.Push(mlflashBin, remoteMlflash, "755"); err != nil {
-		return "", fmt.Errorf("uploading mlflash: %w", err)
+		return fmt.Errorf("uploading mlflash: %w", err)
+	}
+
+	return nil
+}
+
+// pushPayload uploads the embedded mlflash and the image over cat streams and
+// returns the remote image path.
+func pushPayload(client *device.Client, imagePath string, emit Emit) (string, error) {
+	if err := pushMlflash(client, emit); err != nil {
+		return "", err
 	}
 
 	imageFile, err := os.Open(imagePath)
@@ -374,33 +563,30 @@ func runMlflash(client *device.Client, emit Emit, args ...string) error {
 	})
 }
 
-// rebootAndWait triggers the watchdog reboot (never `reboot`) and waits for the
-// open slot B to reappear as a reachable, SSH-answering device.
-func rebootAndWait(client *device.Client, ip string, emit Emit) error {
-	emit(Event{Level: LevelStep, Msg: "Rebooting into the open firmware"})
-	// A plain `reboot` is a no-op here (sysrq is out); force the PMIC watchdog the
-	// vendor way - arm it for 1s and stop petting - which resets WITHOUT setting the
-	// SPL reboot-reason flag, so the SPL Falcon-boots the now-active slot B (setting
-	// that flag would instead drop to U-Boot). Runs on the vendor slot A we flashed
-	// from, which has ar_wdt_service. The connection drops as the SoC resets, so the
-	// error is expected and ignored.
-	_, _ = client.Run("sync; /usr/bin/ar_wdt_service -t 1 >/dev/null 2>&1 & sleep 1; killall ar_wdt_service")
+// rebootAndWait triggers the watchdog reboot (never `reboot`; see the reboot-
+// command constants) and waits for the now-active slot to reappear as a
+// reachable device that answers SSH with targetPassword. The connection drops as
+// the SoC resets, so the reboot command's error is expected and ignored.
+func rebootAndWait(client *device.Client, ip, rebootCmd, targetPassword string, emit Emit) error {
+	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
+	_, _ = client.Run(rebootCmd)
 
 	emit(Event{Level: LevelInfo, Msg: "Waiting for the device to come back (this can take a minute)"})
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(3 * time.Second)
 		if device.Reachable(ip, 2*time.Second) {
-			if c, err := device.Dial(ip, "root", device.OpenPassword, 5*time.Second); err == nil {
+			if c, err := device.Dial(ip, "root", targetPassword, 5*time.Second); err == nil {
 				_ = c.Close()
-				emit(Event{Level: LevelInfo, Msg: "Open firmware is up and reachable"})
+				emit(Event{Level: LevelInfo, Msg: "The device is back up and reachable"})
 				return nil
 			}
 		}
 	}
 
-	return fmt.Errorf("the device did not come back on the open firmware within the timeout; " +
-		"stock firmware on slot A is untouched - power-cycle and it will boot as before")
+	return fmt.Errorf("the device did not come back on the newly activated firmware within the timeout; " +
+		"the slot flip itself is already committed, so power-cycle the device to (re)try booting " +
+		"the newly activated slot (the stock firmware slot is never modified)")
 }
 
 // fail emits an error event and returns the error.

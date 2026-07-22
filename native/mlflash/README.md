@@ -9,6 +9,8 @@ mlflash --inspect <image.mlimg>              print the manifest, re-verify every
 mlflash --dry-run <image.mlimg> [--slot a|b] device preflight (below); NO writes
 mlflash --flash   <image.mlimg> [--slot a|b] [--flip] [--force-a]  flash the inactive slot, verify
 mlflash --flip                  [--slot a|b] set the inactive slot active (no write, gpt0 only)
+mlflash --slots                              print the A/B slot state + a classification of the
+                                             inactive slot's contents as JSON; NO writes
 ```
 
 `--inspect` needs no device; it parses the bundle and checks each component's hash (the same digests `mlimg.py inspect` prints).
@@ -16,6 +18,8 @@ mlflash --flip                  [--slot a|b] set the inactive slot active (no wr
 `--flash` writes every component to the inactive slot behind a full preflight (running/GPT-slot agreement, target != running slot, board-identity match, and every component's hash/method/target resolved) - nothing is written unless all checks pass. The raw partitions (env/dtb/kernel/uboot) are written and SHA-256 readback-verified; the `userapp` rootfs is written through vendored mtd-utils `ubiformat` (bad-block skipping, PEB distribution, EC headers - not a raw write, so no byte-for-byte readback: the image bytes are verified against the manifest in preflight, correctness on-flash is ubiformat's own per-eraseblock write path). By default it does NOT flip the active slot.
 
 `--flip` sets the inactive slot active and re-reads `gpt0` to confirm; it writes only gpt0, never partition data. Use it standalone (`mlflash --flip`) as the last step of the flash -> flashboot -> flip workflow - flash the slot, prove it with a flashboot, then flip the already-proven slot without rewriting it - or combined (`--flash ... --flip`) to flip immediately after a verified flash. It refuses if the running and GPT-active slots disagree (finish/reboot out of a flashboot first). A verified flash proves the bytes landed, not that the slot boots, so a flip can leave an unproven slot active (HARD RULE 2); prove the slot with a flashboot first (`make flashboot`, which boots the flashed kernel1/dtb1/rootfs with slot A still active). `--force-a` permits writing an INACTIVE slot A, allowed only while the running slot is B so slot A is never the live target. Both flags act on the flag alone (no interactive prompt, so mlflash can run unattended); the guardrails are structural: `--flip` and `--force-a` are mutually exclusive, so slot A always stays an intact, recoverable keystone.
+
+`--slots` reports the running slot, the GPT-active slot, whether they agree, and a read-only classification of the inactive slot's contents: the dtb partition's root `model` property names the installed image (the open firmware's "Artosyn Proxima-9311 (BetaFPV ..." vs the stock "Artosyn, Proxima Development Board"), and the kernel (OTRA container magic; a kernel partition always holds the vendor OTRA+uImage container the SPL boots, never a raw arm64 Image) and userapp (UBI magic) heads confirm the slot is complete. One JSON object on stdout, e.g. `{"running":"A","gpt_active":"A","consistent":true,"other_slot":"B","other_content":"open","other_model":"...","other_kernel":true,"other_rootfs":true,"other_complete":true}`. This is the host flasher's input for offering a slot switch; nothing is written.
 
 `--dry-run` is the on-device preflight: it reads the running slot from `/proc/cmdline` (`ubi.mtd=`, name-resolved against `userapp0`/`userapp1`), cross-checks it against the GPT active bit in `gpt0` (hard-abort if they disagree), selects the target slot (the inactive one, or `--slot`), refuses a target equal to the running slot, resolves every component's target partition by name in `/proc/mtd`, and verifies the image hashes. It performs no writes.
 
@@ -29,6 +33,7 @@ Sources live in `src/`:
 | `util.{h,c}` | file slurp, SHA-256 (OpenSSL), little-endian readers |
 | `mlimg.{h,c}` | the `.mlimg` bundle: ustar tar reader + `manifest.json` (cJSON) |
 | `slot.{h,c}` | A/B slots: mtd names, running slot, GPT active bit (read + flip), guarded target resolve |
+| `probe.{h,c}` | read-only slot content classification: dtb model string, kernel/rootfs magics |
 | `mtd.{h,c}` | raw MTD partition write + SHA-256 readback verify (mirrors `mtdtool`) |
 | `ubi.{h,c}` | `userapp` UBI write: streams the image into vendored mtd-utils `ubiformat` |
 | `board.{h,c}` | device-identity gate: manifest `target_device` vs the device's `product_version` |

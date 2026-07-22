@@ -66,7 +66,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     done &&
     gcc -O2 -Wall -static -Ivendor $MTDUTILS_INC \
         mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c \
-        mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
+        mlflash/src/probe.c mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
         vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
     gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
     gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&

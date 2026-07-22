@@ -11,6 +11,7 @@
  *   util.{h,c}   file slurp, SHA-256 (OpenSSL libcrypto), little-endian readers
  *   mlimg.{h,c}  the .mlimg bundle: ustar tar reader + manifest.json (cJSON)
  *   slot.{h,c}   A/B slot detection (mtd names, running slot, GPT active bit)
+ *   probe.{h,c}  read-only slot content classification (dtb model, kernel/rootfs magics)
  *   mtd.{h,c}    raw-partition write + SHA-256 readback (env/dtb/kernel/uboot)
  *   ubi.{h,c}    userapp UBI write via vendored mtd-utils ubiformat
  *
@@ -23,6 +24,8 @@
  *                                      preflight; flips the active slot only with --flip
  *   mlflash --flip                     standalone: set the inactive slot active (gpt0 write +
  *                                      readback), no component writes
+ *   mlflash --slots                    print the A/B slot state and a read-only classification
+ *                                      of the inactive slot's contents as one JSON object
  *
  * Guards: writing slot A requires --force-a, which is permitted only while running on slot B and
  * is mutually exclusive with --flip. Static build, see native/build.sh.
@@ -34,9 +37,47 @@
 #include "util.h"
 #include "mlimg.h"
 #include "slot.h"
+#include "probe.h"
 #include "mtd.h"
 #include "ubi.h"
 #include "board.h"
+
+/* Display letter for a slot index from running_slot()/gpt_active_slot(). */
+static const char *slot_letter(int slot)
+{
+    return slot == 0 ? "A" : slot == 1 ? "B" : "unknown";
+}
+
+/*
+ * Report the A/B slot state as one JSON object on stdout: the running slot, the GPT-active slot,
+ * whether they agree, and a read-only classification of the inactive slot's contents. This is the
+ * host flasher's input for offering a switch to the other slot; nothing is written. Returns 0 when
+ * the running slot and the inactive-slot probe both resolved, 1 otherwise.
+ */
+static int cmd_slots(void)
+{
+    int running = running_slot();
+    int gpt = gpt_active_slot();
+    int consistent = (running >= 0 && gpt >= 0 && running == gpt);
+    int other = (running >= 0) ? !running : -1;
+
+    struct slot_probe probe;
+    int probed = (other >= 0 && probe_slot(other, &probe) == 0);
+
+    printf("{\"running\":\"%s\",\"gpt_active\":\"%s\",\"consistent\":%s",
+           slot_letter(running), slot_letter(gpt), consistent ? "true" : "false");
+    if (probed) {
+        printf(",\"other_slot\":\"%s\",\"other_content\":\"%s\",\"other_model\":\"%s\","
+               "\"other_kernel\":%s,\"other_rootfs\":%s,\"other_complete\":%s",
+               slot_letter(other), slot_content_name(probe.content), probe.model,
+               probe.has_kernel ? "true" : "false",
+               probe.has_rootfs ? "true" : "false",
+               probe.is_complete ? "true" : "false");
+    }
+    printf("}\n");
+
+    return probed ? 0 : 1;
+}
 
 static int cmd_inspect(const char *path)
 {
@@ -465,6 +506,8 @@ static void usage(void)
             "  mlflash --flash   <image.mlimg> [--slot a|b] [--flip] [--force-a]\n"
             "                                               flash the inactive slot, verify\n"
             "  mlflash --flip                  [--slot a|b] set the inactive slot active, no write\n"
+            "  mlflash --slots                              print the A/B slot state + inactive-\n"
+            "                                               slot classification as JSON, no write\n"
             "    --flip     (with --flash) after a verified flash, set it active; or standalone\n"
             "               to flip an already-flashed+proven slot (overrides Rule 2; no prompt)\n"
             "    --force-a  permit writing an inactive slot A (only while running B; no prompt)\n");
@@ -480,7 +523,7 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--inspect") || !strcmp(argv[i], "--dry-run") ||
-            !strcmp(argv[i], "--flash")) {
+            !strcmp(argv[i], "--flash") || !strcmp(argv[i], "--slots")) {
             mode = argv[i];
         } else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
             slot = argv[++i];
@@ -501,6 +544,15 @@ int main(int argc, char **argv)
         strcmp(slot, "b") && strcmp(slot, "B")) {
         fprintf(stderr, "--slot must be a or b\n");
         return 2;
+    }
+
+    /* Read-only slot report: no image, no write flags. */
+    if (mode && !strcmp(mode, "--slots")) {
+        if (image || want_flip || force_a || slot) {
+            fprintf(stderr, "--slots takes no image and no other flags\n");
+            return 2;
+        }
+        return cmd_slots();
     }
 
     /* Standalone flip: --flip with no flash/inspect/dry-run mode and no image. */

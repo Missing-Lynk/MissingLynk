@@ -60,6 +60,7 @@ type ui struct {
 	rescanButton  *widget.Button
 	chooseButton  *widget.Button
 	flashButton   *widget.Button
+	switchButton  *widget.Button
 
 	logView    *widget.Label
 	logScroll  *container.Scroll
@@ -70,6 +71,9 @@ type ui struct {
 	flashable     bool
 	flashing      bool
 	scanning      bool
+	switchable    bool
+	switchToOpen  bool // switch direction: true = activate the open slot, false = back to stock
+	switching     bool
 }
 
 func newUI(win fyne.Window) *ui {
@@ -85,8 +89,10 @@ func newUI(win fyne.Window) *ui {
 	u.chooseButton = widget.NewButtonWithIcon("Choose image", theme.FolderOpenIcon(), u.chooseImage)
 	u.flashButton = widget.NewButtonWithIcon("Flash", theme.DownloadIcon(), u.confirmFlash)
 	u.flashButton.Importance = widget.HighImportance
+	u.switchButton = widget.NewButtonWithIcon("Switch slot", theme.MediaReplayIcon(), u.confirmSwitch)
 	u.chooseButton.Disable()
 	u.flashButton.Disable()
+	u.switchButton.Disable()
 
 	// The log is a label inside a scroll: unlike an entry, a Scroll can be reliably
 	// pinned to the bottom (ScrollToBottom) as lines arrive. A label is not
@@ -113,7 +119,7 @@ func newUI(win fyne.Window) *ui {
 
 	// Top: device status. Centre: the log, filling. Bottom: full-width actions.
 	top := container.NewVBox(u.deviceState, statusSlot, widget.NewSeparator())
-	buttons := container.NewGridWithColumns(3, u.rescanButton, u.chooseButton, u.flashButton)
+	buttons := container.NewGridWithColumns(4, u.rescanButton, u.chooseButton, u.flashButton, u.switchButton)
 	bottom := container.NewVBox(
 		container.NewBorder(nil, nil, nil, u.copyButton, u.selectedLabel),
 		buttons,
@@ -148,6 +154,7 @@ func (u *ui) scan() {
 		u.logView.SetText("")
 		u.setBusy(true)
 		u.flashable = false
+		u.switchable = false
 		u.refresh()
 	})
 
@@ -161,6 +168,7 @@ func (u *ui) scan() {
 			u.deviceState.SetText("No device found")
 			u.deviceStatus.SetText("Connect one device over USB, power it on, then Re-scan.")
 			u.flashable = false
+			u.switchable = false
 
 		case info.AlreadyOpen:
 			name := info.Name
@@ -168,8 +176,10 @@ func (u *ui) scan() {
 				name = "Device"
 			}
 			u.deviceState.SetText(name)
-			u.deviceStatus.SetText("Already running the MissingLynk firmware.")
+			u.deviceStatus.SetText(info.Note)
 			u.flashable = false
+			u.switchable = info.Switchable
+			u.switchToOpen = false
 
 		default:
 			title := info.Product
@@ -179,6 +189,8 @@ func (u *ui) scan() {
 			u.deviceState.SetText(title)
 			u.deviceStatus.SetText(fmt.Sprintf("firmware %s   hardware %s\n%s", info.Firmware, info.Hardware, info.Note))
 			u.flashable = info.Flashable
+			u.switchable = info.Switchable
+			u.switchToOpen = true
 		}
 
 		u.refresh()
@@ -276,6 +288,72 @@ func (u *ui) startFlash() {
 	}()
 }
 
+// --- switch slot -----------------------------------------------------------
+
+// confirmSwitch shows the switch-slot confirmation. The confirm button stays
+// disabled until the understanding checkbox is ticked, so a reflexive click
+// cannot pass it; the wording spells out the direction-specific risk.
+func (u *ui) confirmSwitch() {
+	if !u.switchable || u.flashing || u.switching {
+		return
+	}
+
+	text := "This makes the other slot (stock firmware) the active boot slot and reboots into it. " +
+		"That slot is the untouched factory install, so this is the low-risk direction. " +
+		"You can switch back to the MissingLynk firmware the same way afterwards."
+	if u.switchToOpen {
+		text = "This makes the other slot (MissingLynk open firmware) the active boot slot and reboots " +
+			"into it, WITHOUT rewriting or re-verifying it. If that slot no longer boots, the device " +
+			"will not start until the boot slot is recovered. Only proceed if this tool flashed the " +
+			"open firmware onto this device before and it booted."
+	}
+
+	message := widget.NewLabel(text)
+	message.Wrapping = fyne.TextWrapWord
+	acknowledge := widget.NewCheck("I understand what switching the boot slot does", nil)
+
+	var confirmDialog *dialog.CustomDialog
+	confirmButton := widget.NewButtonWithIcon("Switch", theme.ConfirmIcon(), func() {
+		confirmDialog.Hide()
+		u.startSwitch()
+	})
+	confirmButton.Importance = widget.HighImportance
+	confirmButton.Disable()
+	acknowledge.OnChanged = func(checked bool) { setEnabled(confirmButton, checked) }
+	cancelButton := widget.NewButton("Cancel", func() { confirmDialog.Hide() })
+
+	confirmDialog = dialog.NewCustomWithoutButtons("Switch boot slot?",
+		container.NewVBox(message, acknowledge), u.win)
+	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, confirmButton})
+	confirmDialog.Show()
+	confirmDialog.Resize(fyne.NewSize(520, 0))
+}
+
+func (u *ui) startSwitch() {
+	u.switching = true
+	u.refresh()
+	u.logBuilder.Reset()
+	u.logView.SetText("")
+	u.setBusy(true)
+
+	switchToOpen := u.switchToOpen
+	go func() {
+		err := flow.SwitchSlot(context.Background(), flow.Options{}, switchToOpen, u.onEvent)
+		fyne.Do(func() {
+			u.switching = false
+			u.setBusy(false)
+			u.refresh()
+			if err == nil {
+				// SwitchSlot already waited for the device to reboot onto the other
+				// slot; confirm it and re-scan to refresh the device card.
+				dialog.ShowInformation("Switch complete",
+					"The device is now running the firmware from the other slot.", u.win)
+				go u.scan()
+			}
+		})
+	}()
+}
+
 // onEvent appends a flow event to the log (marshalled onto the UI thread). Used
 // by both the scan and flash phases.
 func (u *ui) onEvent(e flow.Event) {
@@ -309,10 +387,11 @@ func (u *ui) appendLog(line string) {
 // refresh updates the enabled state of the action buttons from the current flags.
 // Must run on the UI thread.
 func (u *ui) refresh() {
-	busy := u.scanning || u.flashing
+	busy := u.scanning || u.flashing || u.switching
 	setEnabled(u.rescanButton, !busy)
 	setEnabled(u.chooseButton, u.flashable && !busy)
 	setEnabled(u.flashButton, u.flashable && !busy && u.selectedImage != "")
+	setEnabled(u.switchButton, u.switchable && !busy)
 }
 
 func setEnabled(button *widget.Button, enabled bool) {
