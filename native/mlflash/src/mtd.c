@@ -13,6 +13,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <linux/ioctl.h>
+#include <openssl/sha.h>
 
 #include "mtd.h"
 #include "util.h"
@@ -120,6 +121,28 @@ static int write_image(int fd, const struct mtd_info_user *mi,
     return 0;
 }
 
+/* Resolve the ECC-corrected read path for a partition into `out`: /dev/mtdN -> /dev/mtdblockN for
+ * an MTD char device, the path verbatim for a plain-file test target. Returns 0, or -1 (message
+ * printed) if an mtd path does not look like /dev/mtdN.
+ */
+static int read_path(const char *dev_path, int is_mtd, char *out, size_t out_sz)
+{
+    if (!is_mtd) {
+        snprintf(out, out_sz, "%s", dev_path);
+        return 0;
+    }
+
+    const char *base = strrchr(dev_path, '/');
+    base = base ? base + 1 : dev_path;
+    if (strncmp(base, "mtd", 3) != 0) {
+        fprintf(stderr, "cannot derive mtdblock path from %s\n", dev_path);
+        return -1;
+    }
+
+    snprintf(out, out_sz, "/dev/mtdblock%s", base + 3);
+    return 0;
+}
+
 /* Read `len` bytes back from a written partition to verify. For an MTD char device this is the
  * ECC-corrected /dev/mtdblockN; for a plain file it is the file itself. Caller frees.
  */
@@ -127,18 +150,8 @@ static unsigned char *readback(const char *dev_path, int is_mtd, size_t len)
 {
     char rb_path[64];
 
-    if (is_mtd) {
-        /* /dev/mtdN -> /dev/mtdblockN (ECC-corrected read path). */
-        const char *base = strrchr(dev_path, '/');
-        base = base ? base + 1 : dev_path;
-        if (strncmp(base, "mtd", 3) != 0) {
-            fprintf(stderr, "cannot derive mtdblock path from %s\n", dev_path);
-            return NULL;
-        }
-
-        snprintf(rb_path, sizeof rb_path, "/dev/mtdblock%s", base + 3);
-    } else {
-        snprintf(rb_path, sizeof rb_path, "%s", dev_path);
+    if (read_path(dev_path, is_mtd, rb_path, sizeof rb_path) != 0) {
+        return NULL;
     }
 
     int fd = open(rb_path, O_RDONLY);
@@ -221,6 +234,77 @@ int mtd_write_verify(const char *dev_path, const unsigned char *data, size_t len
             dev_path, want_sha256_hex, hex);
         return -1;
     }
+
+    return 0;
+}
+
+int mtd_partition_sha256(const char *dev_path, char hex[65])
+{
+    struct mtd_info_user mi;
+    int is_mtd = 0;
+    unsigned long total = 0;
+
+    int fd = open(dev_path, O_RDONLY);
+    if (fd < 0) {
+        perror(dev_path);
+        return -1;
+    }
+
+    if (ioctl(fd, MEMGETINFO, &mi) == 0) {
+        is_mtd = 1;
+        total = mi.size;
+    } else {
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size <= 0) {
+            fprintf(stderr, "%s: cannot size for hashing\n", dev_path);
+            close(fd);
+            return -1;
+        }
+        total = (unsigned long)st.st_size;
+    }
+    close(fd);
+
+    char rb_path[64];
+    if (read_path(dev_path, is_mtd, rb_path, sizeof rb_path) != 0) {
+        return -1;
+    }
+
+    int rb_fd = open(rb_path, O_RDONLY);
+    if (rb_fd < 0) {
+        perror(rb_path);
+        return -1;
+    }
+
+    /* Drop any stale mtdblock cache so a partition written earlier in this run hashes fresh. */
+    if (is_mtd) {
+        ioctl(rb_fd, BLKFLSBUF);
+    }
+
+    /* Stream the whole partition through SHA-256 so a multi-megabyte kernel needs no bulk buffer. */
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    unsigned char buf[65536];
+    unsigned long done = 0;
+    while (done < total) {
+        size_t want = (total - done) < sizeof buf ? (size_t)(total - done) : sizeof buf;
+        ssize_t got = read(rb_fd, buf, want);
+        if (got <= 0) {
+            fprintf(stderr, "%s: short read hashing partition\n", rb_path);
+            close(rb_fd);
+            return -1;
+        }
+
+        SHA256_Update(&ctx, buf, (size_t)got);
+        done += (unsigned long)got;
+    }
+    close(rb_fd);
+
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256_Final(digest, &ctx);
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(hex + i * 2, "%02x", digest[i]);
+    }
+    hex[SHA256_DIGEST_LENGTH * 2] = 0;
 
     return 0;
 }

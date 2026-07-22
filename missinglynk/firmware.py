@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -65,6 +66,46 @@ def identify(goggle: Goggle) -> str:
         return "P1_GND"
 
     return "unknown"
+
+
+def read_ml_release(goggle: Goggle) -> dict[str, str]:
+    """
+    Parse the open image's os-release-style /etc/ml-release into a dict of KEY -> value (quotes
+    stripped). Empty dict when the file is absent (a stock/vendor unit has no ml-release).
+    """
+    try:
+        text: str = goggle.read_file("/etc/ml-release").decode(errors="replace")
+    except IOError:
+        return {}
+
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip().strip('"')
+
+    return out
+
+
+def read_device_record(goggle: Goggle) -> dict:
+    """
+    Parse the per-unit /usrdata/missinglynk/device.json. Empty dict when the file is absent or
+    unparseable (a stock unit, or an open slot that has never been flashed by mlflash).
+    """
+    try:
+        text: str = goggle.read_file("/usrdata/missinglynk/device.json").decode(errors="replace")
+    except IOError:
+        return {}
+
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return {}
+
+    return record if isinstance(record, dict) else {}
 
 
 # --- vendor blobs the open slot-B stack needs (ported from glue/fetch/fetch-vendor-blobs.sh) ---

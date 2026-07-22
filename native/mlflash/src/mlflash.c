@@ -41,6 +41,8 @@
 #include "mtd.h"
 #include "ubi.h"
 #include "board.h"
+#include "device_record.h"
+#include "mlfile.h"
 
 /* Display letter for a slot index from running_slot()/gpt_active_slot(). */
 static const char *slot_letter(int slot)
@@ -458,6 +460,15 @@ static int cmd_flash(const char *path, const char *want_slot, int want_flip, int
         rc = flash_commit(img, img_len, &m, devpath, target);
     }
 
+    /* Record the install in the per-unit device.json. Best-effort: the slot is already written and
+     * verified, so a record failure is a warning, not a flash failure (it never gates the flip). */
+    if (rc == 0) {
+        if (device_record_write_flash(&m, devpath, target) != 0) {
+            fprintf(stderr, "flash: WARNING device.json not updated; the slot is written and "
+                    "verified regardless.\n");
+        }
+    }
+
     if (rc == 0 && want_flip) {
         rc = flash_flip(target);
     }
@@ -520,6 +531,8 @@ int main(int argc, char **argv)
     const char *slot = NULL;
     int want_flip = 0;
     int force_a = 0;
+
+    ml_prog = "mlflash";
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--inspect") || !strcmp(argv[i], "--dry-run") ||

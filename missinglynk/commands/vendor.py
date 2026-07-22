@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime, timezone
 
 from .. import firmware
 from .common import FIRMWARE_BIN, connect
@@ -14,12 +15,60 @@ _UNIT_LABELS: dict[str, str] = {
 }
 
 
+def _fmt_epoch(value: object) -> str:
+    """Format a Unix-epoch number as a readable UTC timestamp, or pass it through verbatim."""
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, TypeError, OSError):
+        return str(value)
+
+
+def _print_open_identity(release: dict[str, str], record: dict) -> None:
+    """Print the open-stack image + per-unit record, one indented line per present datum."""
+    if release:
+        version: str = release.get("ML_VERSION", "?")
+        extras: list[str] = [x for x in (release.get("ML_FLAVOR", ""),
+                                         f"built {release['ML_BUILD_TIME']}"
+                                         if release.get("ML_BUILD_TIME") else "") if x]
+        suffix: str = f" ({', '.join(extras)})" if extras else ""
+        print(f"  open firmware: {version}{suffix}")
+        if release.get("ML_KERNEL_VERSION"):
+            print(f"  kernel:        {release['ML_KERNEL_VERSION']}")
+
+    if record:
+        installed = record.get("installed")
+        if isinstance(installed, dict) and installed.get("version"):
+            bits: list[str] = [str(installed["version"])]
+            if installed.get("slot"):
+                bits.append(f"slot {installed['slot']}")
+
+            if installed.get("flash_time") is not None:
+                bits.append(f"flashed {_fmt_epoch(installed['flash_time'])}")
+
+            print(f"  installed:     {', '.join(bits)}")
+
+        boots = record.get("boots")
+        if boots is not None:
+            state: str = "never proven" if boots == 0 else f"{int(boots)} healthy boot(s)"
+            print(f"  boots:         {state}")
+
+        if record.get("nickname"):
+            print(f"  nickname:      {record['nickname']}")
+
+        vendor = record.get("vendor")
+        if isinstance(vendor, dict) and vendor.get("sequence_number") is not None:
+            print(f"  serial:        {vendor['sequence_number']}")
+
+
 def _cmd_identify(args: argparse.Namespace) -> int:
     with connect(args) as goggle:
         unit_id: str = firmware.identify(goggle)
+        release: dict[str, str] = firmware.read_ml_release(goggle)
+        record: dict = firmware.read_device_record(goggle)
 
     label: str = _UNIT_LABELS.get(unit_id, "unknown unit")
     print(f"{label} ({unit_id})")
+    _print_open_identity(release, record)
 
     return 0
 

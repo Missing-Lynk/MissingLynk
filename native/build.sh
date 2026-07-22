@@ -64,13 +64,15 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
         gcc -O2 -w -static -DVERSION=\"mtd-utils-$MTDUTILS_VERSION\" -Dmain=ubiformat_main \
             $MTDUTILS_INC -c "$f" -o "build/mtdu-$(basename "$f" .c).o" || exit 1
     done &&
-    gcc -O2 -Wall -static -Ivendor $MTDUTILS_INC \
+    gcc -O2 -Wall -static -Ivendor -Icommon $MTDUTILS_INC \
         mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c \
         mlflash/src/probe.c mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
+        mlflash/src/device_record.c common/mlfile.c \
         vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
     gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
     gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
-    gcc -O2 -Wall -static -Ivendor ml-rf-persist.c vendor/cJSON.c -o build/ml-rf-persist &&
+    gcc -O2 -Wall -static -Ivendor -Icommon ml-rf-persist.c common/mlfile.c vendor/cJSON.c -o build/ml-rf-persist &&
+    gcc -O2 -Wall -static -Ivendor -Icommon ml-boot-record.c common/mlfile.c vendor/cJSON.c -o build/ml-boot-record &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
     gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
 
@@ -81,4 +83,4 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work alpine:3.24 sh -
     apk add -q build-base &&
     gcc -O2 -Wall -static minidhcpd.c -o build/minidhcpd-musl &&
     strip build/minidhcpd-musl'
-file build/fbtext build/minidhcpd build/minidhcpd-musl build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/mlmenu
+file build/fbtext build/minidhcpd build/minidhcpd-musl build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/ml-boot-record build/mlmenu
