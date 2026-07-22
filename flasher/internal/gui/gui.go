@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -81,7 +82,7 @@ func newUI(win fyne.Window) *ui {
 
 	u.deviceState = widget.NewLabelWithStyle("Scanning for devices...", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.deviceStatus = widget.NewLabel("")
-	u.deviceStatus.Truncation = fyne.TextTruncateEllipsis // stay one line, so the slot height is fixed
+	u.deviceStatus.Truncation = fyne.TextTruncateEllipsis // truncate an over-long line instead of wrapping
 	u.activity = widget.NewProgressBarInfinite()
 
 	u.selectedLabel = widget.NewLabelWithStyle("No image selected", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
@@ -105,19 +106,25 @@ func newUI(win fyne.Window) *ui {
 		fyne.CurrentApp().Clipboard().SetContent(u.logBuilder.String())
 	})
 
-	// The status line and the busy bar share one fixed-height slot: a transparent
-	// spacer holds the height constant, and only one of the two is visible at a
-	// time (see setBusy), so swapping between them never shifts the layout.
-	slotHeight := u.deviceStatus.MinSize().Height
+	// The status section is a fixed two-line-high slot: a transparent spacer pins
+	// the height, so it is the same whether it shows the status text or the
+	// progress bar. The bar overlays the text (centred), so a running phase shows
+	// the bar over the status lines and never changes the section's height. Every
+	// status is kept to at most two lines (firmware/hardware moves to the title),
+	// so the text always fits without the section growing.
+	sizer := widget.NewLabel("A\nB")
+	slotHeight := sizer.MinSize().Height
 	if h := u.activity.MinSize().Height; h > slotHeight {
 		slotHeight = h
 	}
 	spacer := canvas.NewRectangle(color.Transparent)
 	spacer.SetMinSize(fyne.NewSize(0, slotHeight))
-	statusSlot := container.NewStack(spacer, u.deviceStatus, u.activity)
+	activityOverlay := container.NewVBox(layout.NewSpacer(), u.activity, layout.NewSpacer())
+	statusSlot := container.NewStack(spacer, u.deviceStatus, activityOverlay)
 	u.setBusy(false)
 
-	// Top: device status. Centre: the log, filling. Bottom: full-width actions.
+	// Top: device status (with the progress bar overlaid). Centre: the log,
+	// filling. Bottom: full-width actions.
 	top := container.NewVBox(u.deviceState, statusSlot, widget.NewSeparator())
 	buttons := container.NewGridWithColumns(4, u.rescanButton, u.chooseButton, u.flashButton, u.switchButton)
 	bottom := container.NewVBox(
@@ -129,8 +136,9 @@ func newUI(win fyne.Window) *ui {
 	return u
 }
 
-// setBusy shows the activity bar (hiding the status line) while a phase runs, or
-// the reverse when idle. They share one slot, so exactly one shows at a time.
+// setBusy swaps the status text for the activity bar while a phase runs (so the
+// text does not show through the bar's translucent track). The slot's spacer pins
+// the height, so hiding the text does not collapse the section or move the log.
 func (u *ui) setBusy(busy bool) {
 	if busy {
 		u.deviceStatus.Hide()
@@ -176,7 +184,7 @@ func (u *ui) scan() {
 				name = "Device"
 			}
 			u.deviceState.SetText(name)
-			u.deviceStatus.SetText(info.Note)
+			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
 			u.flashable = false
 			u.switchable = info.Switchable
 			u.switchToOpen = false
@@ -186,8 +194,11 @@ func (u *ui) scan() {
 			if title == "" {
 				title = info.Unit
 			}
+			if info.Firmware != "" || info.Hardware != "" {
+				title = fmt.Sprintf("%s   (firmware %s, hardware %s)", title, info.Firmware, info.Hardware)
+			}
 			u.deviceState.SetText(title)
-			u.deviceStatus.SetText(fmt.Sprintf("firmware %s   hardware %s\n%s", info.Firmware, info.Hardware, info.Note))
+			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
 			u.flashable = info.Flashable
 			u.switchable = info.Switchable
 			u.switchToOpen = true
@@ -248,22 +259,43 @@ func (u *ui) setImage(path string) {
 	u.refresh()
 }
 
+// confirmFlash offers the two flash modes. "Flash and switch" (default) writes the
+// inactive slot, activates it, and reboots. "Flash only" writes the inactive slot
+// and stops, leaving the device on its current slot; the written slot can be
+// activated later with Switch slot (after proving it, e.g. by RAM-boot). The
+// confirm button for each mode is a distinct button so the choice is explicit.
 func (u *ui) confirmFlash() {
 	if u.selectedImage == "" || u.flashing {
 		return
 	}
 
-	dialog.ShowConfirm("Flash open firmware?",
-		"This writes the open firmware to the device's inactive slot and makes it active. "+
-			"The stock firmware on the other slot is left untouched.",
-		func(confirmed bool) {
-			if confirmed {
-				u.startFlash()
-			}
-		}, u.win)
+	message := widget.NewLabel(
+		"This writes the open firmware to the device's inactive slot. The stock firmware on the " +
+			"other slot is left untouched.\n\n" +
+			"Flash and switch: activate the newly written slot and reboot into it now.\n\n" +
+			"Flash only: leave the device on its current slot. The new slot is written but not " +
+			"activated; use Switch slot to boot it once you are ready.")
+	message.Wrapping = fyne.TextWrapWord
+
+	var confirmDialog *dialog.CustomDialog
+	cancelButton := widget.NewButton("Cancel", func() { confirmDialog.Hide() })
+	flashOnlyButton := widget.NewButton("Flash only", func() {
+		confirmDialog.Hide()
+		u.startFlash(true)
+	})
+	flashAndSwitchButton := widget.NewButtonWithIcon("Flash and switch", theme.DownloadIcon(), func() {
+		confirmDialog.Hide()
+		u.startFlash(false)
+	})
+	flashAndSwitchButton.Importance = widget.HighImportance
+
+	confirmDialog = dialog.NewCustomWithoutButtons("Flash open firmware?", message, u.win)
+	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, flashOnlyButton, flashAndSwitchButton})
+	confirmDialog.Show()
+	confirmDialog.Resize(fyne.NewSize(520, 0))
 }
 
-func (u *ui) startFlash() {
+func (u *ui) startFlash(flashOnly bool) {
 	u.flashing = true
 	u.refresh()
 	u.logBuilder.Reset()
@@ -272,16 +304,24 @@ func (u *ui) startFlash() {
 
 	image := u.selectedImage
 	go func() {
-		err := flow.Flash(context.Background(), flow.Options{ImagePath: image}, u.onEvent)
+		err := flow.Flash(context.Background(), flow.Options{ImagePath: image, FlashOnly: flashOnly}, u.onEvent)
 		fyne.Do(func() {
 			u.flashing = false
 			u.setBusy(false)
 			u.refresh()
 			if err == nil {
-				// Flash already waited for the device to reboot onto the open
-				// firmware; confirm it and re-scan to refresh the device card.
-				dialog.ShowInformation("Flash complete",
-					"The device is now running the MissingLynk open firmware.", u.win)
+				if flashOnly {
+					// The device is still on its old slot; the new slot is written
+					// but not active. Re-scan so the card offers Switch slot.
+					dialog.ShowInformation("Flash complete",
+						"The open firmware is written to the inactive slot. The device is still "+
+							"running its current slot; use Switch slot to activate it.", u.win)
+				} else {
+					// Flash already waited for the device to reboot onto the open
+					// firmware; confirm it.
+					dialog.ShowInformation("Flash complete",
+						"The device is now running the MissingLynk open firmware.", u.win)
+				}
 				go u.scan()
 			}
 		})
@@ -392,6 +432,17 @@ func (u *ui) refresh() {
 	setEnabled(u.chooseButton, u.flashable && !busy)
 	setEnabled(u.flashButton, u.flashable && !busy && u.selectedImage != "")
 	setEnabled(u.switchButton, u.switchable && !busy)
+}
+
+// withDetail appends an optional follow-on line below the summary, so the status
+// area shows a one-sentence summary with any extra information on its own line
+// rather than one long truncated string.
+func withDetail(summary, detail string) string {
+	if detail == "" {
+		return summary
+	}
+
+	return summary + "\n" + detail
 }
 
 func setEnabled(button *widget.Button, enabled bool) {

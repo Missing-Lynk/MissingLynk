@@ -71,6 +71,12 @@ type Options struct {
 
 	// AllowUnknownVersion bypasses the firmware whitelist (developer use).
 	AllowUnknownVersion bool
+
+	// FlashOnly writes the inactive slot but does not flip the active slot or
+	// reboot. The device keeps running its current slot; the newly written slot
+	// can be activated later with the switch-slot action (or proven by RAM-boot
+	// first). This is the Rule 2 safety valve: never flip to an unproven slot.
+	FlashOnly bool
 }
 
 // DeviceInfo is what Detect learns about the connected unit, for display and to
@@ -83,7 +89,8 @@ type DeviceInfo struct {
 	Name        string `json:"name"`     // human device name (device-tree model) for an already-open unit
 	Flashable   bool   `json:"flashable"`
 	AlreadyOpen bool   `json:"alreadyOpen"` // already running our open firmware
-	Note        string `json:"note"`        // why not flashable / status detail
+	Note        string `json:"note"`        // one-sentence status summary
+	Detail      string `json:"detail"`      // optional follow-on line (e.g. the switch-slot hint)
 
 	// The inactive slot's contents (from mlflash --slots), for the switch-slot
 	// feature. OtherContent is "open", "vendor", "empty", or "unknown"; Switchable
@@ -155,10 +162,10 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 			fillOtherSlot(client, info, "vendor", emit)
 		}
 		if info.Switchable {
-			info.Note += " The stock firmware is on the other slot; it can be switched back."
+			info.Detail = "The stock firmware is on the other slot; it can be switched back."
 		}
 
-		emit(Event{Level: LevelDone, Msg: info.Note})
+		emitSummary(emit, info)
 		return info, nil
 	}
 
@@ -192,18 +199,32 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	if sdk.Identify() == device.UnitGoggle {
 		fillOtherSlot(client, info, "open", emit)
 		if info.Switchable {
-			info.Note += " The MissingLynk firmware is on the other slot; it can be switched to directly."
+			info.Detail = "The MissingLynk firmware is on the other slot; it can be switched to directly."
 		}
 	}
 
 	// Close out the scan log with the outcome, so it does not just stop.
 	if info.Flashable {
-		emit(Event{Level: LevelDone, Msg: info.Note})
+		emitSummary(emit, info)
 	} else {
 		emit(Event{Level: LevelWarn, Msg: info.Note})
+		if info.Detail != "" {
+			emit(Event{Level: LevelDone, Msg: info.Detail})
+		}
 	}
 
 	return info, nil
+}
+
+// emitSummary logs the status summary and, when present, the follow-on detail as
+// a separate line so the log mirrors the two-line device card. Both go out as
+// LevelDone so the detail sits flush-left under the summary rather than indented
+// like a step's sub-detail.
+func emitSummary(emit Emit, info *DeviceInfo) {
+	emit(Event{Level: LevelDone, Msg: info.Note})
+	if info.Detail != "" {
+		emit(Event{Level: LevelDone, Msg: info.Detail})
+	}
 }
 
 // fillOtherSlot probes the inactive slot and records what it holds on info.
@@ -318,7 +339,9 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 		doneMsg = "Done - the device is now running the stock firmware."
 	}
 
-	if err := rebootAndWait(client, opt.DeviceIP, rebootCmd, targetPassword, emit); err != nil {
+	// The open slot serves DHCP; the vendor slot does not. runningOpen means we are
+	// switching to the vendor slot, so the target serves DHCP only when NOT runningOpen.
+	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, !runningOpen, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -386,12 +409,20 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("mlflash --flash failed: %w", err))
 	}
 
+	if opt.FlashOnly {
+		emit(Event{Level: LevelDone, Msg: "Done - the open firmware is written to the inactive slot. " +
+			"The device is still running its current slot; use Switch slot to activate the new firmware " +
+			"once you are ready."})
+		return nil
+	}
+
 	emit(Event{Level: LevelStep, Msg: "Activating the new firmware"})
 	if err := runMlflash(client, emit, "--flip"); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	if err := rebootAndWait(client, opt.DeviceIP, stockRebootCmd, device.OpenPassword, emit); err != nil {
+	// Flashing lands on the open slot, which serves DHCP.
+	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, true, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -457,6 +488,7 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 		for i, candidate := range candidates {
 			names[i] = candidate.Name
 		}
+
 		return fail(emit, fmt.Errorf(
 			"found %d candidate USB devices (%v); connect exactly one device and unplug the rest",
 			len(candidates), names))
@@ -466,6 +498,7 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 			emit(Event{Level: LevelWarn, Msg: "no USB gadget interface detected, but the device is reachable; continuing"})
 			return nil
 		}
+
 		return fail(emit, fmt.Errorf("no device found - is it plugged in over USB and powered on?"))
 	}
 
@@ -567,26 +600,122 @@ func runMlflash(client *device.Client, emit Emit, args ...string) error {
 // command constants) and waits for the now-active slot to reappear as a
 // reachable device that answers SSH with targetPassword. The connection drops as
 // the SoC resets, so the reboot command's error is expected and ignored.
-func rebootAndWait(client *device.Client, ip, rebootCmd, targetPassword string, emit Emit) error {
+//
+// The USB gadget re-enumerates on reboot with a boot-randomized MAC, so the host
+// sees a NEW interface (enx<newmac>); the host IP assigned to the pre-reboot
+// interface does not carry over. The slot we land on may also serve no DHCP, so
+// the fresh interface can come up with no address at all and stay unreachable
+// forever. This reattaches the host IP to the re-enumerated interface, which is
+// what lets a switch back to the vendor slot be detected as complete.
+//
+// targetServesDHCP says whether the slot being booted serves DHCP (the open slot
+// does, the vendor slot does not). For a DHCP slot we wait briefly for DHCP to
+// configure the host before doing a static reattach, which avoids a needless
+// authorization prompt; for a non-DHCP slot we reattach as soon as the interface
+// appears, so the vendor slot is detected as soon as it is up.
+func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword string, targetServesDHCP bool, emit Emit) error {
+	ip := opt.DeviceIP
 	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
-	_, _ = client.Run(rebootCmd)
+
+	// The reboot command tears the SoC down mid-session, so this SSH call never
+	// returns cleanly: it blocks on the dead transport until the host's TCP timeout
+	// (up to a minute, as no SSH keepalive is set). Waiting on it would stall the
+	// whole reconnect - including the host-IP reattach - for that long, so fire it
+	// in the background and move straight to the wait loop. The command is delivered
+	// before the SoC resets; the deferred client.Close eventually unblocks the call.
+	go func() { _, _ = client.Run(rebootCmd) }()
 
 	emit(Event{Level: LevelInfo, Msg: "Waiting for the device to come back (this can take a minute)"})
-	deadline := time.Now().Add(120 * time.Second)
+
+	// Let the SoC actually reset and drop the USB link before polling, so the old
+	// interface is gone and only the re-enumerated one is a candidate.
+	if !sleepCtx(ctx, 6*time.Second) {
+		return ctx.Err()
+	}
+
+	backend := netcfg.New()
+	assigned := map[string]bool{}
+	lastIfaces := ""
+	// A DHCP slot gets a short grace to configure the host on its own; a non-DHCP
+	// slot is reattached immediately once its interface enumerates.
+	reattachAfter := time.Now()
+	if targetServesDHCP {
+		reattachAfter = reattachAfter.Add(8 * time.Second)
+	}
+	deadline := time.Now().Add(180 * time.Second)
 	for time.Now().Before(deadline) {
-		time.Sleep(3 * time.Second)
 		if device.Reachable(ip, 2*time.Second) {
 			if c, err := device.Dial(ip, "root", targetPassword, 5*time.Second); err == nil {
 				_ = c.Close()
 				emit(Event{Level: LevelInfo, Msg: "The device is back up and reachable"})
 				return nil
 			}
+
+			emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s answers but SSH is not ready yet", ip)})
+		} else if time.Now().After(reattachAfter) {
+			// Not reachable and no DHCP took hold: reattach the host IP to the
+			// re-enumerated gadget interface. Each interface name is assigned once,
+			// so a boot-randomized MAC is picked up without repeating the prompt.
+			ifaces := candidateNames(backend)
+			if joined := strings.Join(ifaces, ", "); joined != lastIfaces {
+				lastIfaces = joined
+				if joined == "" {
+					emit(Event{Level: LevelInfo, Msg: "Waiting for the re-enumerated USB gadget interface"})
+				} else {
+					emit(Event{Level: LevelInfo, Msg: "Gadget interface(s): " + joined})
+				}
+			}
+
+			for _, iface := range ifaces {
+				if assigned[iface] {
+					continue
+				}
+
+				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Reattaching the host network to %s", iface)})
+				if _, err := backend.Assign(iface, opt.HostCIDR); err != nil {
+					emit(Event{Level: LevelWarn, Msg: fmt.Sprintf("reattaching the host network to %s failed: %v", iface, err)})
+				} else {
+					assigned[iface] = true
+				}
+
+				break
+			}
+		}
+
+		if !sleepCtx(ctx, 2*time.Second) {
+			return ctx.Err()
 		}
 	}
 
 	return fmt.Errorf("the device did not come back on the newly activated firmware within the timeout; " +
 		"the slot flip itself is already committed, so power-cycle the device to (re)try booting " +
 		"the newly activated slot (the stock firmware slot is never modified)")
+}
+
+// candidateNames returns the names of every USB gadget interface currently
+// enumerated, for reattach and progress logging.
+func candidateNames(backend netcfg.Backend) []string {
+	candidates, err := backend.Candidates()
+	if err != nil {
+		return nil
+	}
+
+	names := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		names[i] = candidate.Name
+	}
+
+	return names
+}
+
+// sleepCtx sleeps for d, returning false if ctx is cancelled first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }
 
 // fail emits an error event and returns the error.

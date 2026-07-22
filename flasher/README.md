@@ -9,6 +9,8 @@ A native-window GUI (Go + Fyne) that flashes the MissingLynk open firmware onto 
 3. Streams the embedded `mlflash` and the chosen `.mlimg` to `/tmp` over the SSH channel (the device has no scp/sftp).
 4. Runs `mlflash`: `--inspect` (verify hashes) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
 
+The Flash button offers two modes. "Flash and switch" runs the full sequence above. "Flash only" stops after `--flash`: the inactive slot is written but not activated, and the device stays on its current slot. Use it to write a slot without committing to it (for example to prove the new slot by RAM-boot first); activate it later with the Switch slot button.
+
 ## Switching slots without reflashing
 
 Detection also probes the inactive slot (`mlflash --slots`, read-only): the dtb model string identifies the installed image, and the kernel and rootfs magics confirm it is complete. When the other slot holds a complete recognized image, the "Switch slot" button activates it without writing any image data (only the GPT active bit changes) and reboots into it. This covers both directions: a device switched back to stock returns to the MissingLynk firmware without a reflash, and a device on the MissingLynk firmware returns to stock the same way. The switch requires confirming a dialog; switching to the MissingLynk slot warns that the slot is activated without re-verification, so a slot that no longer boots leaves the device unbootable until recovered.
