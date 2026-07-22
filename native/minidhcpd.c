@@ -40,6 +40,11 @@
  */
 static uint32_t g_offer;
 
+/* the server's own address in replies: SERVER_IP unless an explicit interface was given,
+ * then that interface's address (device profiles differ, e.g. the air unit's 192.168.4.100).
+ */
+static uint32_t g_server;
+
 /* find the interface that currently holds SERVER_IP (usb0 for RNDIS, usb1 for ECM),
  * so the caller need not know which gadget mode is active. Returns name in buf or NULL.
  */
@@ -68,6 +73,32 @@ static const char *find_iface(char *buf, size_t len)
 
     freeifaddrs(list);
     return result;
+}
+
+/* the IPv4 address currently assigned to @p iface_name, or 0 when it has none */
+static uint32_t iface_ipv4(const char *iface_name)
+{
+    uint32_t found = 0;
+
+    struct ifaddrs *list = NULL;
+    if (getifaddrs(&list) != 0) {
+        return 0;
+    }
+
+    struct ifaddrs *ifa;
+    for (ifa = list; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+
+        if (strcmp(ifa->ifa_name, iface_name) == 0) {
+            found = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
+            break;
+        }
+    }
+
+    freeifaddrs(list);
+    return found;
 }
 
 /* return the option-53 message type in the options area, or -1 if absent */
@@ -112,7 +143,7 @@ static unsigned char *put_option(unsigned char *cursor, unsigned char code,
 static int build_reply(const unsigned char *req, unsigned char reply_type,
                        unsigned char *out)
 {
-    uint32_t server = inet_addr(SERVER_IP);
+    uint32_t server = g_server;
     uint32_t offer = g_offer;
     uint32_t mask = inet_addr(MASK_IP);
     uint32_t lease = htonl(LEASE_SECS);
@@ -139,8 +170,8 @@ static int build_reply(const unsigned char *req, unsigned char reply_type,
     cursor = put_option(cursor, 51, 4, &lease);        /* lease time */
     cursor = put_option(cursor, 1, 4, &mask);          /* subnet mask -> on-link route to /24 */
     /* deliberately NO router (opt 3) and NO DNS (opt 6): this is a point-to-point link
-     * to the goggle, so the client must keep its own default route + DNS (wifi/mobile)
-     * and only gain a route to 192.168.3.0/24.
+     * to the device, so the client must keep its own default route + DNS (wifi/mobile)
+     * and only gain an on-link route to the gadget /24.
      */
     *cursor++ = 255;                              /* end */
 
@@ -180,9 +211,6 @@ int main(int argc, char **argv)
     setvbuf(stderr, NULL, _IONBF, 0);
 
     /* usage: minidhcpd [iface|auto] [offer_ip] */
-    const char *offer_str = (argc > 2) ? argv[2] : OFFER_IP;
-    g_offer = inet_addr(offer_str);
-
     char autobuf[32];
     const char *iface;
     if (argc > 1 && strcmp(argv[1], "auto") != 0 && strcmp(argv[1], "-") != 0) {
@@ -194,12 +222,25 @@ int main(int argc, char **argv)
         }
     }
 
+    /* server = the bound interface's own address (falls back to SERVER_IP while the
+     * interface has none); offer = the server's /24 with host octet 123, unless argv[2]
+     * pins it. Derived, so one binary serves every device profile's gadget subnet.
+     */
+    uint32_t iface_addr = iface_ipv4(iface);
+    g_server = iface_addr != 0 ? iface_addr : inet_addr(SERVER_IP);
+    g_offer = (argc > 2) ? inet_addr(argv[2])
+                         : ((g_server & inet_addr(MASK_IP)) | htonl(123));
+
     int fd = open_socket(iface);
     if (fd < 0) {
         return 1;
     }
 
-    fprintf(stderr, "minidhcpd: offering %s on %s (server %s)\n", offer_str, iface, SERVER_IP);
+    char offer_buf[32];
+    char server_buf[32];
+    snprintf(offer_buf, sizeof offer_buf, "%s", inet_ntoa(*(struct in_addr *)&g_offer));
+    snprintf(server_buf, sizeof server_buf, "%s", inet_ntoa(*(struct in_addr *)&g_server));
+    fprintf(stderr, "minidhcpd: offering %s on %s (server %s)\n", offer_buf, iface, server_buf);
 
     struct sockaddr_in bcast;
     memset(&bcast, 0, sizeof bcast);
@@ -230,7 +271,7 @@ int main(int argc, char **argv)
             perror("sendto");
         } else {
             fprintf(stderr, "minidhcpd: %s -> %s\n",
-                    reply_type == DHCP_OFFER ? "OFFER" : "ACK", OFFER_IP);
+                    reply_type == DHCP_OFFER ? "OFFER" : "ACK", offer_buf);
         }
     }
 

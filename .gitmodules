@@ -14,3 +14,7 @@
 	path = datasheets
 	url = git@github.com:Missing-Lynk/ml-datasheets.git
 	branch = master
+[submodule "android"]
+	path = android
+	url = git@github.com:Missing-Lynk/ml-android.git
+	branch = master

@@ -73,4 +73,12 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     gcc -O2 -Wall -static -Ivendor ml-rf-persist.c vendor/cJSON.c -o build/ml-rf-persist &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
     gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
-file build/fbtext build/minidhcpd build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/mlmenu
+
+# minidhcpd-musl: static musl build for the open slot-B rootfs (staged by rootfs/build.sh into
+# /usr/local/bin/minidhcpd, started by the usb-gadget service). The glibc build above stays the
+# stock-firmware component's binary (missinglynk install). Same Alpine pin as the rootfs.
+docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work alpine:3.24 sh -c '
+    apk add -q build-base &&
+    gcc -O2 -Wall -static minidhcpd.c -o build/minidhcpd-musl &&
+    strip build/minidhcpd-musl'
+file build/fbtext build/minidhcpd build/minidhcpd-musl build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/mlmenu
