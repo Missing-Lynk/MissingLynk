@@ -91,6 +91,36 @@ static char *read_file(const char *path)
 }
 
 /**
+ * @brief fsync the directory containing @p path so a rename into it is durable. Best-effort.
+ */
+static void fsync_dir(const char *path)
+{
+    char dir[512];
+    char *slash;
+    int fd;
+
+    if ((size_t) snprintf(dir, sizeof dir, "%s", path) >= sizeof dir) {
+        return;
+    }
+
+    slash = strrchr(dir, '/');
+    if (slash == NULL) {
+        return;
+    }
+
+    /* keep the root slash if the file is directly under "/" */
+    *(slash == dir ? slash + 1 : slash) = '\0';
+
+    fd = open(dir, O_RDONLY | O_DIRECTORY);
+    if (fd < 0) {
+        return;
+    }
+
+    fsync(fd);
+    close(fd);
+}
+
+/**
  * @brief Write @p data to @p path atomically (temp file, fsync, rename).
  * @return 0 on success, -1 otherwise.
  */
@@ -130,6 +160,10 @@ static int write_file_atomic(const char *path, const char *data)
         unlink(tmp);
         return -1;
     }
+
+    /* fsync the containing directory so the rename is durable across a power loss - otherwise a
+     * bind reported as persisted could vanish on a cut right after the rename. */
+    fsync_dir(path);
 
     return 0;
 }
@@ -197,11 +231,14 @@ static int slot_apply(cJSON *slot, const char *mac)
         return changed;
     }
 
-    /* Miss: shift toward the head (slot[i] = slot[i+1]) and write the mac at the tail. */
+    /* Miss: shift toward the head (slot[i] = slot[i+1]) and write the mac at the tail. Guard the
+     * source string like the dedup loop does: a non-string entry (malformed config) has a NULL
+     * valuestring, which would otherwise be passed to cJSON_CreateString. */
     for (int i = 0; i < SLOT_COUNT - 1; i++) {
         cJSON *next = cJSON_GetArrayItem(slot, i + 1);
+        const char *val = (next != NULL && next->valuestring != NULL) ? next->valuestring : "";
 
-        cJSON_ReplaceItemInArray(slot, i, cJSON_CreateString(next->valuestring));
+        cJSON_ReplaceItemInArray(slot, i, cJSON_CreateString(val));
     }
 
     cJSON_ReplaceItemInArray(slot, SLOT_COUNT - 1, cJSON_CreateString(mac));
