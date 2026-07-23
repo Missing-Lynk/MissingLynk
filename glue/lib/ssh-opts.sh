@@ -102,5 +102,8 @@ ensure_device_reachable() {
             return 1
         fi
     fi
+    # Children (drop-to-uboot.sh) re-derive PASS from ROOT_PASS, and board.conf sourcing may have
+    # overwritten ROOT_PASS since PASS was frozen - export the password that actually answered.
+    ROOT_PASS="$PASS"
     export DEVICE_IP ROOT_PASS
 }

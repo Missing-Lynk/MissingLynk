@@ -1,0 +1,10 @@
+# Auto-enslave Artosyn USB-ethernet gadget interfaces into the br-artosyn bridge on plug-in,
+# so a device reboot or replug needs no manual glue/net/net-up.sh run.
+#
+# Install (with the attach script; both from glue/net/):
+#   sudo install -m755 artosyn-bridge-attach.sh /usr/local/lib/artosyn-bridge-attach.sh
+#   sudo install -m644 99-artosyn-bridge.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#
+# Uninstall: remove both files and reload udev again.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="enx*", RUN+="/usr/local/lib/artosyn-bridge-attach.sh %k"
