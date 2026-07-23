@@ -2,9 +2,11 @@
 # device bring-up. Component sources live in the submodules (kernel/, rootfs/) and the
 # in-tree userspace/, native/, and glue/ trees.
 #
-# DEVICE=<name> selects the target device (default betafpv-vr04-goggle); the manifest
-# devices/<name>/device.mk feeds the kernel (BOARD), the dtb name, and the rootfs profile.
-# List devices: `ls devices/`. Add one: see plans/device-hal.md.
+# DEVICE=<name> selects the target device; the manifest devices/<name>/device.mk feeds the
+# kernel (BOARD), the dtb name, load map, and the rootfs profile. Select it ONCE with
+# `make setup DEVICE=<name>` (persisted to .device); then every target below uses it with no
+# repetition. A command-line DEVICE=<name> still overrides for a one-off.
+# List devices: `ls devices/`. Add one: see docs/adding-a-device.md.
 #
 # Build (cross-builds need docker with arm64 emulation via qemu binfmt):
 #   make native       device tools (native/build.sh: mtdtool, fbtext, minidhcpd, mlmenu)
@@ -35,8 +37,9 @@ SHELL := /bin/bash
 
 # Device selector: which supported device to build for. The name matches devices/<name>/ (the
 # manifest below), kernel/devices/<name>/ (DTS + config fragments), and the rootfs profile.
-# Default = the goggle, so a bare `make` is unchanged. Override: `make DEVICE=<name> ...`.
-DEVICE ?= betafpv-vr04-goggle
+# Resolved from .device (written by `make setup DEVICE=<name>`); a command-line DEVICE=<name>
+# overrides; absent both, the goggle. So a bare `make` after `make setup` targets the selection.
+DEVICE ?= $(shell cat .device 2>/dev/null || echo betafpv-vr04-goggle)
 include devices/$(DEVICE)/device.mk
 
 all:
@@ -44,6 +47,18 @@ all:
 	$(MAKE) userspace
 	$(MAKE) kernel
 	$(MAKE) rootfs
+
+# Select the active device, persisted to .device (per-machine, gitignored).
+#   make setup DEVICE=<name>   set + show;   make setup   show current.   List: ls devices/
+setup:
+ifeq ($(origin DEVICE),command line)
+	@test -d "devices/$(DEVICE)" || { echo "unknown device '$(DEVICE)' (see: ls devices/)"; exit 1; }
+	@echo "$(DEVICE)" > .device
+	@echo "device set -> $(DEVICE)"
+else
+	@echo "current device -> $(DEVICE)"
+endif
+	@echo "  product=$(DEV_PRODUCT)  dtb=$(DEV_DTB)  mlimg=$(DEV_MLIMG_TARGET)"
 
 native:
 	./native/build.sh
@@ -102,20 +117,20 @@ image-blobs:
 	fi
 
 flash-rootfs:
-	glue/flash/flash-rootfs-b.sh
+	DEVICE=$(DEVICE) glue/flash/flash-rootfs-b.sh
 
 ramboot:
 	@source kernel/scripts/pin.env && \
-	  glue/boot/ram-boot.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
+	  DEVICE=$(DEVICE) glue/boot/ram-boot.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                        "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
 flash-kernel:
 	@source kernel/scripts/pin.env && \
-	  glue/flash/flash-kernel-b.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
+	  DEVICE=$(DEVICE) glue/flash/flash-kernel-b.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                               "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
 flashboot:
-	glue/boot/ram-boot-flashed-b.sh
+	DEVICE=$(DEVICE) glue/boot/ram-boot-flashed-b.sh
 
 clean:
 	-$(MAKE) -C userspace clean
@@ -127,4 +142,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all native umtprd userspace flasher flasher-windows kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean

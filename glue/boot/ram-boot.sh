@@ -32,24 +32,46 @@ args=()
 for a in "$@"; do
   case "$a" in
     -v|--verbose) ML_VERBOSE=1 ;;
+    --initramfs) WANT_INITRAMFS=1 ;;
     *) args+=("$a") ;;
   esac
 done
 set -- "${args[@]+"${args[@]}"}"
 
 IMG="${1:-}"; DTB="${2:-}"
-[ -f "$IMG" ] && [ -f "$DTB" ] || { echo "usage: $0 [-v] <Image> <dtb> [bootargs]"; exit 2; }
+[ -f "$IMG" ] && [ -f "$DTB" ] || { echo "usage: $0 [-v] [--initramfs] <Image> <dtb> [bootargs]"; exit 2; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 . "$(dirname "$0")/../lib/ssh-opts.sh"   # provides sshg + the DEVICE_IP/PASS defaults
+. "$(dirname "$0")/../lib/device.sh"     # resolves DEVICE -> DEV_KADDR/RDADDR/DTADDR + PARTITION
 . "$(dirname "$0")/../lib/uboot.sh"
 
-KADDR="${KADDR:-0x24000000}"        # OTRA container load addr (bootm decompresses Image to 0x200a0000)
-DTADDR="${DTADDR:-0x28000000}"      # dtb load addr (below the MMZ carveout, per the DTS reserved-memory node)
-RDADDR="${RDADDR:-0x26000000}"      # optional initramfs load addr (between container and dtb)
-BOOTARGS="${3:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT}}"
-INITRAMFS="${INITRAMFS:-}"          # unset = boot the flashed rootfs; set = boot this cpio.gz
+# Load map from the device manifest (DEV_KADDR/RDADDR/DTADDR); env overrides for a one-off. No
+# fallback: an incomplete manifest fails loudly rather than silently using another device's map.
+KADDR="${KADDR:-$DEV_KADDR}"        # OTRA container (bootm decompresses Image to 0x200a0000)
+DTADDR="${DTADDR:-$DEV_DTADDR}"     # dtb load addr (below the MMZ carveout)
+RDADDR="${RDADDR:-$DEV_RDADDR}"     # initramfs load addr (only used with --initramfs)
+[ -n "$KADDR" ] && [ -n "$DTADDR" ] && [ -n "$RDADDR" ] || {
+  echo "[!] incomplete load map for device '$DEVICE' - set DEV_KADDR/DEV_RDADDR/DEV_DTADDR in" >&2
+  echo "    devices/$DEVICE/device.mk (or pass KADDR=/RDADDR=/DTADDR= explicitly)" >&2
+  exit 1; }
+
+# Boot target: default = the flashed slot-B rootfs (ML_BOOTARGS_DEFAULT / ubi.mtd). --initramfs
+# boots the bare busybox initramfs (kernel/initramfs/build/) instead, with a minimal cmdline.
+INITRAMFS="${INITRAMFS:-}"
+if [ "${WANT_INITRAMFS:-0}" = "1" ] && [ -z "$INITRAMFS" ]; then
+  INITRAMFS="$ROOT/kernel/initramfs/build/initramfs.cpio.gz"
+fi
+if [ -n "${3:-}" ]; then
+  BOOTARGS="$3"                                   # explicit positional bootargs
+elif [ -z "${BOOTARGS:-}" ]; then
+  if [ -n "$INITRAMFS" ]; then
+    BOOTARGS="earlycon keep_bootcon ignore_loglevel console=ttyS0,1152000"
+  else
+    BOOTARGS="$ML_BOOTARGS_DEFAULT"
+  fi
+fi
 PY="$ROOT/.venv/bin/python3"
 MKKERNEL="$ROOT/glue/flash/mkkernel.py"
 SCRATCH="$(mktemp -d)"

@@ -5,7 +5,7 @@
 # Python CLI and Go flasher read the same file (later). make-native KEY=VALUE, no quotes (so the
 # tooling parser stays a trivial split). One folder per device (federated: the DTS + fragments
 # live in kernel/devices/<name>/, the rootfs profile/overlay in rootfs/, this manifest ties them).
-# See plans/device-hal.md.
+# See docs/adding-a-device.md.
 
 DEV_NAME           = betafpv-vr04-goggle
 DEV_VENDOR         = betafpv
@@ -21,13 +21,15 @@ DEV_RF_ROLE        = gnd
 
 # Capabilities: source of truth for UI gating (injected into ml-hud as -D defines, step 6) + docs.
 # Kernel/rootfs do not branch on these; they resolve concrete files by name (below).
-DEV_HAS_DISPLAY    = 1
-DEV_HAS_CAMERA     = 0
-DEV_HAS_KEYPAD     = 1
-DEV_HAS_BUZZER     = 1
-DEV_HAS_LED        = 1
-DEV_HAS_DVR        = 1
-DEV_HAS_FC_LINK    = 0
+DEV_HAS_DISPLAY     = 1
+DEV_HAS_CAMERA      = 0
+DEV_HAS_KEYPAD      = 1
+DEV_HAS_GPIO_KEYS   = 0
+DEV_HAS_BUZZER      = 1
+DEV_HAS_LED         = 1
+DEV_HAS_SD          = 1
+DEV_HAS_DVR         = 1
+DEV_HAS_FC_LINK     = 0
 
 # Build pointers. Kernel + rootfs both resolve by DEV_NAME (= DEVICE), no explicit path needed:
 #   kernel/devices/$(DEV_NAME)/  (DTS + fragments)   rootfs/devices/$(DEV_NAME)/ (board.conf + overlay/)
@@ -35,3 +37,9 @@ DEV_HAS_FC_LINK    = 0
 DEV_DTB            = proxima-9311.dtb
 DEV_UI_BOARD       = betafpv_p1_hd                 # userspace/ml-hud/src/hal/board_<this>.c
 DEV_MLIMG_TARGET   = P1_GND_VR04
+
+# RAM-boot host load map (glue/boot/ram-boot.sh loady addresses: OTRA container / initramfs /
+# dtb; below this board's mmz carveout, above the decompressed kernel at 0x200a0000).
+DEV_KADDR          = 0x24000000
+DEV_RDADDR         = 0x26000000
+DEV_DTADDR         = 0x28000000

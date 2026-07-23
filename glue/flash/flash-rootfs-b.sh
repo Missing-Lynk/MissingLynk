@@ -37,7 +37,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 IMG="${1:-$REPO/rootfs/build/rootfs.ubi}"
 DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
-REMOTE_STAGE="/tmp/rootfs.ubi"
 
 [ -f "$IMG" ] || { echo "rootfs image not found: $IMG (run rootfs/build.sh first)" >&2; exit 1; }
 command -v sshpass >/dev/null || { echo "sshpass not installed" >&2; exit 1; }
@@ -75,19 +74,15 @@ fi
 sshv 'test -x /etc/ubiformat' \
     || { echo "no /etc/ubiformat on the vendor rootfs - unexpected, aborting." >&2; exit 1; }
 
-echo "[*] staging $(basename "$IMG") ($(stat -c%s "$IMG") bytes) to $DEVICE_IP:$REMOTE_STAGE..."
-# Dropbear has no SFTP subsystem, stream over a plain ssh channel (cat).
-cat "$IMG" | sshv "cat > $REMOTE_STAGE"
-# The vendor BusyBox has no `stat` applet (docs/reference/hardware-overview.md); use `wc -c`.
-REMOTE_SIZE="$(sshv "wc -c < $REMOTE_STAGE" 2>/dev/null | tr -d '[:space:]')"
-[ -n "$REMOTE_SIZE" ] || REMOTE_SIZE=0
-[ "$REMOTE_SIZE" = "$(stat -c%s "$IMG")" ] \
-    || { echo "staged size mismatch (local $(stat -c%s "$IMG") vs remote $REMOTE_SIZE)" >&2; exit 1; }
-echo "[+] staged, size verified"
-
-echo "[*] ubiformat /dev/$TARGET_MTD (userapp1, slot B) - this is the ONLY partition written..."
-sshv "/etc/ubiformat /dev/$TARGET_MTD -f $REMOTE_STAGE -y"
-sshv "rm -f $REMOTE_STAGE"
+# Stream the image straight into ubiformat's stdin - no on-device copy. ubiformat 2.0.2 reads
+# the image from `-f -` with `-S <exact bytes>` (required for stdin), writing eraseblock by
+# eraseblock, so peak device RAM is one PEB, not the whole ~40 MiB. This avoids the tmpfs copy
+# that OOMs a mem=128m device (the air), and a dropped/short stream makes ubiformat fail rather
+# than write a partial image - and slot B is re-flashable regardless. Dropbear has no SFTP, so a
+# plain ssh channel (cat) carries the stream. userapp1 is the ONLY partition written.
+IMG_SIZE="$(stat -c%s "$IMG")"
+echo "[*] ubiformat /dev/$TARGET_MTD (userapp1, slot B) - streaming $IMG_SIZE bytes over ssh (no staging)..."
+cat "$IMG" | sshv "/etc/ubiformat /dev/$TARGET_MTD -f - -S $IMG_SIZE -y"
 
 echo
 echo "[+] slot B rootfs flashed. Slot A is still active and untouched."

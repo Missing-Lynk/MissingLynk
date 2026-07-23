@@ -39,3 +39,6 @@ glue/dev/
 
 # Local per-machine glue config (copy from glue.env.example)
 glue/glue.env
+
+# Active device selection, written by `make setup DEVICE=<name>` (per-machine)
+.device

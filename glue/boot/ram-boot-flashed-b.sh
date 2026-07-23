@@ -20,10 +20,14 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$(dirname "$0")/../lib/ssh-opts.sh"   # provides sshg + the DEVICE_IP/PASS defaults
+. "$(dirname "$0")/../lib/device.sh"     # resolves DEVICE -> DEV_KADDR/DTADDR
 . "$(dirname "$0")/../lib/uboot.sh"
 
-KADDR="${KADDR:-0x24000000}"      # kernel1 RAM load addr
-DTADDR="${DTADDR:-0x28000000}"    # dtb1 RAM load addr
+KADDR="${KADDR:-$DEV_KADDR}"      # kernel1 RAM load addr
+DTADDR="${DTADDR:-$DEV_DTADDR}"   # dtb1 RAM load addr
+[ -n "$KADDR" ] && [ -n "$DTADDR" ] || {
+  echo "[!] no load map for device '$DEVICE' - set DEV_KADDR/DEV_DTADDR in devices/$DEVICE/device.mk" >&2
+  exit 1; }
 KERNEL1_OFFSET=0x1040000          # kernel1 flash offset (fixed by the mtdparts layout)
 KERNEL1_SIZE=0x600000             # 6 MiB
 DTB1_OFFSET=0x16a0000             # dtb1 flash offset
