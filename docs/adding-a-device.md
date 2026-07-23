@@ -26,7 +26,7 @@ Built by `BOARD=<name> kernel/scripts/build.sh` (the `make kernel` target passes
 ### 3. `rootfs/devices/<name>/` (required) - rootfs profile + overlay
 
 - `board.conf` - the rootfs profile, shell-sourced by `rootfs/build.sh`. Every var is required; the build fails fast if one is missing.
-  - Identity / USB-gadget addressing: `HOSTNAME`, `ROOT_PASS`, `USB_PRODUCT`, `GADGET_IP`, `GADGET_CIDR`, `HOST_GW`, `DEV_MAC`, `HOST_MAC`.
+  - Identity / USB-gadget addressing: `HOSTNAME`, `ROOT_PASS`, `USB_PRODUCT`, `GADGET_IP`, `GADGET_CIDR`, `HOST_GW`, `DEV_MAC`, `HOST_MAC`. Pick the next free device index NN and derive all three from it: `GADGET_IP=192.168.3.(100+NN)`, `DEV_MAC=EE:EE:<NN as 4 bytes>`, `HOST_MAC=AA:AA:<NN as 4 bytes>`. All devices share one subnet and coexist on the host's `br-artosyn` bridge (`glue/net/net-up.sh` enslaves any gadget interface, no per-device host config); the fixed `HOST_MAC` gives a stable interface name encoding NN. `glue/lib/device.sh` resolves `DEVICE_IP` from `GADGET_IP`, so the glue toolchain follows automatically. Optionally add the new address to the reachability report list in `net-up.sh`.
   - `HAS_SD` - `1` if the board has a microSD slot; gates the MTP gadget function (and by convention the SD-dependent services).
   - UBI / NAND geometry: `PARTITION` (the slot-B target, resolved by NAME on the device), `PARTITION_PEBS`, `PEB_SIZE`, `MIN_IO`, `SUBPAGE`, `LEB_SIZE`, `MAX_LEB_COUNT`.
 - `overlay/` - the device-specific rootfs tree, laid over the shared `rootfs/skeleton/`.

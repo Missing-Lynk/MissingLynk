@@ -42,7 +42,7 @@ BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT mem=148m}}"
 [ -x "$ML_UBOOT_PY" ] || { echo "[!] missing $ML_UBOOT_PY"; exit 1; }
 
 echo "[*] checking $DEVICE_IP is reachable as root/$PASS..."
-sshg true 2>/dev/null || { echo "[!] cannot SSH $DEVICE_IP as root/$PASS - is the goggle up and reachable (set ROOT_PASS=artosyn if starting from slot A)?"; exit 1; }
+ensure_device_reachable || exit 1
 
 drop_to_uboot_retry || exit 1
 

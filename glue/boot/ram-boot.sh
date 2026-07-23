@@ -91,7 +91,7 @@ if [ -n "$INITRAMFS" ]; then
   [ "$(xxd -l 2 -p "$INITRAMFS")" = "1f8b" ] || { echo "[!] $INITRAMFS is not a gzip cpio (bad magic)"; exit 1; }
 fi
 "$PY" "$HERE/../lib/serial_port.py" >/dev/null 2>&1 || echo "[!] WARNING: ML_SERIAL not set (glue/glue.env); serial steps will fail"
-sshg true 2>/dev/null || { echo "[!] cannot SSH $DEVICE_IP as root/$PASS - is the goggle up and reachable (set ROOT_PASS=artosyn if starting from slot A)?"; exit 1; }
+ensure_device_reachable || exit 1
 echo "[*] target $DEVICE_IP reachable; Image $(stat -c%s "$IMG") B, dtb $(stat -c%s "$DTB") B"
 
 TPL="${OTRA_TEMPLATE:-}"
