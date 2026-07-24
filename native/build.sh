@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build fbtext for the goggle (aarch64) inside an arm64 gcc:7 container
-# (Debian stretch = glibc 2.24, <= the goggle's 2.25, so the binary runs there).
-# Needs docker with arm64 emulation (binfmt). Output: native/fbtext
+# Build the native on-device tools for the goggle/air (aarch64) inside an arm64 gcc:7 container
+# (Debian stretch = glibc 2.24, <= the goggle's 2.25, so the binaries run there).
+# Needs docker with arm64 emulation (binfmt). Outputs land in native/build/ (gitignored).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -57,7 +57,7 @@ vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/l
 docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     -e MTDUTILS_VERSION="$MTDUTILS_VERSION" -e MTDUTILS_INC="$MTDUTILS_INC" \
     -e MTDUTILS_LIB="$MTDUTILS_LIB" gcc:7 sh -c '
-    gcc -O2 fbtext.c -o build/fbtext -lm &&
+    gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm &&
     gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
     gcc -O2 -Wall -static mtdtool.c -o build/mtdtool &&
     for f in $MTDUTILS_LIB vendor/mtd-utils/ubi-utils/ubiformat.c; do
@@ -74,7 +74,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     gcc -O2 -Wall -static -Ivendor -Icommon ml-rf-persist.c common/mlfile.c vendor/cJSON.c -o build/ml-rf-persist &&
     gcc -O2 -Wall -static -Ivendor -Icommon ml-boot-record.c common/mlfile.c vendor/cJSON.c -o build/ml-boot-record &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
-    gcc -O2 -I. mlmenu/draw.c mlmenu/config.c mlmenu/menu.c -o build/mlmenu -lm'
+    gcc -O2 -I. -Icommon mlmenu/draw.c mlmenu/config.c mlmenu/menu.c common/mlfile.c -o build/mlmenu -lm'
 
 # minidhcpd-musl: static musl build for the open slot-B rootfs (staged by rootfs/build.sh into
 # /usr/local/bin/minidhcpd, started by the usb-gadget service). The glibc build above stays the

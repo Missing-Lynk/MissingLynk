@@ -58,7 +58,20 @@ struct erase_info_user {
 #define MEMERASE       _IOW('M', 2, struct erase_info_user)
 #define MEMGETBADBLOCK _IOW('M', 11, int64_t)
 
-#define GPT_ACTIVE_BIT (1ULL << 47)
+/* GPT on-disk layout (UEFI spec): byte offsets into the header and each partition entry. */
+#define GPT_SIG          "EFI PART"
+#define GPT_SIG_LEN      8
+#define GPT_LBA_SIZE     512
+#define GPT_HDR_SIZE     12          /* u32: header size in bytes (CRC covers this many) */
+#define GPT_HDR_CRC      16          /* u32: header CRC32 (computed with this field zeroed) */
+#define GPT_HDR_PTE_LBA  72          /* u64: starting LBA of the partition-entry array */
+#define GPT_HDR_NUM_ENT  80          /* u32: number of entries */
+#define GPT_HDR_ENT_SIZE 84          /* u32: bytes per entry */
+#define GPT_HDR_PTE_CRC  88          /* u32: CRC32 of the partition-entry array */
+#define GPT_ENT_ATTR     48          /* u64: attribute flags */
+#define GPT_ENT_NAME     56          /* UTF-16LE partition name */
+#define GPT_ENT_NAME_LEN 72          /* name field length in bytes (36 UTF-16 code units) */
+#define GPT_ACTIVE_BIT   (1ULL << 47)
 
 static uint32_t rd32(const unsigned char *src)
 {
@@ -242,29 +255,53 @@ static bool is_pair_member(const char *name, int *is_b)
     return 0;
 }
 
+/* Offset of the "EFI PART" header in `buf`, or -1 if not present.
+ */
+static long find_gpt_header(const unsigned char *buf, long size)
+{
+    for (long i = 0; i + GPT_SIG_LEN <= size; i++) {
+        if (memcmp(buf + i, GPT_SIG, GPT_SIG_LEN) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/* Copy a GPT entry's UTF-16LE name into `out` as ASCII (low byte only, best-effort). An unused
+ * entry has an all-zero name, which yields "" and is rejected by is_pair_member.
+ */
+static void gpt_entry_name(const unsigned char *entry, char *out, size_t out_sz)
+{
+    size_t n = 0;
+
+    for (size_t off = 0; off < GPT_ENT_NAME_LEN && n + 1 < out_sz; off += 2) {
+        if (entry[GPT_ENT_NAME + off] == 0 && entry[GPT_ENT_NAME + off + 1] == 0) {
+            break;
+        }
+        out[n++] = (char)entry[GPT_ENT_NAME + off];
+    }
+
+    out[n] = 0;
+}
+
 /* Edit the GPT in `buf` so the target slot's dual partitions carry the active bit, then
  * recompute the entry-array and header CRC32s. Mirrors glue/flash/gpt_setactive.py.
  */
 static int gpt_set_slot(unsigned char *buf, long size, int want_b)
 {
-    long hdr_off = -1;
-    for (long i = 0; i + 8 <= size; i++) {
-        if (memcmp(buf + i, "EFI PART", 8) == 0) {
-            hdr_off = i;
-            break;
-        }
-    }
+    long hdr_off = find_gpt_header(buf, size);
 
     if (hdr_off < 0) {
         fprintf(stderr, "no GPT header (EFI PART) found\n");
         return -1;
     }
 
-    uint32_t hsize = rd32(buf + hdr_off + 12);
-    uint64_t pte_lba = rd64(buf + hdr_off + 72);
-    uint32_t num = rd32(buf + hdr_off + 80);
-    uint32_t psz = rd32(buf + hdr_off + 84);
-    long base = (long)pte_lba * 512;
+    uint32_t hsize = rd32(buf + hdr_off + GPT_HDR_SIZE);
+    uint64_t pte_lba = rd64(buf + hdr_off + GPT_HDR_PTE_LBA);
+    uint32_t num = rd32(buf + hdr_off + GPT_HDR_NUM_ENT);
+    uint32_t psz = rd32(buf + hdr_off + GPT_HDR_ENT_SIZE);
+    long base = (long)pte_lba * GPT_LBA_SIZE;
 
     if (base < 0 || base + (long)num * psz > size || hdr_off + hsize > size) {
         fprintf(stderr, "GPT entries/header out of range\n");
@@ -273,33 +310,12 @@ static int gpt_set_slot(unsigned char *buf, long size, int want_b)
 
     for (uint32_t i = 0; i < num; i++) {
         unsigned char *entry = buf + base + (long)i * psz;
-        int empty = 1;
-
-        for (int k = 0; k < 16; k++) {
-            if (entry[k]) {
-                empty = 0;
-                break;
-            }
-        }
-
-        if (empty) {
-            continue;
-        }
-
         char name[40];
-        int j = 0;
+        gpt_entry_name(entry, name, sizeof name);
 
-        for (int k = 0; k < 72 && j < (int)sizeof(name) - 1; k += 2) {
-            if (entry[56 + k] == 0 && entry[56 + k + 1] == 0) {
-                break;
-            }
-            name[j++] = (char)entry[56 + k];
-        }
-
-        name[j] = 0;
         int is_b;
         if (is_pair_member(name, &is_b)) {
-            uint64_t attr = rd64(entry + 48);
+            uint64_t attr = rd64(entry + GPT_ENT_ATTR);
 
             if (is_b == want_b) {
                 attr |= GPT_ACTIVE_BIT;
@@ -307,13 +323,13 @@ static int gpt_set_slot(unsigned char *buf, long size, int want_b)
                 attr &= ~GPT_ACTIVE_BIT;
             }
 
-            wr64(entry + 48, attr);
+            wr64(entry + GPT_ENT_ATTR, attr);
         }
     }
 
-    wr32(buf + hdr_off + 88, crc32_buf(buf + base, (size_t)num * psz));
-    wr32(buf + hdr_off + 16, 0);
-    wr32(buf + hdr_off + 16, crc32_buf(buf + hdr_off, hsize));
+    wr32(buf + hdr_off + GPT_HDR_PTE_CRC, crc32_buf(buf + base, (size_t)num * psz));
+    wr32(buf + hdr_off + GPT_HDR_CRC, 0);
+    wr32(buf + hdr_off + GPT_HDR_CRC, crc32_buf(buf + hdr_off, hsize));
 
     return 0;
 }
@@ -322,22 +338,16 @@ static int gpt_set_slot(unsigned char *buf, long size, int want_b)
  */
 static int gpt_get_slot(const unsigned char *buf, long size)
 {
-    long hdr_off = -1;
-    for (long i = 0; i + 8 <= size; i++) {
-        if (memcmp(buf + i, "EFI PART", 8) == 0) {
-            hdr_off = i;
-            break;
-        }
-    }
+    long hdr_off = find_gpt_header(buf, size);
 
     if (hdr_off < 0) {
         return -1;
     }
 
-    uint64_t pte_lba = rd64(buf + hdr_off + 72);
-    uint32_t num = rd32(buf + hdr_off + 80);
-    uint32_t psz = rd32(buf + hdr_off + 84);
-    long base = (long)pte_lba * 512;
+    uint64_t pte_lba = rd64(buf + hdr_off + GPT_HDR_PTE_LBA);
+    uint32_t num = rd32(buf + hdr_off + GPT_HDR_NUM_ENT);
+    uint32_t psz = rd32(buf + hdr_off + GPT_HDR_ENT_SIZE);
+    long base = (long)pte_lba * GPT_LBA_SIZE;
 
     if (base < 0 || base + (long)num * psz > size) {
         return -1;
@@ -345,32 +355,11 @@ static int gpt_get_slot(const unsigned char *buf, long size)
 
     for (uint32_t i = 0; i < num; i++) {
         const unsigned char *entry = buf + base + (long)i * psz;
-        int empty = 1;
-
-        for (int k = 0; k < 16; k++) {
-            if (entry[k]) {
-                empty = 0;
-                break;
-            }
-        }
-
-        if (empty) {
-            continue;
-        }
-
         char name[40];
-        int j = 0;
+        gpt_entry_name(entry, name, sizeof name);
 
-        for (int k = 0; k < 72 && j < (int)sizeof(name) - 1; k += 2) {
-            if (entry[56 + k] == 0 && entry[56 + k + 1] == 0) {
-                break;
-            }
-            name[j++] = (char)entry[56 + k];
-        }
-
-        name[j] = 0;
         int is_b;
-        if (is_pair_member(name, &is_b) && (rd64(entry + 48) & GPT_ACTIVE_BIT)) {
+        if (is_pair_member(name, &is_b) && (rd64(entry + GPT_ENT_ATTR) & GPT_ACTIVE_BIT)) {
             return is_b;
         }
     }

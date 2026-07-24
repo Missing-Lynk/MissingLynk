@@ -21,23 +21,25 @@ static const char *const DT_MODEL_PATHS[] = {
     NULL,
 };
 
-char *ml_read_file(const char *path)
+unsigned char *ml_read_file_bin(const char *path, size_t *out_len)
 {
     FILE *fp = fopen(path, "rb");
     long len;
-    char *buf;
+    unsigned char *buf;
 
     if (fp == NULL) {
         return NULL;
     }
 
-    if (fseek(fp, 0, SEEK_END) != 0 || (len = ftell(fp)) < 0) {
+    /* Reject empty or unseekable files: ftell <= 0 would otherwise reach malloc()/fread() with a
+     * zero or bogus size. */
+    if (fseek(fp, 0, SEEK_END) != 0 || (len = ftell(fp)) <= 0) {
         fclose(fp);
         return NULL;
     }
 
     rewind(fp);
-    buf = malloc((size_t)len + 1);
+    buf = malloc((size_t)len);
     if (buf == NULL) {
         fclose(fp);
         return NULL;
@@ -50,6 +52,29 @@ char *ml_read_file(const char *path)
     }
 
     fclose(fp);
+    if (out_len != NULL) {
+        *out_len = (size_t)len;
+    }
+
+    return buf;
+}
+
+char *ml_read_file(const char *path)
+{
+    size_t len;
+    unsigned char *bin = ml_read_file_bin(path, &len);
+    char *buf;
+
+    if (bin == NULL) {
+        return NULL;
+    }
+
+    buf = realloc(bin, len + 1);
+    if (buf == NULL) {
+        free(bin);
+        return NULL;
+    }
+
     buf[len] = '\0';
 
     return buf;
@@ -125,6 +150,20 @@ int ml_write_file_atomic(const char *path, const char *data)
     /* fsync the containing directory so the rename is durable across a power loss - otherwise a
      * write reported as persisted could vanish on a cut right after the rename. */
     fsync_dir(path);
+
+    return 0;
+}
+
+int ml_ensure_dir(const char *path)
+{
+    if (access(path, F_OK) == 0) {
+        return 0;
+    }
+
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "%s: %s: %s\n", ml_prog, path, strerror(errno));
+        return -1;
+    }
 
     return 0;
 }

@@ -11,36 +11,15 @@
 #include <openssl/sha.h>
 
 #include "util.h"
+#include "mlfile.h"
 
 unsigned char *read_all(const char *path, size_t *out_len)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        perror(path);
-        return NULL;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (len <= 0) {
+    unsigned char *buf = ml_read_file_bin(path, out_len);
+    if (!buf) {
         fprintf(stderr, "%s: empty or unreadable\n", path);
-        fclose(f);
-
-        return NULL;
     }
 
-    unsigned char *buf = malloc((size_t)len);
-    if (!buf || fread(buf, 1, (size_t)len, f) != (size_t)len) {
-        fprintf(stderr, "%s: read failed\n", path);
-        free(buf);
-        fclose(f);
-
-        return NULL;
-    }
-
-    fclose(f);
-    *out_len = (size_t)len;
     return buf;
 }
 

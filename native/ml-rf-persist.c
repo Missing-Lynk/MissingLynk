@@ -43,7 +43,7 @@
 
 #define PROG        "ml-rf-persist"
 #define FW_DIR      "/lib/firmware"
-#define USR_DIR     "/usrdata/missinglynk"
+#define USR_DIR     ML_USR_DIR
 #define SLOT_COUNT  5   /* vendor-hardcoded candidate-list size; max remembered bindings (see file header) */
 
 /* The two band-variant config filenames, matching etc/init.d/ml-video (RF_CFG_RACE / RF_CFG_NORMAL).
@@ -243,8 +243,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (access(USR_DIR, F_OK) != 0 && mkdir(USR_DIR, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, PROG ": %s: %s\n", USR_DIR, strerror(errno));
+    if (ml_ensure_dir(USR_DIR) != 0) {
         return 1;
     }
 

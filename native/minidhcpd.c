@@ -108,12 +108,12 @@ static int request_type(const unsigned char *opt, int len)
     while (i + 1 < len) {
         unsigned char code = opt[i];
         if (code == 255) {
-            // end
+            /* end */
             break;
         }
 
         if (code == 0) {
-            // pad
+            /* pad */
             i++;
             continue;
         }

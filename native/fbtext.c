@@ -26,6 +26,8 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
+#include "mlfile.h"
+
 #define FB "/dev/fb0"
 #define STRIDE_PX 2048
 #define FBIOGET_VSCREENINFO 0x4600
@@ -62,42 +64,9 @@ typedef struct {
 } FbInfo;
 
 
-static unsigned char *read_file(const char *path, long *out_len)
-{
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
-        return NULL;
-    }
-
-    fseek(file, 0, SEEK_END);
-    long len = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    unsigned char *buf = malloc((size_t)len);
-    if (buf == NULL) {
-        fclose(file);
-        return NULL;
-    }
-
-    size_t got = fread(buf, 1, (size_t)len, file);
-    fclose(file);
-
-    if (got != (size_t)len) {
-        free(buf);
-        return NULL;
-    }
-
-    if (out_len != NULL) {
-        *out_len = len;
-    }
-
-    return buf;
-}
-
-
 static int load_font(const char *path, stbtt_fontinfo *font, unsigned char **buf)
 {
-    unsigned char *data = read_file(path, NULL);
+    unsigned char *data = ml_read_file_bin(path, NULL);
     if (data == NULL) {
         fprintf(stderr, "cannot read font %s\n", path);
         return -1;

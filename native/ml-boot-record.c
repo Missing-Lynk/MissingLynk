@@ -30,7 +30,7 @@
 #include "mlfile.h"
 
 #define PROG      "ml-boot-record"
-#define USR_DIR   "/usrdata/missinglynk"
+#define USR_DIR   ML_USR_DIR
 #define RECORD    USR_DIR "/device.json"
 #define RELEASE   "/etc/ml-release"
 
@@ -124,8 +124,7 @@ int main(void)
         set_string(installed, "version", version);
     }
 
-    if (access(USR_DIR, F_OK) != 0 && mkdir(USR_DIR, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, PROG ": %s: %s (is /usrdata mounted?)\n", USR_DIR, strerror(errno));
+    if (ml_ensure_dir(USR_DIR) != 0) {
         cJSON_Delete(root);
         return 1;
     }

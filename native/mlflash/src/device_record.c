@@ -16,7 +16,7 @@
 #include "mlfile.h"
 #include "device_record.h"
 
-#define USR_DIR   "/usrdata/missinglynk"
+#define USR_DIR   ML_USR_DIR
 #define RECORD    USR_DIR "/device.json"
 
 /* The vendor serial lives in sdk_version.json on the stock slot's usr_data (same file board.c
@@ -100,8 +100,7 @@ static void add_partition_digest(cJSON *root, const char *key, const struct mani
 
 int device_record_write_flash(const struct manifest *m, char devpath[][32], int target)
 {
-    if (access(USR_DIR, F_OK) != 0 && mkdir(USR_DIR, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "device.json: %s: %s\n", USR_DIR, strerror(errno));
+    if (ml_ensure_dir(USR_DIR) != 0) {
         return -1;
     }
 

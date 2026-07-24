@@ -14,6 +14,8 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
+#include "mlfile.h"
+
 #define FB "/dev/fb0"
 #define STRIDE_PX 2048
 #define FBIOGET_VSCREENINFO 0x4600
@@ -21,35 +23,9 @@
 const Color COL_GREEN = {3, 15, 7};
 const Color COL_DIM = {1, 9, 4};
 
-static unsigned char *read_file(const char *path, long *out_len)
-{
-    FILE *f = fopen(path, "rb");
-    if (f == NULL) {
-        return NULL;
-    }
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    unsigned char *buf = malloc((size_t)len);
-    if (buf == NULL) {
-        fclose(f);
-        return NULL;
-    }
-    size_t got = fread(buf, 1, (size_t)len, f);
-    fclose(f);
-    if (got != (size_t)len) {
-        free(buf);
-        return NULL;
-    }
-    if (out_len) {
-        *out_len = len;
-    }
-    return buf;
-}
-
 int font_load(const char *path, Font *font)
 {
-    font->data = read_file(path, NULL);
+    font->data = ml_read_file_bin(path, NULL);
     if (font->data == NULL) {
         fprintf(stderr, "cannot read font %s\n", path);
         return -1;
