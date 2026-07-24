@@ -9,7 +9,7 @@
 # NOTE: do NOT run ml-rf-video during this (it wedges the air). Slot A streams
 # video while measured (its normal state) - note it when comparing.
 #
-# Usage: DEVICE_IP=192.168.3.100 ROOT_PASS=libre SLOT=B N=75 glue/capture/ping-bench.sh
+# Usage: ROOT_PASS=libre SLOT=B N=75 glue/capture/ping-bench.sh   (DEVICE_IP resolves from board.conf)
 set -uo pipefail
 SLOT="${SLOT:-?}"; N="${N:-75}"
 . "$(dirname "$0")/../lib/ssh-opts.sh"   # provides device_ssh_timeout + DEVICE_IP/PASS defaults

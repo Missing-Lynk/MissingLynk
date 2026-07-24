@@ -36,7 +36,7 @@ import re
 import shlex
 from dataclasses import dataclass
 
-from . import GOGGLE_IP
+from . import STOCK_IP
 from .connection import Goggle
 from .progress import printer
 
@@ -56,7 +56,7 @@ APPLIED: str = "/tmp/missinglynk.applied"
 
 # USB gadget / networking (for the ecm component)
 GADGET: str = "/sys/kernel/config/usb_gadget/g1"   # built by usb_gadget_configfs.sh at boot
-GOGGLE_MASK: str = "255.255.255.0"
+NETMASK: str = "255.255.255.0"
 
 # stable locally-administered MACs so the host's interface name stops changing each boot
 ECM_DEV_ADDR: str = "02:00:00:00:00:01"    # goggle (gadget) side
@@ -279,8 +279,10 @@ def _gen_hook(body: str) -> str:
             "GADGET": GADGET,
             "ECM_DEV_ADDR": ECM_DEV_ADDR,
             "ECM_HOST_ADDR": ECM_HOST_ADDR,
-            "GOGGLE_IP": GOGGLE_IP,
-            "GOGGLE_MASK": GOGGLE_MASK,
+            # The boot hook runs on the stock slot (it reproduces the stock gadget), so the ECM
+            # interface takes the stock gadget address.
+            "STOCK_IP": STOCK_IP,
+            "NETMASK": NETMASK,
         })
 
     return _render_template("boot-hook.sh", {

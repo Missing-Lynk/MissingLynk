@@ -210,7 +210,7 @@ Full revert: `missinglynk uninstall` + power-cycle. Consuming the stream: [`docs
 
 ## Access facts
 
-- Goggle USB-ethernet gadget: **`192.168.3.100`**, host uses **`192.168.3.222/24`**.
+- Goggle USB-ethernet gadget: **`192.168.3.101`**, host uses **`192.168.3.222/24`**.
 - SSH: **Dropbear, root / `artosyn`**, LEGACY crypto only (see `missinglynk/connection.py`).
 - Stock rootfs `/` is **read-only squashfs**; `/usrdata` is writable & persistent (ubifs).
 

@@ -52,7 +52,7 @@ missinglynk status
 missinglynk uninstall
 ```
 
-Access defaults are overridable per call, e.g. `missinglynk --ip 192.168.3.100 --password artosyn screenshot`.
+Access defaults to the open goggle (`192.168.3.101`, root/`libre`) and is overridable per call, e.g. to reach a stock/unflashed unit: `missinglynk --ip 192.168.3.100 --password artosyn screenshot`.
 
 ## Components
 
@@ -89,4 +89,4 @@ So `native/build.sh` + `apply-patches.py` (both one-off, unless the sources chan
 - **paramiko is pinned `>=3.5,<4`.** paramiko 4.x/5.x drop the algorithms the goggle's Dropbear requires (`diffie-hellman-group1-sha1` / `group14-sha1`, host key `ssh-rsa`); 3.5.x still implements them, and `connection.py` force-prepends them to the offered lists. On paramiko ≥4 you get a clear error telling you to pin 3.5.
 - **This Dropbear has no SFTP subsystem**, so `write_file` streams bytes to `cat > path` over an exec channel rather than using SFTP.
 - **Framebuffer decode is pure numpy/Pillow.** A 16-bit ARGB4444 pixel is expanded to RGB by nibble replication (`n*17`, so `0xF -> 255` = true white). See `framebuffer.py`.
-- **Host networking is OS-specific** (assigning the static IP; the NetworkManager exclusion on Linux). The package assumes the link is already up (`192.168.3.100` reachable); see [glue/docs/host-network-setup.md](../../glue/docs/host-network-setup.md).
+- **Host networking is OS-specific** (assigning the static IP; the NetworkManager exclusion on Linux). The package assumes the link is already up (`192.168.3.101` reachable); see [glue/docs/host-network-setup.md](../../glue/docs/host-network-setup.md).

@@ -18,7 +18,7 @@
 #   - The goggle is up and reachable at DEVICE_IP, on either slot (see ROOT_PASS below).
 #   - The USB-serial bridge is connected (drop-to-uboot + loady run over it).
 #
-# Env overrides: DEVICE_IP (192.168.3.100), ROOT_PASS (libre; artosyn from slot A),
+# Env overrides: DEVICE_IP (active device, from board.conf), ROOT_PASS (libre; artosyn from slot A),
 #   KADDR (0x24000000 container), DTADDR (0x28000000 dtb), BOOTARGS (default = open cmdline +
 #   the full mtdparts, which bootm needs because the dtb carries none), OTRA_TEMPLATE (kernelN
 #   container to copy the OTRA header from; default: read from slot-B kernel1), INITRAMFS

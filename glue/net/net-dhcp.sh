@@ -9,7 +9,8 @@
 # phone would use.
 set -u
 
-DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
+# DEVICE_IP resolves to the active device's gadget address from board.conf; an explicit env wins.
+. "$(dirname "$0")/../lib/ssh-opts.sh"
 
 IF=$(ip -o link 2>/dev/null | grep -oE 'enx[0-9a-f]+' | head -1)
 if [ -z "$IF" ]; then

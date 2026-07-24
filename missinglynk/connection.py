@@ -12,11 +12,48 @@ from __future__ import annotations
 
 import select
 import shlex
+import socket
 
 import paramiko
 
-from . import GOGGLE_IP, GOGGLE_USER, GOGGLE_PASS
+from . import GOGGLE_IP, GOGGLE_USER, GOGGLE_PASS, STOCK_IP, STOCK_PASS
 from .progress import ProgressCb
+
+
+def _tcp_open(ip: str, port: int, timeout: float = 1.0) -> bool:
+    """True if a TCP connection to ip:port succeeds within timeout (a cheap reachability probe)."""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+# Open-slot devices sit at 192.168.3.101 and up (index NN, IP = 100 + NN). The auto-detect scan
+# probes the stock address, then these in order, taking the first that answers.
+_SUBNET: str = STOCK_IP.rsplit(".", 1)[0] + "."   # "192.168.3."
+_OPEN_FIRST_OCTET: int = 101                       # 192.168.3.101 = open device index 1
+_OPEN_SCAN_COUNT: int = 8                          # probe .101 .. .108 for a connected open device
+
+
+def default_target(port: int = 22) -> tuple[str, str]:
+    """
+    Auto-detect the connected unit and return its (ip, password). Probes the stock address
+    first (most commands act on the stock slot), then the open addresses .101 and up, taking the
+    first that answers. The password follows the slot: artosyn for stock, libre for the open slot.
+    Realistically one unit is connected, so this targets whichever it is; when none answers it
+    returns the first open address, so a command fails with a clear connect error to a real
+    candidate.
+    """
+    if _tcp_open(STOCK_IP, port):
+        return STOCK_IP, STOCK_PASS
+
+    for octet in range(_OPEN_FIRST_OCTET, _OPEN_FIRST_OCTET + _OPEN_SCAN_COUNT):
+        ip: str = f"{_SUBNET}{octet}"
+        if _tcp_open(ip, port):
+            return ip, GOGGLE_PASS
+
+    return GOGGLE_IP, GOGGLE_PASS
 
 # Algorithms the goggle requires, promoted to the front of paramiko's lists.
 _KEX: tuple[str, ...] = ("diffie-hellman-group1-sha1", "diffie-hellman-group14-sha1")

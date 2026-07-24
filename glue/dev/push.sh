@@ -15,12 +15,11 @@
 #   push.sh kernel/test_tools/build/button_test
 #   DEST=/dev/shm push.sh big.bin          # override the target dir (noexec there!)
 #
-# Env overrides: DEVICE_IP (192.168.3.100), ROOT_PASS (libre),
+# Env overrides: DEVICE_IP (active device, resolved from board.conf), ROOT_PASS (libre),
 # DEST (/tmp).
 # Preconditions: the device is on the OPEN slot-B Alpine (root/libre) and reachable at DEVICE_IP.
 set -euo pipefail
 
-DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
 PASS="${ROOT_PASS:-libre}"
 DEST="${DEST:-/tmp}"
 

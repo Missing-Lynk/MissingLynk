@@ -6,10 +6,11 @@
 # open-stack device has a unique fixed MAC pair and a unique IP derived from its device index NN
 # (rootfs/devices/<name>/board.conf):
 #   host-visible MAC AA:AA:<NN as 4 bytes> -> ifname enxaaaa<nn>, device IP 192.168.3.(100+NN)
-#   goggle NN=0 -> 192.168.3.100, air unit NN=1 -> 192.168.3.101
+#   NN=0 (192.168.3.100) is reserved for any stock/unflashed unit; real open-slot devices start at
+#   NN=1: goggle NN=1 -> 192.168.3.101, air unit NN=2 -> 192.168.3.102
 # Devices can be plugged in together or alone; the bridge needs no per-device knowledge. A stock
 # (vendor slot-A) unit randomizes its MAC each boot and is always 192.168.3.100, so plug in at
-# most one stock unit at a time (it collides with the goggle's address).
+# most one stock unit at a time (they would share that reserved address).
 #
 # Run whenever a unit is plugged in or rebooted (idempotent). Install 99-artosyn-unmanaged.conf
 # (same dir) FIRST, or NetworkManager will keep flushing the bridge. See
@@ -36,6 +37,9 @@ for conf in "$ML_REPO"/rootfs/devices/*/board.conf; do
     [ -n "$ip" ] || continue
     UNITS+=("$ip $name")
 done
+# .100 is in no board.conf (reserved for stock/unflashed, NN=0); add it explicitly so a plugged
+# stock unit still appears in the reachability report.
+UNITS+=("192.168.3.100 stock/unflashed")
 IFS=$'\n' UNITS=($(sort <<<"${UNITS[*]}")); unset IFS
 
 # Bridge: create once, address once, up.

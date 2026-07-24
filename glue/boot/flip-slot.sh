@@ -8,7 +8,7 @@
 # any slot DATA partition, only gpt0; flipping to a stock slot A is always a safe fallback.
 #
 # Usage:   flip-slot.sh a|b
-# Env:     DEVICE_IP (default 192.168.3.100)
+# Env:     DEVICE_IP (active device, from board.conf)
 #          SRC_PASS  (root password of the CURRENTLY running slot; auto-detected if unset:
 #                     tries "libre" = open Alpine, then "artosyn" = stock)
 #          NO_RESET=1 to flip + verify only, without rebooting.

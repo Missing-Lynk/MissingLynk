@@ -14,7 +14,7 @@ sudo ip link set <enx> up
 ssh -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o KexAlgorithms=+diffie-hellman-group1-sha1,diffie-hellman-group14-sha1 -o Ciphers=+aes128-cbc,3des-cbc root@192.168.3.100
 ```
 
-The root password is **`artosyn`** (same across GND and SKY units). You land at `uid=0(root)`, a `root@art_sirius` prompt: the same Linux that decodes the video, drives the screen, and records to the SD card (init scripts under `/etc/init.d`, config in `/factory`). For passwordless access, drop your public key into `/root/.ssh/authorized_keys`. This is what the `missinglynk` tooling uses.
+On the stock slot A (`192.168.3.100`) the root password is **`artosyn`** (same across GND and SKY units). You land at `uid=0(root)`, a `root@art_sirius` prompt: the same Linux that decodes the video, drives the screen, and records to the SD card (init scripts under `/etc/init.d`, config in `/factory`). For passwordless access, drop your public key into `/root/.ssh/authorized_keys`. The `missinglynk` tooling uses this same legacy-crypto SSH transport; it defaults to the open slot (`192.168.3.101`, root/`libre`) and reaches this stock stack with `--ip 192.168.3.100 --password artosyn`.
 
 ## Physical UART debug console
 

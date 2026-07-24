@@ -17,11 +17,12 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// SSH port and the well-known device coordinates. The gadget address is fixed
-// (no DHCP on stock), and root's password differs per slot.
+// SSH port and the well-known device coordinates. The flasher targets a stock unit
+// (the address is fixed, no DHCP on stock), so DefaultIP is the stock address .100;
+// root's password differs per slot.
 const (
 	Port          = "22"
-	DefaultIP     = "192.168.3.100"
+	DefaultIP     = "192.168.3.100" // stock unit's address (open-slot devices are .101+)
 	StockPassword = "artosyn" // vendor slot A (and the air unit)
 	OpenPassword  = "libre"   // our open slot B
 )

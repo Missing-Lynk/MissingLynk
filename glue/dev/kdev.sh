@@ -139,7 +139,7 @@ if [ "$DO_RAMBOOT" = 1 ]; then
     echo "RAM-booting the initramfs ($INITRAMFS) -> busybox shell, NOT the flashed rootfs" >&2
   fi
 
-  INITRAMFS="$INITRAMFS" DEVICE_IP="${DEVICE_IP:-192.168.3.100}" \
+  INITRAMFS="$INITRAMFS" DEVICE_IP="${DEVICE_IP:-}" \
     "$REPO/glue/boot/ram-boot.sh" "$IMG" "$DTB"
 fi
 

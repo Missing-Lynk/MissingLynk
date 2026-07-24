@@ -72,7 +72,7 @@ The goggle's SSH server is a legacy Dropbear that only speaks old algorithms, an
 -o MACs=+hmac-sha1
 ```
 
-There is also no `scp` or sftp subsystem on the device, so copy by streaming the bytes over a plain SSH channel with `cat`. The device is at `192.168.3.100`; root's password is `artosyn` on the stock slot A and `libre` on the open slot B. `mlflash` runs on either slot, so pick the password for whichever slot is currently booted. `/tmp` is an exec-allowed tmpfs on the open slot; use any writable, exec-mounted path.
+There is also no `scp` or sftp subsystem on the device, so copy by streaming the bytes over a plain SSH channel with `cat`. Address and password track the booted slot: stock slot A is `192.168.3.100` / `artosyn`, the open slot B (goggle) is `192.168.3.101` / `libre`. `mlflash` runs on either slot, so pick the address and password for whichever slot is currently booted (the examples below use the stock slot). `/tmp` is an exec-allowed tmpfs on the open slot; use any writable, exec-mounted path.
 
 Put those options in a shell array, not a plain string: zsh (the goggle project's default shell) does not word-split an unquoted `$var`, so `ssh $STRING ...` collapses them into one bad `-o` argument. An array expanded as `"${sshopts[@]}"` works in both zsh and bash.
 

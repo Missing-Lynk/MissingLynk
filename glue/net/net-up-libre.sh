@@ -17,7 +17,8 @@
 # Override defaults via env (DEVICE_IP, HOST_IP, IF, ROOT_PASS). Calls sudo for ip/iptables.
 set -euo pipefail
 
-DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
+# DEVICE_IP resolves to the active device's gadget address from board.conf; an explicit env wins.
+. "$(dirname "$0")/../lib/ssh-opts.sh"
 HOST_IP="${HOST_IP:-192.168.3.222}"
 ROOT_PASS="${ROOT_PASS:-libre}"
 IF="${IF:-}"
@@ -76,7 +77,6 @@ fi
 # Confirm it is the open system (hostname artosyn-libre). Modern Alpine dropbear,
 # so no legacy crypto needed (unlike the stock goggle).
 if command -v sshpass >/dev/null 2>&1; then
-    . "$(dirname "$0")/../lib/ssh-opts.sh"
     info="$(SSHPASS="$ROOT_PASS" sshpass -e ssh \
         -o ConnectTimeout=6 "${SSH_OPTS_LIBRE[@]}" root@"$DEVICE_IP" 'uname -sr; hostname' 2>/dev/null)" || true
     if [ -n "$info" ]; then

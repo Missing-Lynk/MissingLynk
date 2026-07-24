@@ -6,7 +6,7 @@
 # fires it without blocking on the SSH that drops at reset, and catches U-Boot's autoboot on
 # the serial.
 #
-# Env overrides: DEVICE_IP (192.168.3.100), ROOT_PASS (libre; use "artosyn" from slot A).
+# Env overrides: DEVICE_IP (active device, from board.conf), ROOT_PASS (libre; use "artosyn" from slot A).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

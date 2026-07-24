@@ -55,12 +55,17 @@ fi
 # device-agnostic because the kernel resolves the MTD by name from the DTB partition table.
 ML_UBI_PARTITION="${ML_UBI_PARTITION:-${PARTITION:-userapp1}}"
 
-# DEVICE_IP: if ssh-opts.sh only applied its compiled fallback (no explicit caller value), the
-# active device's gadget address from board.conf is the real target.
+# DEVICE_IP: when the caller left it unset, resolve it to the active device's gadget address from
+# board.conf; an explicit caller value wins.
 if [ -n "${_ML_DEVICE_IP_DEFAULTED:-}" ] && [ -n "${GADGET_IP:-}" ]; then
     DEVICE_IP="$GADGET_IP"
 fi
 
-# Every STOCK (vendor slot-A) unit uses this gadget address regardless of device; scripts that
-# may start from a stock boot fall back to it when DEVICE_IP does not answer.
+# The one hardcoded address: every STOCK (vendor slot-A) unit boots at ML_STOCK_IP, so it
+# identifies the stock unit currently plugged in. Scripts that may start from a stock boot fall
+# back to it (ensure_device_reachable).
 ML_STOCK_IP="192.168.3.100"
+
+# Final fallback: with no resolved gadget address (missing/partial board.conf), target the stock
+# unit. This is the toolchain's only default IP; open-slot addresses come from board.conf.
+DEVICE_IP="${DEVICE_IP:-$ML_STOCK_IP}"

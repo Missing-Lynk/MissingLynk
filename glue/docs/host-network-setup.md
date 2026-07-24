@@ -4,7 +4,7 @@ A stable link to the goggle needs two host-side fixes; a third behaviour is devi
 
 ## The link is a USB-ethernet gadget
 
-Plugging the goggle into the PC's USB creates a USB-ethernet interface `enx<mac>`. The goggle is **`192.168.3.100`**; the host uses **`192.168.3.222/24`**. The stock goggle runs **no DHCP server**, so the host IP must be set statically (`glue/net/net-up.sh`). Once the `dhcp` component (minidhcpd) is enabled the goggle can lease the host an address instead (`glue/net/net-dhcp.sh`).
+Plugging the goggle into the PC's USB creates a USB-ethernet interface `enx<mac>`. The goggle is **`192.168.3.101`**; the host uses **`192.168.3.222/24`**. The stock goggle runs **no DHCP server**, so the host IP must be set statically (`glue/net/net-up.sh`). Once the `dhcp` component (minidhcpd) is enabled the goggle can lease the host an address instead (`glue/net/net-dhcp.sh`).
 
 ## Gotcha 1, NetworkManager flushes the static IP (the big one)
 

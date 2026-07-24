@@ -14,7 +14,7 @@
 # minimal - no partition names, so read by raw offset on spi-nand0.
 #
 # Usage:   ram-boot-flashed-b.sh [bootargs]
-# Env:     DEVICE_IP (192.168.3.100), ROOT_PASS (libre; artosyn from slot A),
+# Env:     DEVICE_IP (active device, from board.conf), ROOT_PASS (libre; artosyn from slot A),
 #          KADDR (0x24000000), DTADDR (0x28000000).
 set -euo pipefail
 

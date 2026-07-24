@@ -2,7 +2,7 @@
  * minidhcpd - a minimal single-client DHCP server for the goggle's USB-ethernet
  * gadget (usb0). The goggle has no DHCP server (busybox lacks the udhcpd applet), so
  * a USB host (the phone, or a PC) that runs DHCP gets no address. This hands every
- * client one fixed lease so it can reach the goggle at 192.168.3.100.
+ * client one fixed lease so it can reach the device over its USB-ethernet gadget.
  *
  * It answers DHCPDISCOVER -> OFFER and DHCPREQUEST -> ACK with OFFER_IP, broadcasting
  * the reply (the client has no IP yet). Bound to IFACE only, so it never serves wlan0.
@@ -21,7 +21,7 @@
 #include <arpa/inet.h>
 
 #define DEFAULT_IFACE "usb0"
-#define SERVER_IP  "192.168.3.100"
+#define SERVER_IP  "192.168.3.101"
 #define OFFER_IP   "192.168.3.123"
 #define MASK_IP    "255.255.255.0"
 #define LEASE_SECS 86400
@@ -40,8 +40,8 @@
  */
 static uint32_t g_offer;
 
-/* the server's own address in replies: SERVER_IP unless an explicit interface was given,
- * then that interface's address (device profiles differ, e.g. the air unit's 192.168.4.100).
+/* the server's own address in replies: the bound interface's own address (each device profile's
+ * gadget address differs), falling back to SERVER_IP only when that interface has none.
  */
 static uint32_t g_server;
 

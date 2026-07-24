@@ -35,12 +35,10 @@ SSH_OPTS_LEGACY=(
     "${SSH_OPTS_LIBRE[@]}"
 )
 
-# Default device coordinates for sshg. Override by exporting DEVICE_IP / ROOT_PASS (or setting
-# DEVICE_IP / PASS before sourcing). _ML_DEVICE_IP_DEFAULTED marks the placeholder so device.sh
-# (sourced just below) replaces it with the active device's GADGET_IP from board.conf; an
-# explicit caller-set DEVICE_IP is left untouched.
+# DEVICE_IP is resolved from the active device profile by device.sh (sourced just below). When the
+# caller left it unset, flag that so device.sh fills it with the active device's GADGET_IP from
+# board.conf; an explicit caller-set DEVICE_IP / ROOT_PASS wins.
 if [ -z "${DEVICE_IP:-}" ]; then
-    DEVICE_IP="192.168.3.100"
     _ML_DEVICE_IP_DEFAULTED=1
 fi
 : "${PASS:=${ROOT_PASS:-libre}}"   # libre = open slot B; ROOT_PASS=artosyn for stock slot A
@@ -87,13 +85,12 @@ device_ssh_timeout() {
 # nonzero (after printing why) if neither the open nor the stock address answers.
 ensure_device_reachable() {
     if ! sshg true 2>/dev/null; then
-        # Auto-fallback to stock slot A only when the ACTIVE device legitimately owns the stock
-        # address: every unit's stock slot boots at $ML_STOCK_IP, so on the shared br-artosyn
-        # bridge this is unambiguous ONLY for the device whose GADGET_IP is $ML_STOCK_IP (the
-        # goggle, NN=0). For any other device, retargeting to $ML_STOCK_IP could silently hit a
-        # different unit, so fail and let the operator target stock explicitly.
-        if [ "${GADGET_IP:-}" = "$ML_STOCK_IP" ] && device_ssh "${STOCK_PASS:-artosyn}" "$ML_STOCK_IP" true 2>/dev/null; then
-            echo "[*] $DEVICE_IP not answering; unit is on stock slot A at $ML_STOCK_IP - using that for the drop"
+        # $ML_STOCK_IP identifies the stock unit currently plugged in (one stock unit at a time,
+        # per net-up.sh). When the active device's open-slot address is silent, assume that device
+        # is on stock slot A and retarget to $ML_STOCK_IP with the stock password, warning about
+        # the assumption.
+        if device_ssh "${STOCK_PASS:-artosyn}" "$ML_STOCK_IP" true 2>/dev/null; then
+            echo "[*] $DEVICE_IP silent; assuming the stock unit at $ML_STOCK_IP is $DEVICE - using it for the drop (root/${STOCK_PASS:-artosyn})"
             DEVICE_IP="$ML_STOCK_IP"
             PASS="${STOCK_PASS:-artosyn}"
             ROOT_PASS="$PASS"

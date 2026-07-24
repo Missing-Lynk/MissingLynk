@@ -11,7 +11,7 @@
 # 40s+ with no gaps. A regression looks like a short burst then a cliff to 0.
 #
 # PREREQ: slot B freshly RAM-booted with the driver under test; air unit powered + associated.
-# Usage:  DEVICE_IP=192.168.3.100 [SECS=45] glue/capture/telem-continuity-watch.sh
+# Usage:  [SECS=45] glue/capture/telem-continuity-watch.sh   (DEVICE_IP resolves from board.conf)
 set -uo pipefail
 SECS="${SECS:-45}"
 . "$(dirname "$0")/../lib/ssh-opts.sh"   # provides sshg + DEVICE_IP/PASS defaults

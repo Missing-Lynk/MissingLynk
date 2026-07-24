@@ -14,7 +14,7 @@ The groups talk to the device in **different boot states, with different credent
 - `boot/` works from **either slot** (each script probes or takes `ROOT_PASS`), because getting to U-Boot and flipping slots are exactly the operations that cross the slot boundary.
 - `recovery/` needs **no OS at all**, it drives the mask BootROM over the 3 debug-UART wires, the last resort when the device won't boot.
 
-Env convention: `DEVICE_IP` (default `192.168.3.100`) selects the target device. `ROOT_PASS` overrides the password where a script's default doesn't match the booted slot.
+Env convention: `DEVICE_IP` selects the target device; by default it resolves to the active device's gadget address from its `board.conf` (the shared subnet reserves `192.168.3.100` for a stock/unflashed unit). `ROOT_PASS` overrides the password where a script's default doesn't match the booted slot.
 
 Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need the console port in `ML_SERIAL`. Copy `glue.env.example` to `glue.env` (git-ignored) and set it to the USB-serial adapter's stable by-id path, e.g. `ML_SERIAL=/dev/serial/by-id/usb-Raspberry_Pi_Pico_..._-if00` (list yours with `ls /dev/serial/by-id/`; prefer the by-id path over a bare `/dev/ttyACMx`, which renumbers across replugs). An inline `ML_SERIAL=...` in the environment overrides the file. Both the Python tools and the shell scripts resolve it the same way via `lib/serial_port.py`.
 

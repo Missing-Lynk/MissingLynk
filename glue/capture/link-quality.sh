@@ -9,7 +9,7 @@
 #
 # PREREQ: goggle reachable at DEVICE_IP as root/ROOT_PASS; air powered + associated (telemetry
 #         flowing); ml-tcprelay staged (this script pushes it). Good air battery.
-# Usage:  DEVICE_IP=192.168.3.100 ROOT_PASS=libre SLOT=B glue/capture/link-quality.sh
+# Usage:  ROOT_PASS=libre SLOT=B glue/capture/link-quality.sh   (DEVICE_IP resolves from board.conf)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 SLOT="${SLOT:-?}"; N="${N:-5}"

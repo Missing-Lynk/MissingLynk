@@ -1,6 +1,6 @@
 # @NAME@ component: re-present the USB gadget as CDC-ECM. RNDIS has no Android host
 # driver; CDC-ECM binds natively (cdc_ether). Runs after the stock body brought up the
-# RNDIS gadget: swap config function f1 rndis->ecm, move @GOGGLE_IP@ onto the ecm netdev,
+# RNDIS gadget: swap config function f1 rndis->ecm, move @STOCK_IP@ onto the ecm netdev,
 # tear down the old rndis netdev so the address is not dual-homed. A BACK-held boot has
 # @NAME@=off, so the gadget stays stock RNDIS (recovery path).
 if [ "$@NAME@" = on ]; then
@@ -19,6 +19,6 @@ if [ "$@NAME@" = on ]; then
     ecmif=$(cat @GADGET@/functions/ecm.usb0/ifname 2>/dev/null)
     rndisif=$(cat @GADGET@/functions/rndis.usb0/ifname 2>/dev/null)
     [ -n "$rndisif" ] && { ifconfig "$rndisif" 0.0.0.0 2>/dev/null; ifconfig "$rndisif" down 2>/dev/null; }
-    [ -n "$ecmif" ] && ifconfig "$ecmif" @GOGGLE_IP@ netmask @GOGGLE_MASK@ up 2>/dev/null
+    [ -n "$ecmif" ] && ifconfig "$ecmif" @STOCK_IP@ netmask @NETMASK@ up 2>/dev/null
     echo "boot: gadget switched to ECM (ifname=$ecmif)" >> "$ML/lastboot.log"
 fi
