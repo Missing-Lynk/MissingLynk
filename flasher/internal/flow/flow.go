@@ -304,7 +304,7 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 	}
 
 	defer client.Close()
-	if !runningOpen != switchToOpen {
+	if runningOpen == switchToOpen {
 		return fail(emit, fmt.Errorf("the device's firmware changed since the scan "+
 			"(the confirmed switch direction no longer applies); re-scan and try again"))
 	}
@@ -642,7 +642,7 @@ func isFatFilesystem(fstype string) bool {
 
 // removeRemote best-effort deletes a remote path (the staged image after flashing).
 func removeRemote(client *device.Client, remotePath string) {
-	_, _ = client.Run("rm -f '" + strings.ReplaceAll(remotePath, "'", `'\''`) + "'")
+	_, _ = client.Run("rm -f " + device.ShellQuote(remotePath))
 }
 
 // runMlflash runs the on-device flasher with args and relays its output as info
@@ -650,7 +650,7 @@ func removeRemote(client *device.Client, remotePath string) {
 func runMlflash(client *device.Client, emit Emit, args ...string) error {
 	cmd := remoteMlflash
 	for _, a := range args {
-		cmd += " " + a
+		cmd += " " + device.ShellQuote(a)
 	}
 
 	return client.RunStream(cmd, func(line string) {

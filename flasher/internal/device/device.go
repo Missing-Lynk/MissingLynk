@@ -149,7 +149,7 @@ func (client *Client) RunStream(cmd string, onLine func(string)) error {
 
 // Push streams content to remotePath on the device and sets its mode (e.g. "755").
 // The device has no scp/sftp, so bytes go over a plain exec channel via `cat`.
-// remotePath is single-quoted; it must not itself contain a single quote.
+// remotePath is shell-quoted, so it may contain any characters.
 func (client *Client) Push(content io.Reader, remotePath, mode string) error {
 	sess, err := client.ssh.NewSession()
 	if err != nil {
@@ -158,7 +158,7 @@ func (client *Client) Push(content io.Reader, remotePath, mode string) error {
 
 	defer sess.Close()
 	sess.Stdin = content
-	cmd := fmt.Sprintf("cat > %s && chmod %s %s", shellQuote(remotePath), mode, shellQuote(remotePath))
+	cmd := fmt.Sprintf("cat > %s && chmod %s %s", ShellQuote(remotePath), mode, ShellQuote(remotePath))
 	return sess.Run(cmd)
 }
 
@@ -229,7 +229,8 @@ func scanLinesCR(data []byte, atEOF bool) (advance int, token []byte, err error)
 	return 0, nil, nil
 }
 
-// shellQuote wraps s in single quotes for safe use in a remote /bin/sh command.
-func shellQuote(s string) string {
+// ShellQuote wraps s in single quotes for safe use in a remote /bin/sh command.
+// A single quote in s is escaped, so s may contain any characters.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

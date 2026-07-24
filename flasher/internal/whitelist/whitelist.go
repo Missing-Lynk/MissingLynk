@@ -15,7 +15,7 @@
 //
 // TO ADD A DEVICE: prove its flash path first, then append its triple below.
 // (The air unit P1_SKY is intentionally absent: its flash path is not yet
-// validated - see plans/air-unit-open-stack.md.)
+// validated.)
 package whitelist
 
 // Device is one validated firmware identity, matched exactly against the
