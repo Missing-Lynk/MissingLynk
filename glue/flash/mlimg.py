@@ -355,7 +355,7 @@ def main() -> int:
     build_parser.add_argument("--build-dir", help="kernel build tree (default: pin.env KERNEL_BUILD_DEFAULT)")
     build_parser.add_argument("--image", help="kernel Image (default: <build-dir>/linux/arch/arm64/boot/Image)")
     build_parser.add_argument("--dtb", help="dtb (default: <build-dir>/.../proxima-9311.dtb)")
-    build_parser.add_argument("--rootfs", help="rootfs UBI (default: rootfs/build/rootfs.ubi)")
+    build_parser.add_argument("--rootfs", help="rootfs UBI (make image passes rootfs/build/rootfs-<device>.ubi)")
     build_parser.add_argument("--blobs-dir", help="dir searched for vendor blobs (default: firmware/bin)")
     build_parser.add_argument("--uboot", help="explicit stock uboot blob")
     build_parser.add_argument("--env", help="explicit stock env blob")

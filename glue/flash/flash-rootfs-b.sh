@@ -27,15 +27,15 @@
 # out from under itself would be catastrophic. It also refuses if `userapp1` isn't mtd18, so
 # a future partition-table change can't silently make it write the wrong thing.
 #
-# Usage:   glue/flash/flash-rootfs-b.sh [path/to/rootfs.ubi]     # default: rootfs/build/rootfs.ubi
-# Env:     DEVICE_IP (default 192.168.3.100)
+# Usage:   glue/flash/flash-rootfs-b.sh [path/to/rootfs.ubi]     # default: rootfs/build/rootfs-$DEVICE.ubi
+# Env:     DEVICE (device name; picks rootfs-$DEVICE.ubi when no path arg), DEVICE_IP (default 192.168.3.100)
 #
 # NOT RUN AUTOMATICALLY BY ANYTHING. Invoke by hand once you're ready for step 2.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-IMG="${1:-$REPO/rootfs/build/rootfs.ubi}"
+IMG="${1:-$REPO/rootfs/build/rootfs-${DEVICE:?DEVICE not set (pass a path arg or DEVICE=<name>)}.ubi}"
 DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
 
 [ -f "$IMG" ] || { echo "rootfs image not found: $IMG (run rootfs/build.sh first)" >&2; exit 1; }

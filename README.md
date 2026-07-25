@@ -43,7 +43,7 @@ cd missinglynk
 | Path | What |
 |------|------|
 | `missinglynk/` | Cross-platform Python CLI: identify, fetch-blobs, screenshot, dump-firmware, component framework. |
-| `devices/` | Per-device profiles; `make setup DEVICE=<name>` selects the target. |
+| `devices/` | Per-device profiles; `make list-devices` shows them, `make setup DEVICE=<name>` selects the target. |
 | `glue/` | Host-side device scripts: networking, U-Boot/serial, RAM-boot, slot-B flashers, slot flip, recovery. |
 | `native/` | On-device tools (vendor-glibc): `fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`, `ml-rfcmd`. |
 | `flasher/` | Host-side flashing GUI (`ml-flasher`, Go); writes slot B over USB. |
@@ -131,10 +131,11 @@ The blobs land in `firmware/bin/slot-a/` and stay local. `fetch-blobs` selects t
 
 **Step 5, build everything.** The repo-root `Makefile` is the single front door; nothing here touches the device. `make` builds native tools, userspace programs, kernel + modules, and the slot-B rootfs, in that order.
 
-**`make setup DEVICE=<name>` selects the target device.** Run it once before building; every later build, flash, and boot command then uses the selected profile automatically. The goggle is the default; other devices must be set explicitly. `ls devices/` lists the profiles (`betafpv-vr04-goggle`, `betafpv-vr04-air`, ...).
+**`make setup DEVICE=<name>` selects the target device.** Run it once before building; every later build, flash, and boot command then uses the selected profile automatically. There is no default: a device-dependent target with no device set fails with a pointer to this step rather than guessing. `make list-devices` lists the profiles (`betafpv-vr04-goggle`, `betafpv-vr04-air`, ...) and points you to `make setup`.
 
 ```sh
-make setup DEVICE=betafpv-vr04-goggle   # goggle is the default; required for other devices
+make list-devices                       # see the available device profiles
+make setup DEVICE=betafpv-vr04-goggle   # required: no default, selects the target device
 make
 ```
 
@@ -143,7 +144,7 @@ Or build parts individually (order matters, modules need the kernel, rootfs bake
 - `make native`: the vendor-glibc device tools (`fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`, `ml-rfcmd`)
 - `make userspace`: the on-device programs, including the standalone fully-static `ml-pipeline` (no SD card, no plugin registry)
 - `make kernel`: reproducible arm64 `Image` + out-of-tree Artosyn modules
-- `make rootfs`: the lean `slim` Alpine slot-B rootfs, produces `rootfs/build/rootfs.ubi` (bakes in the modules); `make rootfs-dev` for the `dev` flavor (adds SSH + scp + strace/tcpdump)
+- `make rootfs`: the lean `slim` Alpine slot-B rootfs, produces `rootfs/build/rootfs-<device>.ubi` (bakes in the modules); `make rootfs-dev` for the `dev` flavor (adds SSH + scp + strace/tcpdump)
 
 Notes:
 
@@ -153,7 +154,7 @@ Notes:
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
-**Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.
+**Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.
 
 ### Part 2, flash + verify + flip to slot B
 
@@ -163,7 +164,7 @@ Do NOT start the manual chain without the debug UART wired up ([`docs/guides/ser
 
 The device must be booted from stock slot A; the flash scripts verify this automatically and refuse otherwise, pointing you to `glue/boot/flip-slot.sh a`. Each step below is a `make` target that uses your `make setup` device, so there are no paths to fill in by hand:
 
-1. Flash the slot-B rootfs only (writes `userapp1`, never `userapp0` = slot A; uses `rootfs/build/rootfs.ubi` by default):
+1. Flash the slot-B rootfs only (writes `userapp1`, never `userapp0` = slot A; uses `rootfs/build/rootfs-<device>.ubi` for the active device):
 
    ```sh
    make flash-rootfs

@@ -38,7 +38,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 
 # Default to the reproducible kernel build's artifacts, like flash-rootfs-b.sh defaults to
-# rootfs/build/rootfs.ubi. Override the whole build location with BUILD_DIR=, or pass an
+# rootfs/build/rootfs-$DEVICE.ubi. Override the whole build location with BUILD_DIR=, or pass an
 # explicit Image/dtb as positional args. Only one board DTS exists (proxima-9311).
 # shellcheck source=/dev/null
 source "$REPO/kernel/scripts/pin.env" 2>/dev/null || true

@@ -5,8 +5,9 @@
 # DEVICE=<name> selects the target device; the manifest devices/<name>/device.mk feeds the
 # kernel (BOARD), the dtb name, load map, and the rootfs profile. Select it ONCE with
 # `make setup DEVICE=<name>` (persisted to .device); then every target below uses it with no
-# repetition. A command-line DEVICE=<name> still overrides for a one-off.
-# List devices: `ls devices/`. Add one: see docs/adding-a-device.md.
+# repetition. A command-line DEVICE=<name> still overrides for a one-off. There is no default:
+# a device-dependent target with no device set fails rather than guessing.
+# List devices: `make list-devices`. Add one: see docs/adding-a-device.md.
 #
 # Build (cross-builds need docker with arm64 emulation via qemu binfmt):
 #   make native       device tools (native/build.sh: mtdtool, fbtext, minidhcpd, mlmenu)
@@ -24,7 +25,7 @@
 #
 # Device bring-up (writes slot B only; slot A is never touched, and no target flips the active
 # slot - that stays a deliberate manual step once the flashed kernel is proven):
-#   make flash-rootfs flash rootfs/build/rootfs.ubi onto slot B (userapp1)
+#   make flash-rootfs flash rootfs/build/rootfs-<device>.ubi onto slot B (userapp1)
 #   make ramboot      RAM-boot the built kernel (from files) against slot B; nothing committed
 #   make flash-kernel flash the built kernel Image + dtb onto slot B (kernel1/dtb1)
 #   make flashboot    RAM-boot slot B's flashed kernel1/dtb1 to prove the on-flash copy boots
@@ -38,27 +39,54 @@ SHELL := /bin/bash
 # Device selector: which supported device to build for. The name matches devices/<name>/ (the
 # manifest below), kernel/devices/<name>/ (DTS + config fragments), and the rootfs profile.
 # Resolved from .device (written by `make setup DEVICE=<name>`); a command-line DEVICE=<name>
-# overrides; absent both, the goggle. So a bare `make` after `make setup` targets the selection.
-DEVICE ?= $(shell cat .device 2>/dev/null || echo betafpv-vr04-goggle)
-include devices/$(DEVICE)/device.mk
+# overrides. There is no default: device-dependent targets require it (see require-device) and
+# fail when it is empty. The include is silent so device-independent targets still parse with
+# no device set.
+DEVICE ?= $(shell cat .device 2>/dev/null)
+-include devices/$(DEVICE)/device.mk
 
-all:
+all: require-device
 	$(MAKE) native
 	$(MAKE) userspace
 	$(MAKE) kernel
 	$(MAKE) rootfs
 
+# Guard for device-dependent targets: fail with a pointer to the setup flow when no device is set.
+.PHONY: require-device
+require-device:
+	@if [ -z "$(DEVICE)" ]; then \
+	  echo "error: no device set. Run 'make list-devices' to see options," >&2; \
+	  echo "       then 'make setup DEVICE=<name>' (or pass DEVICE=<name>)." >&2; \
+	  exit 1; \
+	fi
+
+# List the devices you can build for, then set one with: make setup DEVICE=<name>
+.PHONY: list-devices
+list-devices:
+	@echo "available devices:"
+	@ls devices | sed 's/^/  - /'
+	@echo
+	@echo "select one with: make setup DEVICE=<name>"
+
 # Select the active device, persisted to .device (per-machine, gitignored).
-#   make setup DEVICE=<name>   set + show;   make setup   show current.   List: ls devices/
+#   make setup DEVICE=<name>   set + show;   make setup   show current.   List: make list-devices
 setup:
 ifeq ($(origin DEVICE),command line)
-	@test -d "devices/$(DEVICE)" || { echo "unknown device '$(DEVICE)' (see: ls devices/)"; exit 1; }
+	@test -n "$(strip $(DEVICE))" || { echo "empty DEVICE= (see: make list-devices)"; exit 1; }
+	@test -d "devices/$(DEVICE)" || { echo "unknown device '$(DEVICE)' (see: make list-devices)"; exit 1; }
 	@echo "$(DEVICE)" > .device
 	@echo "device set -> $(DEVICE)"
+	@echo "  product=$(DEV_PRODUCT)  dtb=$(DEV_DTB)  mlimg=$(DEV_MLIMG_TARGET)"
+else ifeq ($(strip $(DEVICE)),)
+	@echo "no device set."
+	@echo "run 'make list-devices', then 'make setup DEVICE=<name>'."
 else
 	@echo "current device -> $(DEVICE)"
-endif
 	@echo "  product=$(DEV_PRODUCT)  dtb=$(DEV_DTB)  mlimg=$(DEV_MLIMG_TARGET)"
+endif
+	@echo
+	@echo "Note: all top-level targets (rootfs, image, flash-rootfs, ramboot, ...) build for the"
+	@echo "active device (.device) unless overridden with DEVICE=<name>."
 
 native:
 	./native/build.sh
@@ -99,18 +127,18 @@ fetch-blobs:
 net-install:
 	glue/net/net-install.sh
 
-rootfs:
+rootfs: require-device
 	FLAVOR=slim ./rootfs/build.sh $(DEVICE)
 
-rootfs-dev:
+rootfs-dev: require-device
 	FLAVOR=dev ./rootfs/build.sh $(DEVICE)
 
 # One flashable .mlimg bundle (uboot + env + kernel + dtb + rootfs, everything a vendor slot
 # carries except SPL): build every component, capture the vendor slot blobs, then assemble and
 # self-verify. The blob capture needs the device connected once; it persists in firmware/bin/
 # and is skipped on later runs, so a rebuild after the first capture needs no device.
-image: all image-blobs
-	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET)
+image: require-device all image-blobs
+	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET) --rootfs rootfs/build/rootfs-$(DEVICE).ubi
 
 # Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
 # Captured from a connected device into firmware/bin/<P1_GND>/; skipped when already present.
@@ -122,20 +150,20 @@ image-blobs:
 	  uv run missinglynk dump-partitions --dest firmware/bin; \
 	fi
 
-flash-rootfs:
+flash-rootfs: require-device
 	DEVICE=$(DEVICE) glue/flash/flash-rootfs-b.sh
 
-ramboot:
+ramboot: require-device
 	@source kernel/scripts/pin.env && \
 	  DEVICE=$(DEVICE) glue/boot/ram-boot.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                        "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
-flash-kernel:
+flash-kernel: require-device
 	@source kernel/scripts/pin.env && \
 	  DEVICE=$(DEVICE) glue/flash/flash-kernel-b.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                               "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
-flashboot:
+flashboot: require-device
 	DEVICE=$(DEVICE) glue/boot/ram-boot-flashed-b.sh
 
 clean:

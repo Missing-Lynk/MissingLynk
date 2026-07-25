@@ -28,7 +28,7 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
   - `serial_port.py` resolves the console port from `ML_SERIAL` (environment or `glue.env`); Python tools import `find_port()`, shell scripts run it (`python3 lib/serial_port.py`) so both agree on one setting.
 - `flash/` writes artifacts into a NAND slot on the device.
   - `flash-kernel-b.sh <Image> <dtb>` packs a kernel `Image` into the OTRA container and writes `kernel1`/`dtb1` (slot B only), verifying by readback. Refuses to run unless the device answers as slot A. See the flash ladder in `docs/flash-and-verify-slots.md` and the HARD RULES in `../CLAUDE.md`.
-  - `flash-rootfs-b.sh [rootfs.ubi]` ubiformats `userapp1` (slot B rootfs only) with the open Alpine UBI image built by `../rootfs/build.sh` (default artifact path). Same slot-A-only refusal and by-name partition resolution as the kernel flasher.
+  - `flash-rootfs-b.sh [rootfs.ubi]` ubiformats `userapp1` (slot B rootfs only) with the open Alpine UBI image built by `../rootfs/build.sh` (defaults to `../rootfs/build/rootfs-$DEVICE.ubi` for the active device). Same slot-A-only refusal and by-name partition resolution as the kernel flasher.
   - `mkkernel.py` packs/unpacks a raw kernel `Image` into the vendor OTRA+uImage container (`pack`/`unpack`/`size`/`verify`); `flash-kernel-b.sh` and the `boot/` RAM-boot scripts call it. A pure host-side data transform, no device contact.
   - `gpt_setactive.py` reads/flips the active-slot bit (GPT bit 47) in a `gpt0` image and recomputes the CRCs; `boot/flip-slot.sh` uses it to verify a flip. Also a pure offline transform (the on-device equivalent is `../native/mtdtool setslot`).
 - `fetch/` reads vendor blobs off the device.
@@ -53,7 +53,7 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
 
 ## Coupling note
 
-The scripts here reach into sibling trees at runtime (`../kernel/scripts/pin.env`, `../rootfs/build/rootfs.ubi`, `../native/mtdtool`, `../userspace/...`, the repo-root `.venv`). Glue is the orchestrator: it assumes those sibling trees are checked out next to it, which the wrapper repo provides as submodules (`kernel/`, `rootfs/`, `userspace/`) alongside its own `native/` and `firmware/`.
+The scripts here reach into sibling trees at runtime (`../kernel/scripts/pin.env`, `../rootfs/build/rootfs-<device>.ubi`, `../native/mtdtool`, `../userspace/...`, the repo-root `.venv`). Glue is the orchestrator: it assumes those sibling trees are checked out next to it, which the wrapper repo provides as submodules (`kernel/`, `rootfs/`, `userspace/`) alongside its own `native/` and `firmware/`.
 
 ## Related: `../userspace/gstreamer/`
 
