@@ -28,7 +28,9 @@
 # a future partition-table change can't silently make it write the wrong thing.
 #
 # Usage:   glue/flash/flash-rootfs-b.sh [path/to/rootfs.ubi]     # default: rootfs/build/rootfs-$DEVICE.ubi
-# Env:     DEVICE (device name; picks rootfs-$DEVICE.ubi when no path arg), DEVICE_IP (default 192.168.3.100)
+# Env:     DEVICE (device name; picks rootfs-$DEVICE.ubi when no path arg, and the profile whose
+#          open-slot address is probed for the slot-B refusal), DEVICE_IP (address to flash
+#          through; default $ML_STOCK_IP, where a stock-booted unit always answers)
 #
 # NOT RUN AUTOMATICALLY BY ANYTHING. Invoke by hand once you're ready for step 2.
 set -euo pipefail
@@ -36,42 +38,30 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 IMG="${1:-$REPO/rootfs/build/rootfs-${DEVICE:?DEVICE not set (pass a path arg or DEVICE=<name>)}.ubi}"
-DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
 
 [ -f "$IMG" ] || { echo "rootfs image not found: $IMG (run rootfs/build.sh first)" >&2; exit 1; }
 command -v sshpass >/dev/null || { echo "sshpass not installed" >&2; exit 1; }
 
-# Legacy-crypto Dropbear on the vendor (slot A) system - see docs/guides/serial-and-debug-access.md.
-. "$(dirname "$0")/../lib/ssh-opts.sh"
-SSHOPTS=("${SSH_OPTS_LEGACY[@]}")
-sshv() { sshpass -p artosyn ssh "${SSHOPTS[@]}" root@"$DEVICE_IP" "$@"; }
+# Resolves the active device profile and the stock address/credentials, and provides sshg() over
+# the legacy-crypto transport the vendor (slot A) Dropbear needs - see
+# docs/guides/serial-and-debug-access.md.
+. "$HERE/../lib/ssh-opts.sh"
 
-echo "[*] checking $DEVICE_IP is booted on slot A (stock vendor)..."
-if ! sshv true 2>/dev/null; then
-    if sshpass -p libre ssh -o ConnectTimeout=6 "${SSH_OPTS_LIBRE[@]}" root@"$DEVICE_IP" true 2>/dev/null; then
-        echo "refusing: $DEVICE_IP is on slot B (open Alpine), not slot A." >&2
-        echo "  Run: glue/boot/flip-slot.sh a   (then re-run this script once it's back up)" >&2
-        exit 1
-    fi
-
-    echo "cannot SSH to $DEVICE_IP as root/artosyn - is it booted and on slot A?" >&2
-    exit 1
-fi
-echo "[+] confirmed: slot A (root/artosyn)"
+ensure_stock_slot_a || exit 1
 
 # Locate userapp1 by NAME, never trust a hardcoded mtd number.
-TARGET_MTD="$(sshv 'grep -m1 "\"userapp1\"" /proc/mtd' | cut -d: -f1)"
+TARGET_MTD="$(sshg 'grep -m1 "\"userapp1\"" /proc/mtd' | cut -d: -f1)"
 [ -n "$TARGET_MTD" ] || { echo "no userapp1 partition found in /proc/mtd on $DEVICE_IP" >&2; exit 1; }
 echo "[*] userapp1 (slot B rootfs) = /dev/$TARGET_MTD"
 
 # Guard rail: never let this become mtd17/userapp0 (slot A) under any circumstance.
-A_MTD="$(sshv 'grep -m1 "\"userapp0\"" /proc/mtd' | cut -d: -f1)"
+A_MTD="$(sshg 'grep -m1 "\"userapp0\"" /proc/mtd' | cut -d: -f1)"
 if [ "$TARGET_MTD" = "$A_MTD" ]; then
     echo "refusing: userapp1 resolved to the same mtd as userapp0 ($TARGET_MTD) - aborting." >&2
     exit 1
 fi
 
-sshv 'test -x /etc/ubiformat' \
+sshg 'test -x /etc/ubiformat' \
     || { echo "no /etc/ubiformat on the vendor rootfs - unexpected, aborting." >&2; exit 1; }
 
 # Stream the image straight into ubiformat's stdin - no on-device copy. ubiformat 2.0.2 reads
@@ -82,7 +72,7 @@ sshv 'test -x /etc/ubiformat' \
 # plain ssh channel (cat) carries the stream. userapp1 is the ONLY partition written.
 IMG_SIZE="$(stat -c%s "$IMG")"
 echo "[*] ubiformat /dev/$TARGET_MTD (userapp1, slot B) - streaming $IMG_SIZE bytes over ssh (no staging)..."
-cat "$IMG" | sshv "/etc/ubiformat /dev/$TARGET_MTD -f - -S $IMG_SIZE -y"
+cat "$IMG" | sshg "/etc/ubiformat /dev/$TARGET_MTD -f - -S $IMG_SIZE -y"
 
 echo
 echo "[+] slot B rootfs flashed. Slot A is still active and untouched."

@@ -63,8 +63,11 @@ fi
 
 # The one hardcoded address: every STOCK (vendor slot-A) unit boots at ML_STOCK_IP, so it
 # identifies the stock unit currently plugged in. Scripts that may start from a stock boot fall
-# back to it (ensure_device_reachable).
+# back to it (ensure_device_reachable, ensure_stock_slot_a). ML_STOCK_PASS is the vendor root
+# password that goes with it - the stock system is not ours to configure, so unlike the open
+# slot's ROOT_PASS it is fixed rather than read from a device profile.
 ML_STOCK_IP="192.168.3.100"
+ML_STOCK_PASS="${STOCK_PASS:-artosyn}"
 
 # Final fallback: with no resolved gadget address (missing/partial board.conf), target the stock
 # unit. This is the toolchain's only default IP; open-slot addresses come from board.conf.

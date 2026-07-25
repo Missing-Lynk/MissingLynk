@@ -79,23 +79,23 @@ device_ssh_timeout() {
 }
 
 # ensure_device_reachable - confirm the target answers SSH as root/$PASS. If the open slot-B
-# address is silent but the unit is sitting on stock slot A ($ML_STOCK_IP, root/$STOCK_PASS,
-# default artosyn), retarget DEVICE_IP/PASS/ROOT_PASS to it so a drop can still proceed from
-# stock. Exports DEVICE_IP/ROOT_PASS so drop children (drop-to-uboot.sh) inherit them. Returns
-# nonzero (after printing why) if neither the open nor the stock address answers.
+# address is silent but the unit is sitting on stock slot A ($ML_STOCK_IP, root/$ML_STOCK_PASS),
+# retarget DEVICE_IP/PASS/ROOT_PASS to it so a drop can still proceed from stock. Exports
+# DEVICE_IP/ROOT_PASS so drop children (drop-to-uboot.sh) inherit them. Returns nonzero (after
+# printing why) if neither the open nor the stock address answers.
 ensure_device_reachable() {
     if ! sshg true 2>/dev/null; then
         # $ML_STOCK_IP identifies the stock unit currently plugged in (one stock unit at a time,
         # per net-up.sh). When the active device's open-slot address is silent, assume that device
         # is on stock slot A and retarget to $ML_STOCK_IP with the stock password, warning about
         # the assumption.
-        if device_ssh "${STOCK_PASS:-artosyn}" "$ML_STOCK_IP" true 2>/dev/null; then
-            echo "[*] $DEVICE_IP silent; assuming the stock unit at $ML_STOCK_IP is $DEVICE - using it for the drop (root/${STOCK_PASS:-artosyn})"
+        if device_ssh "$ML_STOCK_PASS" "$ML_STOCK_IP" true 2>/dev/null; then
+            echo "[*] $DEVICE_IP silent; assuming the stock unit at $ML_STOCK_IP is $DEVICE - using it for the drop (root/$ML_STOCK_PASS)"
             DEVICE_IP="$ML_STOCK_IP"
-            PASS="${STOCK_PASS:-artosyn}"
+            PASS="$ML_STOCK_PASS"
             ROOT_PASS="$PASS"
         else
-            echo "[!] cannot SSH $DEVICE_IP as root/$PASS - is the unit up and reachable? (on stock slot A, target $ML_STOCK_IP as root/artosyn)"
+            echo "[!] cannot SSH $DEVICE_IP as root/$PASS - is the unit up and reachable? (on stock slot A, target $ML_STOCK_IP as root/$ML_STOCK_PASS)"
             return 1
         fi
     fi
@@ -103,4 +103,40 @@ ensure_device_reachable() {
     # overwritten ROOT_PASS since PASS was frozen - export the password that actually answered.
     ROOT_PASS="$PASS"
     export DEVICE_IP ROOT_PASS
+}
+
+# ensure_stock_slot_a - confirm the target is running the STOCK vendor system (slot A) and point
+# DEVICE_IP/PASS/ROOT_PASS at it, so sshg talks to it. For the slot-B flashers: writing a slot
+# while that slot is the one running is destructive, so they must drive the flash from slot A.
+#
+# A stock unit always answers at $ML_STOCK_IP, so that is the target unless the caller set
+# DEVICE_IP explicitly. When it stays silent, the active device's own open-slot address
+# ($GADGET_IP) is probed with the open password: an answer there means the unit is booted on
+# slot B, which is a refusal with the way back to A rather than a bare connection error.
+#
+# Returns nonzero (after printing why) if the unit is on slot B or answers nowhere.
+ensure_stock_slot_a() {
+    local open_ip="${GADGET_IP:-}" open_pass="${ROOT_PASS:-libre}"
+
+    if [ -n "${_ML_DEVICE_IP_DEFAULTED:-}" ]; then
+        DEVICE_IP="$ML_STOCK_IP"
+    fi
+    PASS="$ML_STOCK_PASS"
+
+    echo "[*] checking $DEVICE_IP is booted on slot A (stock vendor)..."
+    if sshg true 2>/dev/null; then
+        echo "[+] confirmed: slot A (root/$PASS)"
+        ROOT_PASS="$PASS"
+        export DEVICE_IP ROOT_PASS
+        return 0
+    fi
+
+    if [ -n "$open_ip" ] && device_ssh "$open_pass" "$open_ip" true 2>/dev/null; then
+        echo "refusing: $DEVICE ($open_ip) is on slot B (open Alpine), not slot A." >&2
+        echo "  Run: glue/boot/flip-slot.sh a   (then re-run this script once it's back up)" >&2
+        return 1
+    fi
+
+    echo "cannot SSH to $DEVICE_IP as root/$PASS - is it booted and on slot A?" >&2
+    return 1
 }
