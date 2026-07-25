@@ -34,7 +34,17 @@ The gadget **re-randomizes its MAC on each goggle boot**, so the interface name 
 IF=$(ip -br link | awk '/enx/{print $1; exit}')
 sudo ip addr add 192.168.3.222/24 dev "$IF"; sudo ip link set "$IF" up
 ```
-`glue/net/net-up.sh` does exactly this (auto-detecting the name). For a fully hands-off setup, a udev rule keyed on `SUBSYSTEM==net, NAME=="enx*"` could assign the IP on appearance (not implemented here).
+`glue/net/net-up.sh` does exactly this (auto-detecting the name).
+
+### Hands-off: auto-attach on plug-in (`make net-install`)
+
+For a fully hands-off setup, install the udev auto-attach once and `net-up.sh` is no longer needed for reboots/ramboots:
+```sh
+make net-install     # or: glue/net/net-install.sh
+```
+This drops in `glue/net/99-artosyn-bridge.rules` + `artosyn-bridge-attach.sh`: on plug-in the gadget is enslaved into a `br-artosyn` bridge that carries the host IP, so the changing `enx<mac>` name no longer matters (the bridge name is stable). It covers both the open (`1d6b:0104`) and stock (`1d6b:0101`) gadgets, and cleans up the older non-bridge autonet.
+
+The rule matches the gadget's **USB identity**, not the `enx*` name. The kernel first names the interface `usb0`/`eth0` and udev renames it to `enx<mac>` inside the same `add` event, so a `KERNEL=="enx*"` / `NAME=="enx*"` rule never fires on the live event (it only appears to match under `udevadm test`, which runs against the already-renamed device). Matching `ATTRS{idVendor}`/`idProduct`/`manufacturer` is settled at `add` time and fires reliably.
 
 ## Device behaviour, RF link resets (not a host issue)
 

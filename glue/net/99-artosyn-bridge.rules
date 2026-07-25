@@ -1,10 +1,21 @@
 # Auto-enslave Artosyn USB-ethernet gadget interfaces into the br-artosyn bridge on plug-in,
-# so a device reboot or replug needs no manual glue/net/net-up.sh run.
+# so a device reboot, ramboot, or replug needs no manual glue/net/net-up.sh run.
 #
-# Install (with the attach script; both from glue/net/):
+# Matched on the gadget's USB IDENTITY, not the interface name. The kernel first names the
+# interface usb0/eth0 and udev renames it to enx<mac> INSIDE this same "add" event, so a
+# KERNEL=="enx*" match is false when the rule is evaluated and the RUN never fires (a
+# KERNEL=="enx*" rule looks like it matches under `udevadm test`, which runs against the
+# already-renamed device, but not on the live add event). The parent USB attributes are settled
+# when the net "add" fires, so an ATTRS match is reliable. The attach script (RUN, which runs
+# past the rename) then locates the interface by the same identity and enslaves it.
+#   open  gadget: 1d6b:0104 manufacturer "missinglynk"
+#   stock gadget: 1d6b:0101 manufacturer "Artosyn"  (product "Sirius")
+#
+# Install (with the attach script; both from glue/net/, or just run glue/net/net-install.sh):
 #   sudo install -m755 artosyn-bridge-attach.sh /usr/local/lib/artosyn-bridge-attach.sh
 #   sudo install -m644 99-artosyn-bridge.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload
 #
 # Uninstall: remove both files and reload udev again.
-SUBSYSTEM=="net", ACTION=="add", KERNEL=="enx*", RUN+="/usr/local/lib/artosyn-bridge-attach.sh %k"
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d6b", ATTRS{idProduct}=="0104", ATTRS{manufacturer}=="missinglynk", RUN+="/usr/local/lib/artosyn-bridge-attach.sh"
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d6b", ATTRS{idProduct}=="0101", ATTRS{manufacturer}=="Artosyn", RUN+="/usr/local/lib/artosyn-bridge-attach.sh"

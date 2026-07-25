@@ -93,6 +93,12 @@ kernel:
 fetch-blobs:
 	uv run missinglynk fetch-blobs
 
+# Install the host-side auto-networking: the udev rule that enslaves an Artosyn gadget into
+# br-artosyn on plug-in/reboot/ramboot, its attach script, and the NetworkManager keyfile;
+# also removes the superseded non-bridge autonet. Needs sudo. See glue/docs/host-network-setup.md.
+net-install:
+	glue/net/net-install.sh
+
 rootfs:
 	FLAVOR=slim ./rootfs/build.sh $(DEVICE)
 
@@ -142,4 +148,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
