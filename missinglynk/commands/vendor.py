@@ -52,9 +52,6 @@ def _print_open_identity(release: dict[str, str], record: dict) -> None:
             state: str = "never proven" if boots == 0 else f"{int(boots)} healthy boot(s)"
             print(f"  boots:         {state}")
 
-        if record.get("nickname"):
-            print(f"  nickname:      {record['nickname']}")
-
         vendor = record.get("vendor")
         if isinstance(vendor, dict) and vendor.get("sequence_number") is not None:
             print(f"  serial:        {vendor['sequence_number']}")

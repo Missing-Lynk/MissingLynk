@@ -26,6 +26,8 @@
  *                                      readback), no component writes
  *   mlflash --slots                    print the A/B slot state and a read-only classification
  *                                      of the inactive slot's contents as one JSON object
+ *   mlflash --record [--slot a|b]      read device.json and re-hash the target slot's kernel/dtb
+ *                                      to print the boot-proof verdict as one JSON object
  *
  * Guards: writing slot A requires --force-a, which is permitted only while running on slot B and
  * is mutually exclusive with --flip. Static build, see native/build.sh.
@@ -79,6 +81,30 @@ static int cmd_slots(void)
     printf("}\n");
 
     return probed ? 0 : 1;
+}
+
+/*
+ * Read-only boot-proof report for the host flasher: read the per-unit device.json and re-hash the
+ * target slot's kernel/dtb partitions, printing the verdict as one JSON object. Defaults to the
+ * inactive slot (the switch target); --slot overrides. Nothing is written. Returns device_record_
+ * report's status (0 = record present, 1 = absent), or 2 when the running slot cannot be determined
+ * and no --slot was given.
+ */
+static int cmd_record(const char *want_slot)
+{
+    int slot;
+    if (want_slot) {
+        slot = (want_slot[0] == 'b' || want_slot[0] == 'B') ? 1 : 0;
+    } else {
+        int running = running_slot();
+        if (running < 0) {
+            fprintf(stderr, "record: cannot determine the running slot; pass --slot a|b.\n");
+            return 2;
+        }
+        slot = !running;
+    }
+
+    return device_record_report(slot);
 }
 
 static int cmd_inspect(const char *path)
@@ -270,6 +296,7 @@ static int flash_preflight(const unsigned char *img, size_t img_len, const char 
         fprintf(stderr, "flash: no manifest.json\n");
         return 1;
     }
+
     if (manifest_parse(manifest_data, manifest_len, m) != 0) {
         return 1;
     }
@@ -298,6 +325,7 @@ static int flash_preflight(const unsigned char *img, size_t img_len, const char 
                     "(A is the BootROM-recovery keystone).\n");
             return 1;
         }
+
         if (running != 1) {
             fprintf(stderr, "flash: --force-a is allowed only while running on slot B "
                     "(so A is an inactive, recoverable target); running slot is %s.\n",
@@ -519,6 +547,8 @@ static void usage(void)
             "  mlflash --flip                  [--slot a|b] set the inactive slot active, no write\n"
             "  mlflash --slots                              print the A/B slot state + inactive-\n"
             "                                               slot classification as JSON, no write\n"
+            "  mlflash --record                [--slot a|b] print the device.json boot-proof\n"
+            "                                               verdict for a slot as JSON, no write\n"
             "    --flip     (with --flash) after a verified flash, set it active; or standalone\n"
             "               to flip an already-flashed+proven slot (overrides Rule 2; no prompt)\n"
             "    --force-a  permit writing an inactive slot A (only while running B; no prompt)\n");
@@ -536,7 +566,8 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--inspect") || !strcmp(argv[i], "--dry-run") ||
-            !strcmp(argv[i], "--flash") || !strcmp(argv[i], "--slots")) {
+            !strcmp(argv[i], "--flash") || !strcmp(argv[i], "--slots") ||
+            !strcmp(argv[i], "--record")) {
             mode = argv[i];
         } else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
             slot = argv[++i];
@@ -565,7 +596,18 @@ int main(int argc, char **argv)
             fprintf(stderr, "--slots takes no image and no other flags\n");
             return 2;
         }
+
         return cmd_slots();
+    }
+
+    /* Read-only device-record report: no image, no write flags (--slot is allowed). */
+    if (mode && !strcmp(mode, "--record")) {
+        if (image || want_flip || force_a) {
+            fprintf(stderr, "--record takes no image and no flip/force flags\n");
+            return 2;
+        }
+
+        return cmd_record(slot);
     }
 
     /* Standalone flip: --flip with no flash/inspect/dry-run mode and no image. */
@@ -575,6 +617,7 @@ int main(int argc, char **argv)
                     "partitions, only gpt0)\n");
             return 2;
         }
+
         return cmd_flip(slot);
     }
 

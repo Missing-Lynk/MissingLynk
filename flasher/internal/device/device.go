@@ -17,14 +17,16 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// SSH port and the well-known device coordinates. The flasher targets a stock unit
-// (the address is fixed, no DHCP on stock), so DefaultIP is the stock address .100;
-// root's password differs per slot.
+// SSH port and the well-known device coordinates. The device answers on a
+// slot-dependent address: the stock/unflashed unit is the reserved .100, and our
+// open goggle slot is .101 (board.conf GADGET_IP, device index NN=1). root's
+// password also differs per slot. Discovery and reconnect probe both addresses.
 const (
 	Port          = "22"
-	DefaultIP     = "192.168.3.100" // stock unit's address (open-slot devices are .101+)
-	StockPassword = "artosyn" // vendor slot A (and the air unit)
-	OpenPassword  = "libre"   // our open slot B
+	DefaultIP     = "192.168.3.100" // stock/unflashed unit (reserved index NN=0)
+	OpenIP        = "192.168.3.101" // open slot B, goggle (board.conf GADGET_IP, NN=1)
+	StockPassword = "artosyn"       // vendor slot A (and the air unit)
+	OpenPassword  = "libre"         // our open slot B
 )
 
 // Client is a connected SSH session factory to one device.

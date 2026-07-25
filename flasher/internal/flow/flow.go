@@ -24,6 +24,7 @@ import (
 // Defaults for the fixed gadget link.
 const (
 	DefaultDeviceIP = device.DefaultIP
+	DefaultOpenIP   = device.OpenIP
 	DefaultHostCIDR = "192.168.3.222/24"
 	remoteDir       = "/tmp"
 	remoteMlflash   = "/tmp/mlflash"
@@ -66,7 +67,8 @@ type Emit func(Event)
 // the file picker); the rest keep their defaults.
 type Options struct {
 	ImagePath string // .mlimg bundle to flash (required by Flash)
-	DeviceIP  string // default DefaultDeviceIP
+	DeviceIP  string // stock-slot address, default DefaultDeviceIP (.100)
+	OpenIP    string // open-slot address, default DefaultOpenIP (.101)
 	HostCIDR  string // default DefaultHostCIDR
 
 	// AllowUnknownVersion bypasses the firmware whitelist (developer use).
@@ -99,6 +101,26 @@ type DeviceInfo struct {
 	OtherSlot    string `json:"otherSlot"`
 	OtherContent string `json:"otherContent"`
 	Switchable   bool   `json:"switchable"`
+
+	// ProvenNote is a ready-to-show sentence about whether the OPEN switch-target
+	// slot has proven it boots, from the per-unit device.json record (mlflash
+	// --record). Advisory only: it never changes Switchable, it just tells the user
+	// what is known about that slot. Empty when no record could be read (then the
+	// caller keeps the plain caution).
+	ProvenNote string `json:"provenNote"`
+}
+
+// recordReport captures the fields of the mlflash --record JSON that the boot-proof
+// summary needs: whether a record exists, the healthy-boot count, whether the record
+// carries kernel/dtb digests at all, and the verdict (boots > 0 AND those digests
+// still match the live partitions, computed on the device). DigestsRecorded splits
+// "never had digests" (a slot installed outside this tool) from "digests differ",
+// which are different things to tell the user. Other keys are ignored.
+type recordReport struct {
+	Present         bool `json:"present"`
+	Boots           int  `json:"boots"`
+	DigestsRecorded bool `json:"digests_recorded"`
+	Verified        bool `json:"verified"`
 }
 
 // slotState mirrors the JSON object mlflash --slots prints.
@@ -125,6 +147,10 @@ func (o *Options) applyDefaults() {
 		o.DeviceIP = DefaultDeviceIP
 	}
 
+	if o.OpenIP == "" {
+		o.OpenIP = DefaultOpenIP
+	}
+
 	if o.HostCIDR == "" {
 		o.HostCIDR = DefaultHostCIDR
 	}
@@ -142,9 +168,9 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Reading the device"})
-	client, alreadyOpen, err := connect(opt.DeviceIP)
+	client, alreadyOpen, err := connect(opt.DeviceIP, opt.OpenIP)
 	if err != nil {
-		return nil, fail(emit, fmt.Errorf("SSH connect to %s failed: %w", opt.DeviceIP, err))
+		return nil, fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
 
 	defer client.Close()
@@ -200,6 +226,7 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		fillOtherSlot(client, info, "open", emit)
 		if info.Switchable {
 			info.Detail = "The MissingLynk firmware is on the other slot; it can be switched to directly."
+			fillProof(client, info, emit)
 		}
 	}
 
@@ -241,6 +268,66 @@ func fillOtherSlot(client *device.Client, info *DeviceInfo, wantContent string, 
 	info.OtherSlot = state.OtherSlot
 	info.OtherContent = state.OtherContent
 	info.Switchable = state.isSwitchTarget() && state.OtherContent == wantContent
+}
+
+// fillProof annotates info with the boot-proof verdict of the open switch-target
+// slot (info.OtherSlot), from the per-unit device.json record. Advisory only: it
+// never changes Switchable, it just tells the user whether that slot has proven it
+// boots. The summary is appended to the device-card detail and exposed on info for
+// the switch-confirm dialog. A missing/unreadable record degrades to the plain
+// caution (empty note), never an error.
+func fillProof(client *device.Client, info *DeviceInfo, emit Emit) {
+	info.ProvenNote = provenSummary(probeRecord(client, info.OtherSlot))
+	if info.ProvenNote != "" {
+		info.Detail = strings.TrimSpace(info.Detail + " " + info.ProvenNote)
+	}
+}
+
+// probeRecord runs mlflash --record for slot (the switch target) and parses the
+// boot-proof verdict. mlflash is already uploaded by the preceding probeSlots, so
+// this only reads. mlflash exits non-zero when the record is absent, but the JSON
+// line still carries {"present":false}; an unparseable line yields a zero report,
+// which provenSummary renders as the plain caution.
+func probeRecord(client *device.Client, slot string) recordReport {
+	out, _ := client.Run(remoteMlflash + " --record --slot " + device.ShellQuote(slot))
+	var rec recordReport
+	_ = json.Unmarshal([]byte(strings.TrimSpace(out)), &rec)
+	return rec
+}
+
+// provenSummary turns a record verdict for the open switch-target slot into a human
+// sentence for the device card and switch dialog. The four outcomes are distinct and
+// must not be collapsed: no record at all, proven, booted but unverifiable (the slot
+// was installed outside this tool, so no digests were ever recorded), and a genuine
+// digest mismatch. Only the last describes bytes that actually changed.
+func provenSummary(rec recordReport) string {
+	if !rec.Present {
+		return "This tool has no install record for this device, so it cannot confirm the other slot has ever booted."
+	}
+
+	if rec.Verified {
+		return fmt.Sprintf("The other slot booted cleanly %s and its bytes still verify.", bootCount(rec.Boots))
+	}
+
+	if rec.Boots == 0 {
+		return "The other slot has an install record but has never booted successfully; it is unproven."
+	}
+
+	if !rec.DigestsRecorded {
+		return fmt.Sprintf("The other slot booted cleanly %s, but it was not installed by this tool, "+
+			"so there are no recorded digests to verify its contents against.", bootCount(rec.Boots))
+	}
+
+	return "The other slot's recorded bytes no longer match what is on it (re-flashed outside this tool, or degraded); treat it as unproven."
+}
+
+// bootCount renders a healthy-boot count for a sentence ("once", "25 times").
+func bootCount(boots int) string {
+	if boots == 1 {
+		return "once"
+	}
+
+	return fmt.Sprintf("%d times", boots)
 }
 
 // probeSlots uploads mlflash and runs its read-only --slots report. Nothing is
@@ -298,9 +385,9 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 		return err
 	}
 
-	client, runningOpen, err := connect(opt.DeviceIP)
+	client, runningOpen, err := connect(opt.DeviceIP, opt.OpenIP)
 	if err != nil {
-		return fail(emit, fmt.Errorf("SSH connect to %s failed: %w", opt.DeviceIP, err))
+		return fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
 
 	defer client.Close()
@@ -331,17 +418,18 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 	}
 
 	// The reboot mechanism and the password of the firmware we land on differ by
-	// direction.
-	rebootCmd, targetPassword := stockRebootCmd, device.OpenPassword
+	// direction. The open slot answers at .101 with the open password, the stock
+	// slot at .100 with the stock password.
+	rebootCmd, targetPassword, targetIP := stockRebootCmd, device.OpenPassword, opt.OpenIP
 	doneMsg := "Done - the device is now running the MissingLynk open firmware."
 	if runningOpen {
-		rebootCmd, targetPassword = openRebootCmd, device.StockPassword
+		rebootCmd, targetPassword, targetIP = openRebootCmd, device.StockPassword, opt.DeviceIP
 		doneMsg = "Done - the device is now running the stock firmware."
 	}
 
 	// The open slot serves DHCP; the vendor slot does not. runningOpen means we are
 	// switching to the vendor slot, so the target serves DHCP only when NOT runningOpen.
-	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, !runningOpen, emit); err != nil {
+	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, targetIP, !runningOpen, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -367,9 +455,9 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return err
 	}
 
-	client, alreadyOpen, err := connect(opt.DeviceIP)
+	client, alreadyOpen, err := connect(opt.DeviceIP, opt.OpenIP)
 	if err != nil {
-		return fail(emit, fmt.Errorf("SSH connect to %s failed: %w", opt.DeviceIP, err))
+		return fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
 
 	defer client.Close()
@@ -442,8 +530,8 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	// Flashing lands on the open slot, which serves DHCP.
-	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, true, emit); err != nil {
+	// Flashing lands on the open slot, which answers at .101 and serves DHCP.
+	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, opt.OpenIP, true, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -451,22 +539,56 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	return nil
 }
 
-// connect dials as root on the stock slot. If stock auth fails but the open-slot
-// password works, the unit is already flashed: it returns that open-slot client
-// with alreadyOpen == true (the caller closes it).
-func connect(ip string) (client *device.Client, alreadyOpen bool, err error) {
-	client, err = device.Dial(ip, "root", device.StockPassword, 10*time.Second)
-	if err == nil {
-		return client, false, nil
+// connect finds the device on whichever slot it is running. The stock slot answers
+// at stockIP with the stock password; the open slot answers at a different address
+// (openIP) with the open password (board.conf gives each slot its own IP). Only an
+// address whose SSH port actually answers is dialled, so the slot that is not
+// running costs one short probe instead of a full dial timeout. An open-slot
+// connection is returned with alreadyOpen == true (the caller closes it).
+func connect(stockIP, openIP string) (client *device.Client, alreadyOpen bool, err error) {
+	attempts := []struct {
+		ip       string
+		password string
+		open     bool
+	}{
+		{stockIP, device.StockPassword, false},
+		{openIP, device.OpenPassword, true},
 	}
 
-	if isAuthError(err) {
-		if openCli, openErr := device.Dial(ip, "root", device.OpenPassword, 10*time.Second); openErr == nil {
-			return openCli, true, nil
+	var firstErr error
+	for _, attempt := range attempts {
+		if !device.Reachable(attempt.ip, 2*time.Second) {
+			continue
+		}
+
+		cli, dialErr := device.Dial(attempt.ip, "root", attempt.password, 10*time.Second)
+		if dialErr == nil {
+			return cli, attempt.open, nil
+		}
+
+		if firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", attempt.ip, dialErr)
 		}
 	}
 
-	return nil, false, err
+	if firstErr != nil {
+		return nil, false, firstErr
+	}
+
+	return nil, false, fmt.Errorf("no device answered SSH at %s or %s", stockIP, openIP)
+}
+
+// firstReachable returns the first address whose SSH port answers within timeout,
+// or "" if none do. The device sits at the stock address on slot A and the open
+// address on slot B, so link checks probe both.
+func firstReachable(ips []string, timeout time.Duration) string {
+	for _, ip := range ips {
+		if device.Reachable(ip, timeout) {
+			return ip
+		}
+	}
+
+	return ""
 }
 
 // deviceName reads the human device name from the device-tree model (e.g.
@@ -515,7 +637,7 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 			len(candidates), names))
 
 	case len(candidates) == 0:
-		if device.Reachable(opt.DeviceIP, 2*time.Second) {
+		if firstReachable(deviceAddrs(opt), 2*time.Second) != "" {
 			emit(Event{Level: LevelWarn, Msg: "no USB gadget interface detected, but the device is reachable; continuing"})
 			return nil
 		}
@@ -526,7 +648,7 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 	candidate := candidates[0]
 	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Found gadget interface %s (%s)", candidate.Name, candidate.MAC)})
 
-	if device.Reachable(opt.DeviceIP, 2*time.Second) {
+	if firstReachable(deviceAddrs(opt), 2*time.Second) != "" {
 		emit(Event{Level: LevelInfo, Msg: "Device already reachable; network is up"})
 		return nil
 	}
@@ -540,7 +662,7 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if device.Reachable(opt.DeviceIP, 2*time.Second) {
+		if firstReachable(deviceAddrs(opt), 2*time.Second) != "" {
 			emit(Event{Level: LevelInfo, Msg: "Device reachable"})
 			return nil
 		}
@@ -552,13 +674,15 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 		}
 	}
 
-	return fail(emit, fmt.Errorf("device %s did not become reachable after configuring the link", opt.DeviceIP))
+	return fail(emit, fmt.Errorf("device did not become reachable at %s or %s after configuring the link",
+		opt.DeviceIP, opt.OpenIP))
 }
 
-// isAuthError reports whether err is an SSH authentication failure (transport
-// worked, password rejected) rather than a connection/handshake problem.
-func isAuthError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "unable to authenticate")
+// deviceAddrs are the addresses the device may answer on, stock first: the stock
+// slot at DeviceIP (.100) and the open slot at OpenIP (.101). The running slot
+// determines which one is live, so link checks probe both.
+func deviceAddrs(opt Options) []string {
+	return []string{opt.DeviceIP, opt.OpenIP}
 }
 
 // pushMlflash uploads the embedded on-device flasher to /tmp on the device.
@@ -683,8 +807,11 @@ func runMlflash(client *device.Client, emit Emit, args ...string) error {
 // configure the host before doing a static reattach, which avoids a needless
 // authorization prompt; for a non-DHCP slot we reattach as soon as the interface
 // appears, so the vendor slot is detected as soon as it is up.
-func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword string, targetServesDHCP bool, emit Emit) error {
-	ip := opt.DeviceIP
+//
+// ip is the address the slot being booted answers on: the stock slot at .100, the
+// open slot at .101 (board.conf). The slots live at different addresses, so waiting
+// on the wrong one would never see the reboot complete.
+func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword, ip string, targetServesDHCP bool, emit Emit) error {
 	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
 
 	// The reboot command tears the SoC down mid-session, so this SSH call never

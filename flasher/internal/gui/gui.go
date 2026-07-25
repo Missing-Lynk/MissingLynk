@@ -73,7 +73,8 @@ type ui struct {
 	flashing      bool
 	scanning      bool
 	switchable    bool
-	switchToOpen  bool // switch direction: true = activate the open slot, false = back to stock
+	switchToOpen  bool   // switch direction: true = activate the open slot, false = back to stock
+	provenNote    string // boot-proof sentence for the open switch target (empty if unknown)
 	switching     bool
 }
 
@@ -177,6 +178,7 @@ func (u *ui) scan() {
 			u.deviceStatus.SetText("Connect one device over USB, power it on, then Re-scan.")
 			u.flashable = false
 			u.switchable = false
+			u.provenNote = ""
 
 		case info.AlreadyOpen:
 			name := info.Name
@@ -188,6 +190,8 @@ func (u *ui) scan() {
 			u.flashable = false
 			u.switchable = info.Switchable
 			u.switchToOpen = false
+			// Switching back to the untouched stock slot needs no boot proof.
+			u.provenNote = ""
 
 		default:
 			title := info.Product
@@ -202,6 +206,7 @@ func (u *ui) scan() {
 			u.flashable = info.Flashable
 			u.switchable = info.Switchable
 			u.switchToOpen = true
+			u.provenNote = info.ProvenNote
 		}
 
 		u.refresh()
@@ -346,6 +351,9 @@ func (u *ui) confirmSwitch() {
 			"into it, WITHOUT rewriting or re-verifying it. If that slot no longer boots, the device " +
 			"will not start until the boot slot is recovered. Only proceed if this tool flashed the " +
 			"open firmware onto this device before and it booted."
+		if u.provenNote != "" {
+			text += "\n\n" + u.provenNote
+		}
 	}
 
 	message := widget.NewLabel(text)
