@@ -156,12 +156,32 @@ image-blobs:
 flash-rootfs: require-device
 	DEVICE=$(DEVICE) glue/flash/flash-rootfs-b.sh
 
-ramboot: require-device
+# Guard for the targets that hand built kernel artifacts to a boot/flash script: report which
+# file is missing and the build that produces it, rather than letting the script reject the empty
+# paths with a bare usage line. One build tree is shared by all devices and holds whichever board
+# was built last, so a present Image with a missing dtb means the tree belongs to another device.
+.PHONY: require-kernel-build
+require-kernel-build: require-device
+	@source kernel/scripts/pin.env && \
+	  boot="$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot" && \
+	  missing=0 && \
+	  for f in Image $(DEV_DTB); do \
+	    if [ ! -f "$$boot/$$f" ]; then echo "error: missing kernel artifact $$boot/$$f" >&2; missing=1; fi; \
+	  done && \
+	  if [ "$$missing" = 1 ]; then \
+	    echo "       build it with 'make kernel DEVICE=$(DEVICE)'." >&2; \
+	    if [ -f "$$boot/Image" ]; then \
+	      echo "       Image is present but $(DEV_DTB) is not: the build tree was built for another device." >&2; \
+	    fi; \
+	    exit 1; \
+	  fi
+
+ramboot: require-kernel-build
 	@source kernel/scripts/pin.env && \
 	  DEVICE=$(DEVICE) glue/boot/ram-boot.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                        "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
 
-flash-kernel: require-device
+flash-kernel: require-kernel-build
 	@source kernel/scripts/pin.env && \
 	  DEVICE=$(DEVICE) glue/flash/flash-kernel-b.sh "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/Image" \
 	                               "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)"
@@ -179,4 +199,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build clean distclean
