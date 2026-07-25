@@ -114,9 +114,12 @@ flasher:
 flasher-windows:
 	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows --output type=local,dest=flasher/build .
 
+# Image + dtb + the shipped modules, all built in the hermetic container (container-build.sh
+# builds+stages modules via kernel/modules/stage.sh, so the .ko match the Image's toolchain and
+# vermagic). The host-side kernel/modules/build.sh is a dev-only fast path, run by hand when
+# iterating on a single module - it is NOT part of the shipping build.
 kernel:
 	BOARD=$(DEVICE) kernel/scripts/build.sh
-	kernel/modules/build.sh
 
 fetch-blobs:
 	uv run missinglynk fetch-blobs
