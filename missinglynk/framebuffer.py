@@ -24,7 +24,7 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from .connection import Goggle
-from .progress import printer, ProgressCb
+from .progress import ProgressCb, printer
 
 # crop / region geometry: (x, y, w, h)
 Region = tuple[int, int, int, int]

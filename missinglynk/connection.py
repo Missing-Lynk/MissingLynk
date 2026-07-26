@@ -19,7 +19,7 @@ from contextlib import contextmanager
 
 import paramiko
 
-from . import GOGGLE_IP, GOGGLE_USER, GOGGLE_PASS, STOCK_IP, STOCK_PASS
+from . import GOGGLE_IP, GOGGLE_PASS, GOGGLE_USER, STOCK_IP, STOCK_PASS
 from .progress import ProgressCb
 
 
@@ -98,7 +98,7 @@ class Goggle:
         self.idle_timeout: float = idle_timeout
         self._transport: paramiko.Transport | None = None
 
-    def __enter__(self) -> "Goggle":
+    def __enter__(self) -> Goggle:
         transport: paramiko.Transport = paramiko.Transport((self.ip, self.port))
         transport.banner_timeout = self.timeout
         options = transport.get_security_options()
@@ -219,7 +219,7 @@ class Goggle:
     def read_file(self, path: str) -> bytes:
         stdout, stderr, exit_status = self.run(f"cat {shlex.quote(path)}")
         if exit_status != 0:
-            raise IOError(f"cat {path} failed (rc={exit_status}): "
+            raise OSError(f"cat {path} failed (rc={exit_status}): "
                           f"{stderr.decode(errors='replace')}")
 
         return stdout
@@ -238,7 +238,7 @@ class Goggle:
             while sent < total:
                 sent_now: int = channel.send(view[sent:sent + 65536])
                 if sent_now == 0:
-                    raise IOError("connection closed during write")
+                    raise OSError("connection closed during write")
                 sent += sent_now
                 if on_progress:
                     on_progress(sent, total)
@@ -247,7 +247,7 @@ class Goggle:
             exit_status: int = self._wait_exit_status(channel, f"cat > {path}")
 
         if exit_status != 0:
-            raise IOError(f"write {path} failed (rc={exit_status})")
+            raise OSError(f"write {path} failed (rc={exit_status})")
 
     def read_stream(self, command: str, expected_bytes: int | None = None,
                     on_progress: ProgressCb | None = None) -> bytes:

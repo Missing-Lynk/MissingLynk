@@ -43,6 +43,7 @@ cd missinglynk
 | Path | What |
 |------|------|
 | `missinglynk/` | Cross-platform Python CLI: identify, fetch-blobs, screenshot, dump-firmware, component framework. |
+| `tests/` | Unit tests for the Python CLI; no device needed (`make check-python`). |
 | `devices/` | Per-device profiles; `make list-devices` shows them, `make setup DEVICE=<name>` selects the target. |
 | `glue/` | Host-side device scripts: networking, U-Boot/serial, RAM-boot, slot-B flashers, slot flip, recovery. |
 | `native/` | On-device tools (vendor-glibc): `fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`, `ml-rfcmd`. |
@@ -151,6 +152,7 @@ Notes:
 - Re-runs don't re-download (pinned inputs are sha256-checked). `make fast` = incremental kernel + modules dev loop; NOT reproducible, do a plain `make kernel` before flashing.
 - `mtdtool` (from `make native`) is the on-device raw-NAND writer / slot flipper used in Part 2.
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
+- `make check-python` lints and unit-tests the Python CLI. No device, no Docker; run it before sending a change that touches `missinglynk/` ([python-tooling.md](docs/guides/python-tooling.md)).
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
 **Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.

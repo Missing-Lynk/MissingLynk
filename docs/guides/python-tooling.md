@@ -84,6 +84,14 @@ Only the rows the requested region needs are pulled from `/dev/fb0` via `dd` (th
 
 So `native/build.sh` + `apply-patches.py` (both one-off, unless the sources change), then `missinglynk install`.
 
+## Checks (lint + tests)
+
+`make check-python` lints the package with [Ruff](https://docs.astral.sh/ruff/) and runs the unit tests with pytest; `make lint` and `make test` run either half on its own. Both need only the `dev` dependency group (`uv run --group dev ...`, which `uv` installs on first use), and neither needs a device: `tests/conftest.py` provides a `FakeGoggle` that stands in for a connected unit at the same seam every caller uses (`run` / `read_file` / `write_file` / `read_stream`), with an in-memory filesystem behind it. Commands the fake does not understand raise rather than returning empty output, so a test cannot quietly pass on one it never interpreted.
+
+Ruff's configuration lives in `pyproject.toml` (`line-length = 100`, rules `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`) and covers `missinglynk/` plus `tests/`. `glue/` is not linted yet.
+
+Run `make check-python` before sending a change that touches the Python CLI.
+
 ## Cross-platform notes / gotchas
 
 - **paramiko is pinned `>=3.5,<4`.** paramiko 4.x/5.x drop the algorithms the goggle's Dropbear requires (`diffie-hellman-group1-sha1` / `group14-sha1`, host key `ssh-rsa`); 3.5.x still implements them, and `connection.py` force-prepends them to the offered lists. On paramiko ≥4 you get a clear error telling you to pin 3.5.

@@ -52,7 +52,8 @@ def identify(goggle: Goggle) -> str:
     """
     unit_id: str = goggle.run(
         "grep -hoE 'P1_(GND|SKY)' /usr/usrdata/sdk_version.json "
-        "/usr/usrdata/product/config.json 2>/dev/null | head -1")[0].decode(errors="replace").strip()
+        "/usr/usrdata/product/config.json 2>/dev/null "
+        "| head -1")[0].decode(errors="replace").strip()
     if unit_id:
         return unit_id
 
@@ -75,7 +76,7 @@ def read_ml_release(goggle: Goggle) -> dict[str, str]:
     """
     try:
         text: str = goggle.read_file("/etc/ml-release").decode(errors="replace")
-    except IOError:
+    except OSError:
         return {}
 
     out: dict[str, str] = {}
@@ -97,7 +98,7 @@ def read_device_record(goggle: Goggle) -> dict:
     """
     try:
         text: str = goggle.read_file("/usrdata/missinglynk/device.json").decode(errors="replace")
-    except IOError:
+    except OSError:
         return {}
 
     try:
@@ -209,7 +210,7 @@ def fetch_vendor_blobs(goggle: Goggle, dest_dir: str,
         remote_md5: str = md5_fields[0] if md5_fields else ""
         local_md5: str = hashlib.md5(data).hexdigest()
         if not remote_md5 or remote_md5 != local_md5:
-            raise IOError(f"md5 mismatch for {remote_path} "
+            raise OSError(f"md5 mismatch for {remote_path} "
                           f"(remote={remote_md5} local={local_md5})")
 
         local_path: str = os.path.join(dest_dir, remote_path.lstrip("/"))

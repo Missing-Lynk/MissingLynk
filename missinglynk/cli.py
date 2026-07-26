@@ -14,8 +14,8 @@ missinglynk command-line interface.
 By default the connected unit is auto-detected: a stock/unflashed unit at 192.168.3.100
 (root/artosyn) if one answers, else the first open device found scanning 192.168.3.101 and up
 (root/libre). Override with --ip/--port/--password. Run host network setup first so the link is
-reachable (see glue/docs/host-network-setup.md). To reach the air unit (P1_SKY), start the goggle relay
-(ml-tcprelay 8822 10.0.0.100 22) and pass --port 8822 --password artosyn.
+reachable (see glue/docs/host-network-setup.md). To reach the air unit (P1_SKY), start the goggle
+relay (ml-tcprelay 8822 10.0.0.100 22) and pass --port 8822 --password artosyn.
 
 Subcommands live in the `missinglynk.commands` package (one module per theme);
 this file only wires argparse and dispatches to each command's `func`.

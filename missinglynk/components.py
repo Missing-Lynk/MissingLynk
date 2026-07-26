@@ -138,7 +138,8 @@ COMPONENTS: list[Component] = [
     ),
     Component(
         name="menu",
-        summary="open libre-menu as the goggle UI (staged on the SD, bind-mounted over test_uidesign)",
+        summary="open libre-menu as the goggle UI (staged on the SD, bind-mounted over "
+                "test_uidesign)",
         default_on=True,
         files=[],   # staged to the SD (see SD_MENU_BIN), not /usrdata; the hook copies + binds it
         build_hint="build with userspace/libre/build-device.sh, then push to the SD",
@@ -161,7 +162,8 @@ COMPONENTS: list[Component] = [
     ),
     Component(
         name="ecm",
-        summary="USB gadget as CDC-ECM not RNDIS (Android binds it natively; needs a USB-OTG adapter)",
+        summary="USB gadget as CDC-ECM not RNDIS (Android binds it natively; needs a USB-OTG "
+                "adapter)",
         default_on=False,
         files=[],
         gadget_ecm=True,
@@ -211,7 +213,7 @@ def _render_template(name: str, values: dict[str, object]) -> str:
     Fill a templates/ shell file: replace each @KEY@ with values[KEY] (single
     pass, so substituted content is never re-scanned). Unknown keys raise.
     """
-    with open(os.path.join(_TEMPLATE_DIR, name), "r") as f:
+    with open(os.path.join(_TEMPLATE_DIR, name)) as f:
         text: str = f.read()
 
     def substitute(match: re.Match[str]) -> str:
@@ -328,7 +330,7 @@ def _push(goggle: Goggle, local: str, remote: str) -> None:
     goggle.run(f"chmod +x {quoted_remote}")
     uploaded: list[str] = goggle.run(f"md5sum {quoted_remote}")[0].decode().split()
     if not uploaded or uploaded[0] != local_md5:
-        raise IOError(f"md5 mismatch after upload of {remote} (want {local_md5}, "
+        raise OSError(f"md5 mismatch after upload of {remote} (want {local_md5}, "
                       f"got {uploaded[0] if uploaded else 'no md5sum output'})")
 
 
@@ -359,7 +361,7 @@ def install(goggle: Goggle) -> None:
     print("[2/5] matching buildtime (prevents /usrdata wipe)")
     goggle.run(f"cp {STOCK_BUILDTIME} {BUILDTIME}")
     if goggle.run(f"cmp -s {STOCK_BUILDTIME} {BUILDTIME} && echo OK")[0].strip() != b"OK":
-        raise IOError("buildtime mismatch, aborting (would wipe /usrdata on boot)")
+        raise OSError("buildtime mismatch, aborting (would wipe /usrdata on boot)")
 
     print("[3/5] generating boot hook from run.sh")
     body: str = _extract_body(goggle.read_file(RUN_SH).decode(errors="replace"))
@@ -378,7 +380,7 @@ def install(goggle: Goggle) -> None:
     _, stderr, exit_status = goggle.run(f"sh -n {START_SH}")
     if exit_status != 0:
         goggle.run(f"rm -f {START_SH}")
-        raise IOError("generated hook failed syntax check (not armed): "
+        raise OSError("generated hook failed syntax check (not armed): "
                       + stderr.decode(errors="replace").strip())
 
     print("[5/5] arming boot hook")
@@ -464,7 +466,8 @@ def status(goggle: Goggle) -> str:
 
     # OBSOLETE: legacy mlmenu row (same label as the `menu` component above); slated
     # for removal together with the mlmenu/ALWAYS_FILES machinery.
-    lines.append("  menu       on   [always on]               on-goggle menu (long-press RIGHT to open)")
+    lines.append("  menu       on   [always on]               on-goggle menu "
+                 "(long-press RIGHT to open)")
 
     if applied.get("rtsp") == "on":
         lines.append(f"\nstream URL: rtsp://{goggle.ip}:554/venc8/stream")

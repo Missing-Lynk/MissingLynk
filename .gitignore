@@ -13,6 +13,8 @@ CODING_STYLE.md
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
+.ruff_cache/
 
 # Proprietary vendor firmware, do NOT commit (copyright). firmware/ is a transient capture
 # dir for your own device dumps (fetch-blobs, dump-partitions); nothing in it is distributable.
