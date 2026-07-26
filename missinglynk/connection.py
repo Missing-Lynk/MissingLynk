@@ -129,18 +129,51 @@ class Goggle:
         """
         Open a channel, start `command` on it, and close it however the caller leaves.
 
-        Every remote call goes through here: closing only on the success path leaks the
-        channel whenever a transfer raises partway (a read error, a progress callback that
-        throws, a KeyboardInterrupt), and the leak lasts until the whole transport closes.
+        Every remote call goes through here, which buys two things. Closing in a finally: closing
+        only on the success path leaks the channel whenever a transfer raises partway (a read
+        error, a progress callback that throws, a KeyboardInterrupt), and the leak lasts until the
+        whole transport closes. And one deadline: a silent device raises TimeoutError out of
+        run(), read_stream() and write_file() alike, with the same message.
         """
         assert self._transport is not None, "not connected"
         channel: paramiko.Channel = self._transport.open_session(timeout=self.timeout)
 
         try:
+            # The blocking channel calls - recv() in read_stream, send() in write_file - inherit
+            # this deadline, so a device that stops responding mid-transfer ends the call instead
+            # of blocking forever. run() polls with select() and enforces the same window itself.
+            channel.settimeout(self.idle_timeout)
             channel.exec_command(command)
             yield channel
+        except socket.timeout as e:
+            raise self._wedged(command) from e
         finally:
             channel.close()
+
+    def _wait_exit_status(self, channel: paramiko.Channel, command: str) -> int:
+        """
+        Wait for the command's exit status, bounded by idle_timeout.
+
+        paramiko's own recv_exit_status() waits on an event with no timeout, so a device that
+        dies after the data has moved - the gadget dropping under a large push is the known case
+        here - would hang the CLI even though every recv/send is now bounded.
+        """
+        deadline: float = time.monotonic() + self.idle_timeout
+
+        while not channel.exit_status_ready():
+            if time.monotonic() >= deadline:
+                raise self._wedged(command)
+
+            time.sleep(0.05)
+
+        return channel.recv_exit_status()
+
+    def _wedged(self, command: str) -> TimeoutError:
+        """The error every path raises when the device goes silent for longer than idle_timeout."""
+        return TimeoutError(
+            f"no response to `{command}` for {self.idle_timeout:g}s on {self.ip} - "
+            "the device or the command is wedged"
+        )
 
     def run(self, command: str) -> tuple[bytes, bytes, int]:
         """
@@ -179,10 +212,7 @@ class Goggle:
                 exit_status: int = channel.recv_exit_status()
 
         if not finished:
-            raise TimeoutError(
-                f"no output and no exit status from `{command}` for {self.idle_timeout:g}s "
-                f"on {self.ip} - the device or the command is wedged"
-            )
+            raise self._wedged(command)
 
         return stdout, stderr, exit_status
 
@@ -214,7 +244,7 @@ class Goggle:
                     on_progress(sent, total)
 
             channel.shutdown_write()
-            exit_status: int = channel.recv_exit_status()
+            exit_status: int = self._wait_exit_status(channel, f"cat > {path}")
 
         if exit_status != 0:
             raise IOError(f"write {path} failed (rc={exit_status})")
@@ -226,6 +256,10 @@ class Goggle:
 
         `on_progress(done, total)` is called as data streams in (total may be None).
         Used to pull large outputs (e.g. a slice of /dev/fb0) with a progress bar.
+
+        The loop ends on EOF; a device that stops sending mid-stream raises TimeoutError from
+        recv() after idle_timeout rather than blocking here forever. Each chunk restarts that
+        window, so a slow-but-progressing transfer is never cut off.
         """
         received: bytearray = bytearray()
 
@@ -242,6 +276,6 @@ class Goggle:
                 if on_progress:
                     on_progress(len(received), expected_bytes)
 
-            channel.recv_exit_status()
+            self._wait_exit_status(channel, command)
 
         return bytes(received)
