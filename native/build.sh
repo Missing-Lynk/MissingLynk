@@ -59,7 +59,8 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     -e MTDUTILS_LIB="$MTDUTILS_LIB" gcc:7 sh -c '
     gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm &&
     gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
-    gcc -O2 -Wall -static mtdtool.c -o build/mtdtool &&
+    gcc -O2 -Wall -static -Imtdtool mtdtool/main.c mtdtool/mtd.c mtdtool/gpt.c \
+        mtdtool/slot.c mtdtool/io.c mtdtool/ubi.c -o build/mtdtool &&
     for f in $MTDUTILS_LIB vendor/mtd-utils/ubi-utils/ubiformat.c; do
         gcc -O2 -w -static -DVERSION=\"mtd-utils-$MTDUTILS_VERSION\" -Dmain=ubiformat_main \
             $MTDUTILS_INC -c "$f" -o "build/mtdu-$(basename "$f" .c).o" || exit 1

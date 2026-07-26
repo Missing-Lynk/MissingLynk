@@ -18,7 +18,7 @@ Rule 1 means you can always recover; rule 2 means you rarely have to.
 The ladder assumes four capabilities. Most A/B devices have all four in some form:
 
 1. **Boot a kernel + dtb from RAM without flashing.** This is the verifier. The rootfs can come from flash (the slot you are testing) while only the kernel and dtb live in RAM. On the VR04 this is `glue/boot/ram-boot.sh`, which packs the `Image` into the vendor container, drops to U-Boot, `loady`s the dtb and container over the UART bridge, and `bootm`s.
-2. **Flash an individual slot's partitions.** On the VR04: `native/mtdtool write <mtd> <image>` for the raw partitions (kernel, dtb, bootloader, env) and `ubiupdatevol` for the UBI rootfs.
+2. **Flash an individual slot's partitions.** On the VR04: `native/mtdtool write <mtd> <image>` for the raw partitions (kernel, dtb, bootloader, env) and `ubiupdatevol` for the UBI rootfs. `mtdtool` resolves the target's name from `/proc/mtd` and refuses to erase or write a slot-A partition (`kernel0`/`dtb0`/`env0`/`userapp0`/`uboot0`) unless `--allow-slot-a` is passed, so a mistyped `/dev/mtdN` cannot take out the fallback slot. It refuses an unidentifiable target for the same reason.
 3. **Set the active slot.** On the VR04: `mtdtool setslot /dev/mtd5 a|b` (flips one GPT attribute bit; touches only the `gpt0` partition).
 4. **A recovery backstop** for when the device will not come up at all. On the VR04: the BootROM UART writer in `glue/recovery/RECOVERY.md`.
 

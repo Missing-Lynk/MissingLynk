@@ -35,8 +35,10 @@ These are flat partitions: read the source out to a file, then write the file to
 Example, VR04 (kernel, B to A; repeat for dtb, bootloader, env):
 
     dd if=/dev/mtd14 of=/tmp/kernel.bin                 # read source (kernel1)
-    mtdtool write /dev/mtd13 /tmp/kernel.bin            # write target (kernel0): erases then programs
+    mtdtool write /dev/mtd13 /tmp/kernel.bin --allow-slot-a   # write target (kernel0): erases then programs
     # verify: sha256 of /dev/mtd13 (trimmed to the image length) must equal sha256 of /tmp/kernel.bin
+
+Cloning B onto A is the one routine operation that writes a slot-A partition, so `mtdtool` refuses it unless `--allow-slot-a` is passed: it resolves the target's name from `/proc/mtd` and rejects `kernel0`/`dtb0`/`env0`/`userapp0`/`uboot0` by default. Cloning in the other direction (A to B) needs no flag. Think once more before you type the flag: A is what every recovery path falls back to.
 
 Bad-block caveat: reading an MTD character device with `dd` returns ECC-corrected data and works for partitions with no bad blocks. If a partition has bad blocks, use the bad-block-aware tools (`nanddump` to read, `nandwrite` to write) instead, so the bad-block markers are honored. The MTD-aware writer aborts rather than silently corrupting if it hits a bad block in the target.
 
