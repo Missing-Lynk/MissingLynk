@@ -13,6 +13,9 @@ from __future__ import annotations
 import select
 import shlex
 import socket
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import paramiko
 
@@ -55,6 +58,14 @@ def default_target(port: int = 22) -> tuple[str, str]:
 
     return GOGGLE_IP, GOGGLE_PASS
 
+# How long a command may produce nothing at all - no stdout, no stderr, no exit status - before
+# run() gives up. It bounds a wedged device (a hung command, a link that dropped without closing
+# the channel), which otherwise polls forever. It is an INACTIVITY limit, not a total runtime
+# limit, so a slow command that keeps producing output is never cut off. Generous by design: the
+# quietest commands the CLI issues (md5sum over a few MB, cp between partitions) answer in
+# seconds. Override per connection with Goggle(idle_timeout=...).
+IDLE_TIMEOUT: float = 120.0
+
 # Algorithms the goggle requires, promoted to the front of paramiko's lists.
 _KEX: tuple[str, ...] = ("diffie-hellman-group1-sha1", "diffie-hellman-group14-sha1")
 _CIPHERS: tuple[str, ...] = ("aes128-cbc", "3des-cbc")
@@ -77,12 +88,14 @@ class Goggle:
     """A live SSH connection to the goggle. Use as a context manager."""
 
     def __init__(self, ip: str = GOGGLE_IP, user: str = GOGGLE_USER,
-                 password: str = GOGGLE_PASS, port: int = 22, timeout: float = 8.0) -> None:
+                 password: str = GOGGLE_PASS, port: int = 22, timeout: float = 8.0,
+                 idle_timeout: float = IDLE_TIMEOUT) -> None:
         self.ip: str = ip
         self.user: str = user
         self.password: str = password
         self.port: int = port
         self.timeout: float = timeout
+        self.idle_timeout: float = idle_timeout
         self._transport: paramiko.Transport | None = None
 
     def __enter__(self) -> "Goggle":
@@ -111,31 +124,66 @@ class Goggle:
             self._transport.close()
             self._transport = None
 
-    def run(self, command: str) -> tuple[bytes, bytes, int]:
-        """Returns (stdout, stderr, exit_status)."""
+    @contextmanager
+    def _session(self, command: str) -> Iterator[paramiko.Channel]:
+        """
+        Open a channel, start `command` on it, and close it however the caller leaves.
+
+        Every remote call goes through here: closing only on the success path leaks the
+        channel whenever a transfer raises partway (a read error, a progress callback that
+        throws, a KeyboardInterrupt), and the leak lasts until the whole transport closes.
+        """
         assert self._transport is not None, "not connected"
         channel: paramiko.Channel = self._transport.open_session(timeout=self.timeout)
-        channel.exec_command(command)
+
+        try:
+            channel.exec_command(command)
+            yield channel
+        finally:
+            channel.close()
+
+    def run(self, command: str) -> tuple[bytes, bytes, int]:
+        """
+        Returns (stdout, stderr, exit_status).
+
+        Raises TimeoutError if the command goes silent for longer than self.idle_timeout: the
+        loop runs only while the channel is still alive in that sense, so a wedged device ends
+        the call instead of polling forever. Every byte received, on either stream, is activity.
+        """
         stdout: bytes = b""
         stderr: bytes = b""
-        while True:
-            if channel.recv_ready():
-                stdout += channel.recv(65536)
-                continue
+        finished: bool = False
+        last_activity: float = time.monotonic()
 
-            if channel.recv_stderr_ready():
-                stderr += channel.recv_stderr(65536)
-                continue
+        with self._session(command) as channel:
+            while time.monotonic() - last_activity < self.idle_timeout:
+                if channel.recv_ready():
+                    stdout += channel.recv(65536)
+                    last_activity = time.monotonic()
+                    continue
 
-            if channel.exit_status_ready() and not channel.recv_ready() \
-                    and not channel.recv_stderr_ready():
-                break
+                if channel.recv_stderr_ready():
+                    stderr += channel.recv_stderr(65536)
+                    last_activity = time.monotonic()
+                    continue
 
-            # block until readable (fileno() makes paramiko channels selectable)
-            select.select([channel], [], [], 0.1)
+                if channel.exit_status_ready() and not channel.recv_ready() \
+                        and not channel.recv_stderr_ready():
+                    finished = True
+                    break
 
-        exit_status: int = channel.recv_exit_status()
-        channel.close()
+                # block until readable (fileno() makes paramiko channels selectable)
+                select.select([channel], [], [], 0.1)
+
+            if finished:
+                exit_status: int = channel.recv_exit_status()
+
+        if not finished:
+            raise TimeoutError(
+                f"no output and no exit status from `{command}` for {self.idle_timeout:g}s "
+                f"on {self.ip} - the device or the command is wedged"
+            )
+
         return stdout, stderr, exit_status
 
     def read_file(self, path: str) -> bytes:
@@ -149,27 +197,25 @@ class Goggle:
     def write_file(self, path: str, data: bytes,
                    on_progress: ProgressCb | None = None) -> None:
         # This Dropbear has no SFTP subsystem, so stream the bytes to `cat > path`.
-        assert self._transport is not None, "not connected"
-        channel: paramiko.Channel = self._transport.open_session(timeout=self.timeout)
-        channel.exec_command(f"cat > {shlex.quote(path)}")
         total: int = len(data)
         view: memoryview = memoryview(data)
         sent: int = 0
 
-        if on_progress:
-            on_progress(0, total)
-
-        while sent < total:
-            sent_now: int = channel.send(view[sent:sent + 65536])
-            if sent_now == 0:
-                raise IOError("connection closed during write")
-            sent += sent_now
+        with self._session(f"cat > {shlex.quote(path)}") as channel:
             if on_progress:
-                on_progress(sent, total)
+                on_progress(0, total)
 
-        channel.shutdown_write()
-        exit_status: int = channel.recv_exit_status()
-        channel.close()
+            while sent < total:
+                sent_now: int = channel.send(view[sent:sent + 65536])
+                if sent_now == 0:
+                    raise IOError("connection closed during write")
+                sent += sent_now
+                if on_progress:
+                    on_progress(sent, total)
+
+            channel.shutdown_write()
+            exit_status: int = channel.recv_exit_status()
+
         if exit_status != 0:
             raise IOError(f"write {path} failed (rc={exit_status})")
 
@@ -181,23 +227,21 @@ class Goggle:
         `on_progress(done, total)` is called as data streams in (total may be None).
         Used to pull large outputs (e.g. a slice of /dev/fb0) with a progress bar.
         """
-        assert self._transport is not None, "not connected"
-        channel: paramiko.Channel = self._transport.open_session(timeout=self.timeout)
-        channel.exec_command(command)
         received: bytearray = bytearray()
-        if on_progress:
-            on_progress(0, expected_bytes)
 
-        while True:
-            chunk: bytes = channel.recv(65536)
-            if not chunk:
-                break
-
-            received += chunk
+        with self._session(command) as channel:
             if on_progress:
-                on_progress(len(received), expected_bytes)
+                on_progress(0, expected_bytes)
 
-        channel.recv_exit_status()
-        channel.close()
+            while True:
+                chunk: bytes = channel.recv(65536)
+                if not chunk:
+                    break
+
+                received += chunk
+                if on_progress:
+                    on_progress(len(received), expected_bytes)
+
+            channel.recv_exit_status()
 
         return bytes(received)

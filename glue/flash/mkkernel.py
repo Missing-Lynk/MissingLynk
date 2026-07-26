@@ -182,13 +182,23 @@ def size(image_path):
 
 
 def verify(part_path):
-    data, _offset, uimage, image = unpack(part_path, tempfile.mktemp())
-    # repack from the extracted Image and re-unpack; the round trip must recover it.
-    container_path = tempfile.mktemp()
-    image_path = tempfile.mktemp()
-    open(image_path, 'wb').write(image)
-    pack(image_path, container_path, otra_template=part_path)
-    repacked = open(container_path, 'rb').read()
+    # The scratch files live in one temporary directory that is removed on the way out, including
+    # when the round trip raises. tempfile.mktemp() only reserved a name - anything else on the
+    # host could create that path between the call and the write - and left cleanup to the caller.
+    with tempfile.TemporaryDirectory(prefix='mkkernel-verify-') as scratch_dir:
+        extracted_path = os.path.join(scratch_dir, 'extracted.Image')
+        image_path = os.path.join(scratch_dir, 'roundtrip.Image')
+        container_path = os.path.join(scratch_dir, 'repacked.bin')
+
+        data, _offset, uimage, image = unpack(part_path, extracted_path)
+        # repack from the extracted Image and re-unpack; the round trip must recover it.
+        with open(image_path, 'wb') as image_file:
+            image_file.write(image)
+
+        pack(image_path, container_path, otra_template=part_path)
+        with open(container_path, 'rb') as container_file:
+            repacked = container_file.read()
+
     uimage2 = parse_uimage(repacked[0x40:0x40 + 64])
     roundtrip_image = lz4.frame.decompress(repacked[0x80:0x80 + uimage2['size']])
     ok_fields = all(uimage2[k] == uimage[k] for k in ('magic', 'load', 'ep', 'os', 'arch', 'type', 'comp', 'name'))
@@ -199,12 +209,6 @@ def verify(part_path):
           f"Image identical {'OK' if ok_image else 'FAIL'}, OTRA shape {'OK' if ok_otra else 'FAIL'}")
     print(f"  stock container {len(data)}B, repacked {len(repacked)}B "
           f"(differ only by LZ4 stream + uImage time/CRC, expected)")
-
-    for tmp_path in (container_path, image_path):
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
 
     return ok_fields and ok_image and ok_otra
 
