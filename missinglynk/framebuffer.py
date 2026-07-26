@@ -2,7 +2,7 @@
 Fetch and decode the goggle's OSD framebuffer (/dev/fb0).
 
 fb0 is the OSD/UI overlay only (the camera video is a separate HW layer, see
-docs/01). Format is ARGB4444 (16bpp, 4 bits each); the line stride is padded
+docs/guides/python-tooling.md). Format is ARGB4444 (16bpp, 4 bits each); the line stride is padded
 wider than the visible width (2048 px vs 1920). Layout is like ffmpeg's
 `rgb444le`: a little-endian u16 is (msb) 4X 4R 4G 4B (lsb); the alpha nibble is
 dropped. We expand each 4-bit channel to 8-bit by replication (n*17, 0xF->255 =

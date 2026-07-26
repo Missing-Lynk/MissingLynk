@@ -14,7 +14,7 @@ Each component is an entry in COMPONENTS. Enabling/disabling only edits
 sources that config and applies whatever is enabled, then runs the stock boot
 UNMODIFIED. So with nothing enabled the boot is effectively stock, and because
 start.sh always reaches `exec run.sh`, USB networking + SSH always come up even
-if a component is broken (see docs/06).
+if a component is broken (see docs/guides/python-tooling.md).
 
 Boot safety
 -----------
@@ -26,7 +26,7 @@ exactly as stock. The hook stays in place across boots (persistent, no re-arm).
 The only change to the live boot is a bind-mount of ar_lowdelay (rtsp), which
 cannot affect USB/SSH; a broken component only affects that component. Recovery if
 the hook ever fails: SSH in and `uninstall` (dropbear comes up via /etc/init.d
-independently), or the physical UART (docs/08).
+independently), or the physical UART (docs/guides/serial-and-debug-access.md).
 """
 from __future__ import annotations
 

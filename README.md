@@ -51,7 +51,6 @@ cd missinglynk
 | `assets/` | Splash screen, OSD fonts. |
 | `docs/` | Cross-cutting reference + guides ([`docs/README.md`](docs/README.md)). |
 | `Makefile` | Build front door; sequences the component builds. |
-| `STATUS.md` | Current project status. |
 
 ## Quickstart, toolchain + open slot-B bring-up
 
