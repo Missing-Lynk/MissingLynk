@@ -30,6 +30,9 @@
 #   make flash-kernel flash the built kernel Image + dtb onto slot B (kernel1/dtb1)
 #   make flashboot    RAM-boot slot B's flashed kernel1/dtb1 to prove the on-flash copy boots
 #
+# Host-side checks (no device needed):
+#   make check-python lint + unit-test the Python CLI (missinglynk/); also: make lint, make test
+#
 # Clean:
 #   make clean        remove component build outputs (keeps the pinned kernel tree)
 #   make distclean    also remove the kernel build tree (forces a full kernel re-fetch + rebuild)
@@ -189,6 +192,17 @@ flash-kernel: require-kernel-build
 flashboot: require-device
 	DEVICE=$(DEVICE) glue/boot/ram-boot-flashed-b.sh
 
+# Host-side checks for the Python code (missinglynk/, tests/, glue/). No device, no network:
+# every device call is faked at the connection seam, so these run anywhere. Which paths are
+# linted, and the per-path rule exemptions, are declared in pyproject.toml.
+lint:
+	uv run --group dev ruff check .
+
+test:
+	uv run --group dev pytest
+
+check-python: lint test
+
 clean:
 	-$(MAKE) -C userspace clean
 	rm -f native/fbtext native/minidhcpd native/mtdtool native/mlmenu/mlmenu
@@ -199,4 +213,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python clean distclean

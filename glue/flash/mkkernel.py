@@ -38,14 +38,15 @@ Usage:
   mkkernel.py size   <Image>                     # packed size + kernel-slot margin (exit 1 if over)
   mkkernel.py verify <stock-kernel-part.bin>     # round-trip self-test
 """
-import sys
+import argparse
+import functools
 import os
 import re
-import functools
 import struct
-import zlib
-import argparse
+import sys
 import tempfile
+import zlib
+
 import lz4.frame
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this file is glue/flash/
@@ -102,7 +103,7 @@ def mtdparts_partition_size(mtdparts, want):
     return None
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def kernel_slot_size():
     """
     Size of the active device's kernel partition; a flashed container must fit it.
@@ -130,8 +131,9 @@ def kernel_slot_size():
 def parse_uimage(data):
     (magic, hcrc, timestamp, size, load, ep, dcrc, os_, arch, typ, comp) = struct.unpack('>IIIIIIIBBBB', data[:32])
     name = data[32:64].split(b'\x00')[0]
-    return dict(magic=magic, hcrc=hcrc, time=timestamp, size=size, load=load, ep=ep, dcrc=dcrc,
-                os=os_, arch=arch, type=typ, comp=comp, name=name)
+    return {'magic': magic, 'hcrc': hcrc, 'time': timestamp, 'size': size, 'load': load,
+            'ep': ep, 'dcrc': dcrc, 'os': os_, 'arch': arch, 'type': typ, 'comp': comp,
+            'name': name}
 
 
 def build_uimage_header(payload, name=NAME, load=LOAD, ep=LOAD, timestamp=0, comp=IH_COMP_LZ4):
@@ -147,7 +149,8 @@ def build_uimage_header(payload, name=NAME, load=LOAD, ep=LOAD, timestamp=0, com
 
 
 def unpack(part_path, out_image):
-    data = open(part_path, 'rb').read()
+    with open(part_path, 'rb') as part:
+        data = part.read()
     offset = 0
     if data[:4] == OTRA_MAGIC:
         offset = 0x40
@@ -164,7 +167,8 @@ def unpack(part_path, out_image):
         raise SystemExit(f"unsupported comp={uimage['comp']} (this tool only handles LZ4)")
 
     assert image[56:60] == b'ARM\x64', 'decompressed payload is not an arm64 Image'
-    open(out_image, 'wb').write(image)
+    with open(out_image, 'wb') as out:
+        out.write(image)
     print(f"unpacked: comp={uimage['comp']} name={uimage['name']!r} load=0x{uimage['load']:08x} "
           f"Image={len(image)} bytes -> {out_image}")
 
@@ -173,7 +177,8 @@ def unpack(part_path, out_image):
 
 def build_otra(payload_len, template):
     if template:
-        header = bytearray(open(template, 'rb').read(0x40))
+        with open(template, 'rb') as source:
+            header = bytearray(source.read(0x40))
         assert header[:4] == OTRA_MAGIC, 'template has no OTRA header'
     else:
         header = bytearray(0x40)
@@ -216,12 +221,14 @@ def slot_margin(blob_len):
 
 
 def pack(image_path, out_path, otra_template=None, timestamp=0):
-    image = open(image_path, 'rb').read()
+    with open(image_path, 'rb') as source:
+        image = source.read()
     blob, payload = build_container(image, otra_template, timestamp)
     if not otra_template:
         print('WARNING: no --otra-template; OTRA +0x20 checksum is zeroed and may be '
               'rejected by bootm. Pass a stock dump as template.', file=sys.stderr)
-    open(out_path, 'wb').write(blob)
+    with open(out_path, 'wb') as out:
+        out.write(blob)
     margin, fits = slot_margin(len(blob))
     print(f"packed: Image={len(image)} -> lz4={len(payload)} -> container={len(blob)} "
           f"bytes -> {out_path}")
@@ -237,7 +244,8 @@ def size(image_path):
     Returns whether the container fits the slot (the CLI exits non-zero when it does not, so this
     doubles as a pre-flash gate).
     """
-    image = open(image_path, 'rb').read()
+    with open(image_path, 'rb') as source:
+        image = source.read()
     blob, payload = build_container(image)
     margin, fits = slot_margin(len(blob))
 

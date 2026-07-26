@@ -42,14 +42,23 @@ dev = [
 # The floor the package declares; keeps the UP rules from rewriting to syntax a 3.9 host rejects.
 target-version = "py39"
 line-length = 100
-# glue/ is not linted yet (76 findings, and its scripts drive live device sessions); this covers
-# the installable package plus its tests.
-include = ["missinglynk/**/*.py", "tests/**/*.py"]
+include = ["missinglynk/**/*.py", "tests/**/*.py", "glue/**/*.py"]
+# glue/dev/ is gitignored per-machine scratch, not part of the tree.
+extend-exclude = ["glue/dev"]
 
 [tool.ruff.lint]
 # E/F/W/I: errors, pyflakes, warnings, import order. UP/B/C4/SIM: pyupgrade, bugbear,
 # comprehensions, simplify - all clean on this tree, so they stay on to keep it that way.
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+# SIM108 (collapse if/else into a ternary) is declined: both sites it flags are branch logic that
+# reads better spelled out, one of them the A/B active-bit choice in gpt_setactive.py.
+ignore = ["SIM108"]
+
+[tool.ruff.lint.per-file-ignores]
+# glue/ is held to every substantive rule, but not to the line limit: its 40 over-long lines are
+# comments, docstrings, argparse help, and exact serial byte literals in the recovery path.
+# Reflowing those carries more risk than the cosmetics are worth.
+"glue/**/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

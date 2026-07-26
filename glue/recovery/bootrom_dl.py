@@ -28,8 +28,8 @@ import serial
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, os.pardir, 'lib'))
 sys.path.insert(0, _HERE)
-from serial_port import find_port
-import gmi
+import gmi  # noqa: E402  (imported after the sys.path bootstrap above)
+from serial_port import find_port  # noqa: E402
 
 LOAD = 0x110000            # --test poke address (harmless RAM)
 MAXPAY = 0xFF0             # max payload bytes per frame

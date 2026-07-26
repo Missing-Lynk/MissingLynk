@@ -26,17 +26,17 @@ Usage:
 """
 from __future__ import annotations
 
-import sys
-import os
-import io
-import json
-import time
+import argparse
 import glob
 import hashlib
-import argparse
-import tarfile
+import io
+import json
+import os
 import subprocess
-from typing import Optional, TypedDict
+import sys
+import tarfile
+import time
+from typing import TypedDict
 
 # mkkernel.py lives beside this file; reuse its container packing rather than reimplement it.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -85,7 +85,12 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def pin_env(var: str) -> Optional[str]:
+def read_bytes(path: str) -> bytes:
+    with open(path, "rb") as source:
+        return source.read()
+
+
+def pin_env(var: str) -> str | None:
     """
     Read a variable from kernel/scripts/pin.env by sourcing it, so our defaults come from the
     single source of truth the shell flashers use instead of a reimplementation that can drift
@@ -106,12 +111,12 @@ def pin_env(var: str) -> Optional[str]:
     return None
 
 
-def kernel_version() -> Optional[str]:
+def kernel_version() -> str | None:
     """KERNEL_VERSION from pin.env, used as the fallback bundle-version label."""
     return pin_env("KERNEL_VERSION")
 
 
-def default_build_dir() -> Optional[str]:
+def default_build_dir() -> str | None:
     """pin.env's KERNEL_BUILD_DEFAULT ($BUILD_DIR override wins, same as the shell tools)."""
     if os.environ.get("BUILD_DIR"):
         return os.environ["BUILD_DIR"]
@@ -119,7 +124,7 @@ def default_build_dir() -> Optional[str]:
     return pin_env("KERNEL_BUILD_DEFAULT")
 
 
-def git_describe(repo_path: str) -> Optional[str]:
+def git_describe(repo_path: str) -> str | None:
     """`git describe`-style provenance for a submodule; None if unavailable."""
     try:
         result = subprocess.run(["git", "-C", repo_path, "describe", "--tags", "--always", "--dirty"],
@@ -132,7 +137,7 @@ def git_describe(repo_path: str) -> Optional[str]:
     return None
 
 
-def resolve_blob(explicit: Optional[str], blobs_dir: str, patterns: list[str], label: str) -> str:
+def resolve_blob(explicit: str | None, blobs_dir: str, patterns: list[str], label: str) -> str:
     """
     Locate a vendor blob: an explicit path wins; else the first match of `patterns` (in order)
     searched recursively under blobs_dir. Raises with a clear message if nothing is found.
@@ -156,7 +161,8 @@ def resolve_blob(explicit: Optional[str], blobs_dir: str, patterns: list[str], l
 
 def pack_kernel(image_path: str, otra_template: str) -> bytes:
     """Pack the kernel Image into the OTRA+uImage+LZ4 container; gate it against the kernel slot."""
-    image = open(image_path, "rb").read()
+    with open(image_path, "rb") as source:
+        image = source.read()
     container, _payload = mkkernel.build_container(image, otra_template)
     margin, fits = mkkernel.slot_margin(len(container))
     print(f"[*] kernel: Image {len(image):,} B -> container {len(container):,} B ({margin})")
@@ -199,10 +205,10 @@ def build(args: argparse.Namespace) -> int:
 
     # Assemble every component's bytes in memory (all small enough; rootfs is ~34 MiB).
     kernel_bytes = pack_kernel(image_path, template_path)
-    dtb_bytes = open(dtb_path, "rb").read()
-    rootfs_bytes = open(rootfs_path, "rb").read()
-    uboot_bytes = open(uboot_path, "rb").read()
-    env_bytes = open(env_path, "rb").read()
+    dtb_bytes = read_bytes(dtb_path)
+    rootfs_bytes = read_bytes(rootfs_path)
+    uboot_bytes = read_bytes(uboot_path)
+    env_bytes = read_bytes(env_path)
 
     kernel_ver = kernel_version()
     provenance: dict[str, object] = {
@@ -287,8 +293,8 @@ def inspect(args: argparse.Namespace) -> int:
     with tarfile.open(path, "r") as tar:
         try:
             manifest = json.loads(tar.extractfile("manifest.json").read())
-        except KeyError:
-            raise SystemExit("error: bundle has no manifest.json")
+        except KeyError as missing:
+            raise SystemExit("error: bundle has no manifest.json") from missing
 
         print(f"mlimg: {path}")
         print(f"  format {manifest.get('format_version')}  device {manifest.get('target_device')}"

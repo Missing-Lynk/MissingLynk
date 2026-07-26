@@ -88,7 +88,7 @@ So `native/build.sh` + `apply-patches.py` (both one-off, unless the sources chan
 
 `make check-python` lints the package with [Ruff](https://docs.astral.sh/ruff/) and runs the unit tests with pytest; `make lint` and `make test` run either half on its own. Both need only the `dev` dependency group (`uv run --group dev ...`, which `uv` installs on first use), and neither needs a device: `tests/conftest.py` provides a `FakeGoggle` that stands in for a connected unit at the same seam every caller uses (`run` / `read_file` / `write_file` / `read_stream`), with an in-memory filesystem behind it. Commands the fake does not understand raise rather than returning empty output, so a test cannot quietly pass on one it never interpreted.
 
-Ruff's configuration lives in `pyproject.toml` (`line-length = 100`, rules `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`) and covers `missinglynk/` plus `tests/`. `glue/` is not linted yet.
+Ruff's configuration lives in `pyproject.toml` (`line-length = 100`, rules `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`) and covers `missinglynk/`, `tests/`, and the host-side `glue/` scripts. Two exemptions are declared there with their reasons: `SIM108` (collapsing an `if`/`else` into a ternary) is off everywhere, and `E501` is off for `glue/`, whose over-long lines are comments, argparse help, and exact serial byte literals. `glue/dev/` is per-machine scratch and is excluded. The `glue/` scripts have no unit tests: they are verified by their own self-tests (`gmi.py selftest`, `mkkernel.py verify`) and by round-tripping `mkkernel`/`mlimg` on synthetic inputs.
 
 Run `make check-python` before sending a change that touches the Python CLI.
 

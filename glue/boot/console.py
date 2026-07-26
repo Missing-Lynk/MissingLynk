@@ -12,14 +12,14 @@ Console baud: BootROM 115200, then U-Boot + Linux 1152000.
 """
 from __future__ import annotations
 
-import serial
-import time
-import sys
 import os
+import sys
+import time
+
+import serial
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, 'lib'))
 from serial_port import find_port
-
 
 PORT = find_port()
 

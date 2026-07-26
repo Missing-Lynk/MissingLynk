@@ -20,7 +20,6 @@ import argparse
 import json
 import struct
 import subprocess
-import sys
 import tempfile
 import zlib
 from pathlib import Path

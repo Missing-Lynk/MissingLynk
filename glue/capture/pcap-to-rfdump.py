@@ -26,7 +26,13 @@ import struct
 import sys
 from pathlib import Path
 
-_p = Path(__file__).resolve().parents[2] / "libre" / "tools" / "ml-rf-udp" / "ml-rf-udp.py"
+_p = (Path(__file__).resolve().parents[2]
+      / "archive" / "libre" / "tools" / "ml-rf-udp" / "ml-rf-udp.py")
+if not _p.is_file():
+    raise SystemExit(f"error: this tool reuses ml-rf-udp's SLL/IPv4/UDP parsers, but {_p} is "
+                     "missing. It lives in the pre-restructure archive, which is not part of a "
+                     "fresh checkout.")
+
 _spec = importlib.util.spec_from_file_location("mlrfudp", _p)
 mlrfudp = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mlrfudp)
@@ -51,7 +57,7 @@ def read_pcap_ts(path):
         endian, _ = mlrfudp.PCAP_MAGICS[magic]
     network = struct.unpack(endian + "I", data[20:24])[0]
     if network != mlrfudp.DLT_LINUX_SLL:
-        raise ValueError("expected LINKTYPE_LINUX_SLL (113), got %d" % network)
+        raise ValueError(f"expected LINKTYPE_LINUX_SLL (113), got {network}")
     off = 24
     while off + 16 <= len(data):
         ts, tus, caplen, _orig = struct.unpack(endian + "IIII", data[off:off + 16])
@@ -130,8 +136,8 @@ def main():
             prev = ts
             f.write(struct.pack("<IHH", delta_us, dport, len(payload)))
             f.write(payload)
-    print("[rf-replay] dumped %d datagrams (%d video), %.1fs span -> %s"
-          % (len(pkts), n_video, pkts[-1][0] - pkts[0][0], args.out))
+    print(f"[rf-replay] dumped {len(pkts)} datagrams ({n_video} video), "
+          f"{pkts[-1][0] - pkts[0][0]:.1f}s span -> {args.out}")
 
 
 if __name__ == "__main__":

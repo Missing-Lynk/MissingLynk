@@ -53,7 +53,7 @@ def build_gmi(body: bytes, load_addr: int) -> tuple[bytes, bytes]:
         body = body + b'\x00' * (QWORD - len(body) % QWORD)
 
     size = len(body)
-    if not (LOAD_MIN <= load_addr and load_addr + size <= LOAD_MAX):
+    if not (load_addr >= LOAD_MIN and load_addr + size <= LOAD_MAX):
         raise ValueError("load_addr/size out of [0x110000,0x1fffff]")
 
     body_sum = sum(struct.unpack_from('<Q', body, i)[0] for i in range(0, size, QWORD)) & U64_MASK
@@ -88,8 +88,9 @@ def _selftest() -> None:
     assert field(BODY_SUM_LO_OFF) == 0xd503205f, hex(field(BODY_SUM_LO_OFF))
     assert field(BODY_SUM_HI_OFF) == 0x17ffffff, hex(field(BODY_SUM_HI_OFF))
     assert field(HDR_SUM_OFF) == 0x36a47a32, hex(field(HDR_SUM_OFF))
-    print("gmi selftest OK -- matches RE-verified test vector (+08=%#x +34=%#x +38=%#x)"
-          % (field(HDR_SUM_OFF), field(BODY_SUM_LO_OFF), field(BODY_SUM_HI_OFF)))
+    print("gmi selftest OK -- matches RE-verified test vector "
+          f"(+08={field(HDR_SUM_OFF):#x} +34={field(BODY_SUM_LO_OFF):#x} "
+          f"+38={field(BODY_SUM_HI_OFF):#x})")
 
 
 if __name__ == '__main__':

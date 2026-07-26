@@ -89,9 +89,9 @@ def main() -> None:
     found, tail = wait_for(needle, timeout=args.timeout, send=send, baud=args.baud, port=args.port)
 
     if found:
-        print("[=] RESULT: FOUND %r" % needle)
+        print(f"[=] RESULT: FOUND {needle!r}")
     else:
-        print("[=] RESULT: NOT FOUND %r (timeout)" % needle)
+        print(f"[=] RESULT: NOT FOUND {needle!r} (timeout)")
         print("[=] tail:", repr(tail))
 
     sys.exit(0 if found else 2)

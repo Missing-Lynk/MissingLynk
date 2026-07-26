@@ -10,7 +10,6 @@ copy glue.env.example). Import find_port(), or run this file to print the path
 import os
 import sys
 
-
 ENV_FILE = os.path.join(os.path.dirname(__file__), os.pardir, "glue.env")
 
 
