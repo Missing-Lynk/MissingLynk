@@ -35,21 +35,25 @@ contentChksum=1, contentSize=0, 4 MiB blocks). This was the last blocker to M-A.
 Usage:
   mkkernel.py unpack <kernel-part.bin> <out-Image>
   mkkernel.py pack   <Image> <out-kernel-part.bin> --otra-template <stock-kernel-part.bin>
-  mkkernel.py size   <Image>                     # packed size + 6 MiB slot margin (exit 1 if over)
+  mkkernel.py size   <Image>                     # packed size + kernel-slot margin (exit 1 if over)
   mkkernel.py verify <stock-kernel-part.bin>     # round-trip self-test
 """
 import sys
 import os
+import re
+import functools
 import struct
 import zlib
 import argparse
 import tempfile
 import lz4.frame
 
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this file is glue/flash/
+
 # Board config (device-specific; adjust per target).
 LOAD = 0x200A0000          # kernel load/entry address; SPL Falcon LZ4-decompresses the Image to here.
-SLOT_SIZE = 0x600000       # kernel0/kernel1 partition size (6 MiB); a flashed container must fit this.
 NAME = b'Sirius'           # uImage name field (32B, informational; the vendor uses "Sirius").
+DEFAULT_SLOT_SIZE = 0x600000   # kernel-slot size assumed when no device profile can be read; see kernel_slot_size().
 
 # Fixed container + uImage protocol constants (U-Boot include/image.h; not configurable). Each IH_*
 # names one byte in the 32B legacy uImage header (os / arch / type / comp), so the boot chain accepts
@@ -60,6 +64,67 @@ IH_OS_LINUX = 5            # os field: Linux.
 IH_ARCH_ARM64 = 22         # arch field: ARM64 (aarch64).
 IH_TYPE_KERNEL = 2         # type field: OS kernel image.
 IH_COMP_LZ4 = 5            # comp field: LZ4 frame.
+
+
+def active_device():
+    """Name of the device this invocation targets: $DEVICE, else the .device selection."""
+    device = os.environ.get('DEVICE')
+    if device:
+        return device.strip()
+
+    try:
+        with open(os.path.join(REPO, '.device')) as selection:
+            return selection.read().strip()
+    except OSError:
+        return ''
+
+
+def mtdparts_partition_size(mtdparts, want):
+    """
+    Size in bytes of the named partition in a U-Boot mtdparts table, or None if absent.
+
+    The table is "<mtd-id>:<size>[@<offset>](<name>),..."; sizes are bytes, optionally with a
+    k/K/m/M/g/G suffix. Only sizes are needed here; glue/lib/device.sh's mtdparts_partition also
+    derives each entry's implicit offset, which nothing on this side asks for.
+    """
+    multipliers = {'k': 1024, 'm': 1024 * 1024, 'g': 1024 * 1024 * 1024}
+    for size_text, name in re.findall(r'([0-9]+[kKmMgG]?)(?:@[^(]*)?\(([^)]*)\)',
+                                      mtdparts.split(':', 1)[-1]):
+        if name != want:
+            continue
+
+        suffix = size_text[-1].lower()
+        if suffix in multipliers:
+            return int(size_text[:-1]) * multipliers[suffix]
+
+        return int(size_text)
+
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def kernel_slot_size():
+    """
+    Size of the active device's kernel partition; a flashed container must fit it.
+
+    Read from DEV_MTDPARTS in devices/<device>/device.mk, the same table glue/lib/uboot.sh puts
+    on the RAM-boot cmdline. Falls back to DEFAULT_SLOT_SIZE (with a warning) when there is no
+    device selection or no table, so packing for a RAM-boot still works outside a set-up tree.
+    """
+    device = active_device()
+    manifest = os.path.join(REPO, 'devices', device, 'device.mk')
+    if device and os.path.exists(manifest):
+        with open(manifest) as source:
+            match = re.search(r'^DEV_MTDPARTS\s*=\s*([^#\n]*)', source.read(), re.MULTILINE)
+        if match:
+            size = mtdparts_partition_size(match.group(1).strip(), 'kernel1')
+            if size is not None:
+                return size
+
+    print(f"WARNING: no kernel1 partition for device '{device or '(none selected)'}'; assuming "
+          f"{DEFAULT_SLOT_SIZE // (1024 * 1024)} MiB. Run: make setup DEVICE=<name>", file=sys.stderr)
+
+    return DEFAULT_SLOT_SIZE
 
 
 def parse_uimage(data):
@@ -138,14 +203,16 @@ def build_container(image, otra_template=None, timestamp=0):
 
 
 def slot_margin(blob_len):
-    """Human summary of the packed container vs the 6 MiB kernel slot, plus a fits/does-not bool."""
-    percent = 100.0 * blob_len / SLOT_SIZE
-    free = SLOT_SIZE - blob_len
+    """Human summary of the packed container vs the device's kernel slot, plus a fits/does-not bool."""
+    slot_size = kernel_slot_size()
+    slot = f"{slot_size // (1024 * 1024)} MiB slot"
+    percent = 100.0 * blob_len / slot_size
+    free = slot_size - blob_len
     if free >= 0:
-        return f"{blob_len:,} B = {percent:.1f}% of the 6 MiB slot, {free:,} B ({free // 1024} KiB) free", True
+        return f"{blob_len:,} B = {percent:.1f}% of the {slot}, {free:,} B ({free // 1024} KiB) free", True
 
     over = -free
-    return f"{blob_len:,} B = {percent:.1f}% of the 6 MiB slot, OVER by {over:,} B ({over // 1024} KiB)", False
+    return f"{blob_len:,} B = {percent:.1f}% of the {slot}, OVER by {over:,} B ({over // 1024} KiB)", False
 
 
 def pack(image_path, out_path, otra_template=None, timestamp=0):
@@ -160,7 +227,7 @@ def pack(image_path, out_path, otra_template=None, timestamp=0):
           f"bytes -> {out_path}")
     print(f"  slot fit: {margin}")
     if not fits:
-        print("  NOTE: exceeds the 6 MiB kernel slot: fine for RAM-boot (loads to RAM), but "
+        print("  NOTE: exceeds the kernel slot: fine for RAM-boot (loads to RAM), but "
               "will NOT fit kernel0/1 for flashing.", file=sys.stderr)
 
 

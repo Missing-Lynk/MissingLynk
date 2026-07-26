@@ -10,6 +10,8 @@
 # (devices/<name>/device.mk) and rootfs profile (rootfs/devices/<name>/board.conf) are the
 # single source of truth; this reads from them:
 #   DEV_DTB, DEV_KADDR, DEV_RDADDR, DEV_DTADDR   (device.mk - dtb basename + RAM load map)
+#   DEV_MTDPARTS                                 (device.mk - flash partition table, plus the
+#                                                 mtdparts_partition() lookup built on it)
 #   PARTITION, ROOT_PASS                         (board.conf - slot-B partition + open password)
 # A value already in the environment always wins (explicit per-invocation override).
 
@@ -41,6 +43,47 @@ DEV_DTB="${DEV_DTB:-$(dev_mk DEV_DTB)}"
 DEV_KADDR="${DEV_KADDR:-$(dev_mk DEV_KADDR)}"
 DEV_RDADDR="${DEV_RDADDR:-$(dev_mk DEV_RDADDR)}"
 DEV_DTADDR="${DEV_DTADDR:-$(dev_mk DEV_DTADDR)}"
+DEV_MTDPARTS="${DEV_MTDPARTS:-$(dev_mk DEV_MTDPARTS)}"
+
+# mtdparts_partition <name> - print "<offset> <size>" (both 0x-hex) for the named partition in
+# DEV_MTDPARTS, or return 1 if the device has no table or no such partition. The table is
+# U-Boot mtdparts syntax: "<mtd-id>:<size>[@<offset>](<name>),..." with sizes in bytes or with a
+# k/K/m/M suffix, listed in flash order; an entry without @<offset> starts where the previous one
+# ended, which is how every offset after the first is derived here.
+mtdparts_partition() {
+    local want="$1"
+    [ -n "${DEV_MTDPARTS:-}" ] || return 1
+
+    awk -v want="$want" '
+        function to_bytes(text,   value, suffix) {
+            value = text + 0
+            suffix = substr(text, length(text))
+            if (suffix == "k" || suffix == "K") { return value * 1024 }
+            if (suffix == "m" || suffix == "M") { return value * 1024 * 1024 }
+            if (suffix == "g" || suffix == "G") { return value * 1024 * 1024 * 1024 }
+            return value
+        }
+        {
+            sub(/^[^:]*:/, "")
+            count = split($0, entries, ",")
+            offset = 0
+            for (entry = 1; entry <= count; entry++) {
+                if (match(entries[entry], /\(.*\)/) == 0) { continue }
+                name = substr(entries[entry], RSTART + 1, RLENGTH - 2)
+                spec = substr(entries[entry], 1, RSTART - 1)
+                if (split(spec, halves, "@") == 2) {
+                    offset = to_bytes(halves[2])
+                    size = to_bytes(halves[1])
+                } else {
+                    size = to_bytes(spec)
+                }
+                if (name == want) { printf "0x%x 0x%x\n", offset, size; exit 0 }
+                offset += size
+            }
+            exit 1
+        }
+    ' <<<"$DEV_MTDPARTS"
+}
 
 # board.conf (shell) carries PARTITION (slot-B UBI target, resolved by NAME on the device) and
 # ROOT_PASS (open-slot password). Sourcing it also sets the USB-gadget vars, harmlessly. NOTE:

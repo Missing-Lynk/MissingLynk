@@ -10,8 +10,8 @@
 # Precondition: kernel1/dtb1 already hold a bootable kernel, and the device is reachable to
 # drop to U-Boot (either slot; ROOT_PASS as usual).
 #
-# Flash offsets are fixed by this device's static mtdparts layout. A's U-Boot (uboot0) is
-# minimal - no partition names, so read by raw offset on spi-nand0.
+# A's U-Boot (uboot0) is minimal - no partition names, so read by raw offset on spi-nand0. The
+# offsets come from the active device's partition table (DEV_MTDPARTS in devices/<name>/device.mk).
 #
 # Usage:   ram-boot-flashed-b.sh [bootargs]
 # Env:     DEVICE_IP (active device, from board.conf), ROOT_PASS (libre; artosyn from slot A),
@@ -28,10 +28,15 @@ DTADDR="${DTADDR:-$DEV_DTADDR}"   # dtb1 RAM load addr
 [ -n "$KADDR" ] && [ -n "$DTADDR" ] || {
   echo "[!] no load map for device '$DEVICE' - set DEV_KADDR/DEV_DTADDR in devices/$DEVICE/device.mk" >&2
   exit 1; }
-KERNEL1_OFFSET=0x1040000          # kernel1 flash offset (fixed by the mtdparts layout)
-KERNEL1_SIZE=0x600000             # 6 MiB
-DTB1_OFFSET=0x16a0000             # dtb1 flash offset
-DTB1_SIZE=0x60000                 # 384 KiB
+# kernel1/dtb1 flash offsets and sizes, derived from the device's partition table rather than
+# restated, so a device with a different layout needs no edit here.
+KERNEL1_GEOMETRY="$(mtdparts_partition kernel1 || true)"
+DTB1_GEOMETRY="$(mtdparts_partition dtb1 || true)"
+[ -n "$KERNEL1_GEOMETRY" ] && [ -n "$DTB1_GEOMETRY" ] || {
+  echo "[!] no kernel1/dtb1 in device '$DEVICE' partition table - set DEV_MTDPARTS in devices/$DEVICE/device.mk" >&2
+  exit 1; }
+read -r KERNEL1_OFFSET KERNEL1_SIZE <<<"$KERNEL1_GEOMETRY"
+read -r DTB1_OFFSET DTB1_SIZE <<<"$DTB1_GEOMETRY"
 
 # This script boots whatever is FLASHED in kernel1/dtb1, which may predate the
 # truthful-256-MiB memory node in the DTS. Append mem=148m to the default args:

@@ -108,10 +108,10 @@ if [ "$DO_BUILD" = 1 ]; then
   fi
   rm -f "$marker"
 
-  # Report how the LZ4-packed Image compares to the 6 MiB kernel slot. `|| true` so an
+  # Report how the LZ4-packed Image compares to the device's kernel slot. `|| true` so an
   # over-slot build (e.g. a debug/RAM-boot-only kernel) still prints the margin without
   # aborting; mkkernel.py's own NOTE flags the overflow.
-  step "slot fit: packed Image vs the 6 MiB kernel slot"
+  step "slot fit: packed Image vs the kernel slot"
   python3 "$REPO/glue/flash/mkkernel.py" size "$IMG" || true
 
   step "build: modules (ABI-matched to the Image above)"

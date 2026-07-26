@@ -43,3 +43,9 @@ DEV_MLIMG_TARGET   = P1_GND_VR04
 DEV_KADDR          = 0x24000000
 DEV_RDADDR         = 0x26000000
 DEV_DTADDR         = 0x28000000
+
+# Flash partition table, U-Boot mtdparts syntax, in flash order: the host tooling's single copy
+# of the layout (RAM-boot cmdline, flash offsets, kernel-slot size all derive from it - see
+# docs/adding-a-device.md). Sizes are cumulative; only the first entry states an explicit @offset.
+# Must match the partitions in this device's DTS.
+DEV_MTDPARTS       = spi32766.1:256k@0(spl0),256k(spl1),256k(spl2),256k(spl3),256k(gpt0),256k(gpt1),512K(vendor),6M(factory),384K(env0),384K(env1),768K(uboot0),768K(uboot1),6M(kernel0),6M(kernel1),384K(dtb0),384K(dtb1),45M(userapp0),45M(userapp1),6M(usr_data),6M(usr_log)

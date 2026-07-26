@@ -155,14 +155,14 @@ def resolve_blob(explicit: Optional[str], blobs_dir: str, patterns: list[str], l
 
 
 def pack_kernel(image_path: str, otra_template: str) -> bytes:
-    """Pack the kernel Image into the OTRA+uImage+LZ4 container; gate it against the 6 MiB slot."""
+    """Pack the kernel Image into the OTRA+uImage+LZ4 container; gate it against the kernel slot."""
     image = open(image_path, "rb").read()
     container, _payload = mkkernel.build_container(image, otra_template)
     margin, fits = mkkernel.slot_margin(len(container))
     print(f"[*] kernel: Image {len(image):,} B -> container {len(container):,} B ({margin})")
 
     if not fits:
-        raise SystemExit("error: packed kernel exceeds the 6 MiB kernel slot; cannot flash.")
+        raise SystemExit("error: packed kernel exceeds the device's kernel slot; cannot flash.")
 
     return container
 

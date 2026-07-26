@@ -96,7 +96,7 @@ echo "[*] packing $IMG into the OTRA container..."
 "$PY" "$MKKERNEL" pack "$IMG" "$SCRATCH/kernel1-container.bin" \
     --otra-template "$SCRATCH/kernel1-template.bin"
 "$PY" "$MKKERNEL" size "$IMG" \
-    || { echo "refusing: packed Image does not fit the 6 MiB kernel slot" >&2; exit 1; }
+    || { echo "refusing: packed Image does not fit the kernel slot" >&2; exit 1; }
 
 # --- stage mtdtool + payloads ---------------------------------------------------------
 [ -x "$MTDTOOL" ] || { echo "missing $MTDTOOL (run native/build.sh first)" >&2; exit 1; }

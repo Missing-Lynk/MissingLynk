@@ -15,6 +15,7 @@ Single source of truth for identity, capabilities, and build pointers. The root 
 - **Capabilities** - composable booleans (0/1); they gate the `ml-hud` `-D` defines and document the hardware. A unit can set any combination: `DEV_HAS_DISPLAY`, `DEV_HAS_CAMERA`, `DEV_HAS_KEYPAD` (adc-keys ladder), `DEV_HAS_GPIO_KEYS` (discrete gpio-keys), `DEV_HAS_BUZZER`, `DEV_HAS_LED`, `DEV_HAS_SD`, `DEV_HAS_DVR`, `DEV_HAS_FC_LINK`.
 - **Build pointers:** `DEV_DTB` (built `.dtb` basename; must match the DTS below), `DEV_UI_BOARD` (the `ml-hud` board-HAL name, empty if the device has no UI), `DEV_MLIMG_TARGET`.
 - **RAM-boot load map** (required; `ram-boot.sh` refuses without it): `DEV_KADDR`, `DEV_RDADDR`, `DEV_DTADDR` - the `loady` addresses for the OTRA container / initramfs / dtb. Place them in usable DRAM, above the decompressed kernel (lands at `0x200a0000`) and below the device's `mmz` reserved-memory carveout.
+- **Flash partition table** (required for RAM-boot and flashing): `DEV_MTDPARTS` - the device's layout in U-Boot `mtdparts` syntax, `<mtd-id>:<size>[@<offset>](<name>),...` in flash order, sizes with a `k`/`M` suffix and only the first entry stating an explicit `@offset`. It is the host tooling's one copy of the layout: `glue/lib/uboot.sh` puts it verbatim on the RAM-boot cmdline (`bootm`, unlike an SPL flash boot, gets no partitions from the dtb), `glue/lib/device.sh` `mtdparts_partition <name>` derives any partition's offset and size from it (`ram-boot-flashed-b.sh` reads `kernel1`/`dtb1` that way), and `glue/flash/mkkernel.py` takes the kernel-slot size from its `kernel1` entry. Keep it in step with the partitions in the device's DTS.
 
 ### 2. `kernel/devices/<name>/` (required) - kernel DTS + config set
 
@@ -39,7 +40,7 @@ Only for a device that runs `ml-hud` (has a display). It implements the `board.h
 
 ## Checklist
 
-- [ ] `devices/<name>/device.mk` (identity, capabilities, `DEV_DTB`, `DEV_MLIMG_TARGET`, load map)
+- [ ] `devices/<name>/device.mk` (identity, capabilities, `DEV_DTB`, `DEV_MLIMG_TARGET`, load map, `DEV_MTDPARTS`)
 - [ ] `kernel/devices/<name>/<board>.dts` + `kernel/devices/<name>/fragments`
 - [ ] `rootfs/devices/<name>/board.conf` + `rootfs/devices/<name>/overlay/`
 - [ ] `userspace/ml-hud/src/hal/board_<DEV_UI_BOARD>.c` (only if the device has a UI)
