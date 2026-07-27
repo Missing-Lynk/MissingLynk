@@ -96,7 +96,7 @@ cd missinglynk
 ```
 
 **Step 2, Python package.**
-Create venv, install dependencies and activate it:
+Create venv, install dependencies and activate it. The interpreter is pinned in `.python-version` (**Python 3.14**); `uv venv` reads that and fetches it if this machine does not have it, so nothing needs installing first.
 
 ```sh
 uv venv
@@ -104,6 +104,8 @@ uv pip install -e .
 source .venv/bin/activate
 missinglynk --help
 ```
+
+Without `uv`, `python3 -m venv .venv` works too but does not fetch an interpreter, so it needs 3.14 already present (distro packages are typically older). Installing `uv` is the easier path.
 
 **Step 3, host networking (reach the goggle).** One-time: stop NetworkManager from flushing the static IP on the USB-ethernet gadget.
 
@@ -152,7 +154,7 @@ Notes:
 - Re-runs don't re-download (pinned inputs are sha256-checked). `make fast` = incremental kernel + modules dev loop; NOT reproducible, do a plain `make kernel` before flashing.
 - `mtdtool` (from `make native`) is the on-device raw-NAND writer / slot flipper used in Part 2.
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
-- `make check-python` lints the Python code (`missinglynk/`, `tests/`, `glue/`) and unit-tests the CLI. No device, no Docker; run it before sending a change that touches any of them ([python-tooling.md](docs/guides/python-tooling.md)).
+- `make check-python` lints the Python code (`missinglynk/`, `tests/`, `glue/`) and unit-tests the CLI. No device, no Docker; run it before sending a change that touches any of them, and CI runs the identical pair on push and PR ([python-tooling.md](docs/guides/python-tooling.md)).
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
 **Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.

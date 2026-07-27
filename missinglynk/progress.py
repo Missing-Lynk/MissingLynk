@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import Optional, TextIO
+from typing import TextIO
 
 # (done_bytes, total_bytes_or_None) -> None
-ProgressCb = Callable[[int, Optional[int]], None]
+ProgressCb = Callable[[int, int | None], None]
 
 
 def printer(label: str, stream: TextIO = sys.stderr) -> ProgressCb:

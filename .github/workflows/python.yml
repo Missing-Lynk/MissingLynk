@@ -4,8 +4,10 @@
 # device call at the connection seam), they are reached over SSH URLs a CI runner has no key for,
 # and skipping them keeps the job to a few seconds.
 #
-# The matrix is the range pyproject.toml's requires-python advertises. 3.9 is the floor and the
-# one that earns its place: it is older than any interpreter used for development here.
+# One interpreter, no matrix: the project pins Python in .python-version, and requires-python
+# declares the same floor, so there is exactly one version to test and CI matches a local
+# `make check-python` exactly. uv reads .python-version itself, which is why no version is named
+# here: bumping the pin in that one file moves dev and CI together, and this file needs no edit.
 #
 # The path filters are duplicated between push and pull_request because the workflow parser does
 # not support YAML anchors.
@@ -21,6 +23,7 @@ on:
       - "glue/**/*.py"
       - "pyproject.toml"
       - "uv.lock"
+      - ".python-version"
       - ".github/workflows/python.yml"
   pull_request:
     paths:
@@ -29,6 +32,7 @@ on:
       - "glue/**/*.py"
       - "pyproject.toml"
       - "uv.lock"
+      - ".python-version"
       - ".github/workflows/python.yml"
   workflow_dispatch:
 
@@ -39,10 +43,6 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
           enable-cache: true
 
       - name: Lint
-        run: uv run --python ${{ matrix.python-version }} --group dev ruff check .
+        run: uv run --group dev ruff check .
 
       - name: Test
-        run: uv run --python ${{ matrix.python-version }} --group dev pytest
+        run: uv run --group dev pytest

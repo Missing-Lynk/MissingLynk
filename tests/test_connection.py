@@ -8,7 +8,6 @@ wedged-device cases matter most: every one of them used to be able to hang the C
 from __future__ import annotations
 
 import os
-import socket
 import time
 
 import pytest
@@ -108,11 +107,11 @@ class StallingChannel(FakeChannel):
             self._left -= 1
             return b"data"
 
-        raise socket.timeout("timed out")
+        raise TimeoutError("timed out")
 
     def send(self, view: memoryview) -> int:
         if self._stall_on_send and self._left <= 0:
-            raise socket.timeout("timed out")
+            raise TimeoutError("timed out")
 
         self._left -= 1
         return len(view)

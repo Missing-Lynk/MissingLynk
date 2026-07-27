@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Tools for the BetaFPV VR04 / Artosyn ArtLynk FPV goggle: framebuffer capture and RTSP stream enable/disable over its USB-ethernet link."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+# Pinned to one interpreter, matched by .python-version and the single CI job. uv fetches it
+# automatically; a plain `python3 -m venv` needs 3.14 installed (see docs/guides/python-tooling.md).
+requires-python = ">=3.14"
 dependencies = [
     # SSH to the goggle's legacy-crypto Dropbear (cross-platform, no sshpass).
     # Pinned <4: paramiko 4.x/5.x REMOVED diffie-hellman-group1/14-sha1 and ssh-rsa,
@@ -39,8 +41,8 @@ dev = [
 ]
 
 [tool.ruff]
-# The floor the package declares; keeps the UP rules from rewriting to syntax a 3.9 host rejects.
-target-version = "py39"
+# Follows requires-python: one interpreter, so the UP rules may target it directly.
+target-version = "py314"
 line-length = 100
 include = ["missinglynk/**/*.py", "tests/**/*.py", "glue/**/*.py"]
 # glue/dev/ is gitignored per-machine scratch, not part of the tree.

@@ -145,7 +145,7 @@ class Goggle:
             channel.settimeout(self.idle_timeout)
             channel.exec_command(command)
             yield channel
-        except socket.timeout as e:
+        except TimeoutError as e:
             raise self._wedged(command) from e
         finally:
             channel.close()

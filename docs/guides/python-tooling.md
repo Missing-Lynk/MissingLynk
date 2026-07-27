@@ -21,7 +21,9 @@ source .venv/bin/activate
 uv run missinglynk screenshot
 ```
 
-Plain venv fallback without uv (Windows activate path `.venv\Scripts\activate`):
+The project pins its interpreter in `.python-version` (**Python 3.14**), which `uv venv` reads automatically, fetching that interpreter if the machine does not have it. Bump the pin in that one file to move development and CI together.
+
+Plain venv fallback without uv (Windows activate path `.venv\Scripts\activate`). Unlike `uv`, this does **not** fetch an interpreter, so it needs Python 3.14 already installed: distro packages are usually older (Debian 12 ships 3.11, Ubuntu 24.04 3.12, Debian 13 3.13), so on those, install 3.14 first or use `uv`:
 
 ```sh
 python3 -m venv .venv
@@ -90,7 +92,7 @@ So `native/build.sh` + `apply-patches.py` (both one-off, unless the sources chan
 
 Ruff's configuration lives in `pyproject.toml` (`line-length = 100`, rules `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`) and covers `missinglynk/`, `tests/`, and the host-side `glue/` scripts. Two exemptions are declared there with their reasons: `SIM108` (collapsing an `if`/`else` into a ternary) is off everywhere, and `E501` is off for `glue/`, whose over-long lines are comments, argparse help, and exact serial byte literals. `glue/dev/` is per-machine scratch and is excluded. The `glue/` scripts have no unit tests: they are verified by their own self-tests (`gmi.py selftest`, `mkkernel.py verify`) and by round-tripping `mkkernel`/`mlimg` on synthetic inputs.
 
-Run `make check-python` before sending a change that touches any of the linted trees. GitHub Actions runs the same two commands on every push to `master` and every pull request that touches them (`.github/workflows/python.yml`), across Python 3.9 (the floor `requires-python` advertises), 3.11, 3.12 and 3.13. CI checks out **without** the submodules: nothing in the Python trees needs them, which keeps the job to a few seconds and avoids needing a deploy key for the SSH submodule URLs.
+Run `make check-python` before sending a change that touches any of the linted trees. GitHub Actions runs the same two commands on every push to `master` and every pull request that touches them (`.github/workflows/python.yml`). It is a single job, on the one interpreter `.python-version` pins, so CI and a local `make check-python` cannot disagree; the workflow names no version itself, it lets `uv` read the pin. CI checks out **without** the submodules: nothing in the Python trees needs them, which keeps the job to a few seconds and avoids needing a deploy key for the SSH submodule URLs.
 
 ## Cross-platform notes / gotchas
 

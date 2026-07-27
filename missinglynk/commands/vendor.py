@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .. import firmware
 from .common import FIRMWARE_BIN, connect
@@ -18,7 +18,7 @@ _UNIT_LABELS: dict[str, str] = {
 def _fmt_epoch(value: object) -> str:
     """Format a Unix-epoch number as a readable UTC timestamp, or pass it through verbatim."""
     try:
-        return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return datetime.fromtimestamp(int(value), tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
     except (ValueError, TypeError, OSError):
         return str(value)
 
