@@ -140,7 +140,7 @@ def git_describe(repo_path: str) -> str | None:
 def resolve_blob(explicit: str | None, blobs_dir: str, patterns: list[str], label: str) -> str:
     """
     Locate a vendor blob: an explicit path wins; else the first match of `patterns` (in order)
-    searched recursively under blobs_dir. Raises with a clear message if nothing is found.
+    searched directly inside blobs_dir. Raises with a clear message if nothing is found.
     """
     if explicit:
         if not os.path.isfile(explicit):
@@ -149,7 +149,7 @@ def resolve_blob(explicit: str | None, blobs_dir: str, patterns: list[str], labe
         return explicit
 
     for pattern in patterns:
-        matches = sorted(glob.glob(os.path.join(blobs_dir, "**", pattern), recursive=True))
+        matches = sorted(glob.glob(os.path.join(blobs_dir, pattern)))
         if matches:
             return matches[0]
 
@@ -180,7 +180,7 @@ def build(args: argparse.Namespace) -> int:
     dtb_path = args.dtb or (os.path.join(build_dir, "linux/arch/arm64/boot/proxima-9311.dtb")
                             if build_dir else None)
     rootfs_path = args.rootfs or os.path.join(REPO, "rootfs", "build", "rootfs.ubi")
-    blobs_dir = args.blobs_dir or os.path.join(REPO, "firmware", "bin")
+    blobs_dir = args.blobs_dir or os.path.join(REPO, "firmware", "bin", args.device)
 
     for label, path in (("kernel Image", image_path), ("dtb", dtb_path), ("rootfs", rootfs_path)):
         if not path or not os.path.isfile(path):
@@ -362,7 +362,7 @@ def main() -> int:
     build_parser.add_argument("--image", help="kernel Image (default: <build-dir>/linux/arch/arm64/boot/Image)")
     build_parser.add_argument("--dtb", help="dtb (default: <build-dir>/.../proxima-9311.dtb)")
     build_parser.add_argument("--rootfs", help="rootfs UBI (make image passes rootfs/build/rootfs-<device>.ubi)")
-    build_parser.add_argument("--blobs-dir", help="dir searched for vendor blobs (default: firmware/bin)")
+    build_parser.add_argument("--blobs-dir", help="dir searched for vendor blobs (default: firmware/bin/<device>)")
     build_parser.add_argument("--uboot", help="explicit stock uboot blob")
     build_parser.add_argument("--env", help="explicit stock env blob")
     build_parser.add_argument("--otra-template", help="explicit stock kernel-partition dump (OTRA template)")

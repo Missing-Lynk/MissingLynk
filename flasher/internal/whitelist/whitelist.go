@@ -14,8 +14,6 @@
 // one-way fuse that would brick the open kernel.
 //
 // TO ADD A DEVICE: prove its flash path first, then append its triple below.
-// (The air unit P1_SKY is intentionally absent: its flash path is not yet
-// validated.)
 package whitelist
 
 // Device is one validated firmware identity, matched exactly against the
@@ -33,6 +31,12 @@ var Devices = []Device{
 		Name:            "BetaFPV VR04 HD goggle",
 		ProductVersion:  "P1_GND_VR04",
 		HardwareVersion: "v2.0",
+		SoftwareVersion: "1.0.44.rel",
+	},
+	{
+		Name:            "BetaFPV VR04 HD air unit",
+		ProductVersion:  "P1_SKY",
+		HardwareVersion: "v1.0",
 		SoftwareVersion: "1.0.44.rel",
 	},
 }

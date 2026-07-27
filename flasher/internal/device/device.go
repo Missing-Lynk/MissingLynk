@@ -17,14 +17,14 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// SSH port and the well-known device coordinates. The device answers on a
-// slot-dependent address: the stock/unflashed unit is the reserved .100, and our
-// open goggle slot is .101 (board.conf GADGET_IP, device index NN=1). root's
-// password also differs per slot. Discovery and reconnect probe both addresses.
+// SSH port and the well-known device coordinates. The stock/unflashed unit answers
+// at the reserved .100; each device's open slot B IP lives in the generated
+// devconf package (sourced from rootfs/devices/<name>/board.conf). root's
+// password differs per slot. Discovery and reconnect probe the stock address
+// plus every known open address.
 const (
 	Port          = "22"
 	DefaultIP     = "192.168.3.100" // stock/unflashed unit (reserved index NN=0)
-	OpenIP        = "192.168.3.101" // open slot B, goggle (board.conf GADGET_IP, NN=1)
 	StockPassword = "artosyn"       // vendor slot A (and the air unit)
 	OpenPassword  = "libre"         // our open slot B
 )

@@ -114,9 +114,11 @@ userspace:
 # only Docker on the host); embeds native/build/mlflash and extracts the binary to
 # flasher/build/ml-flasher. Kept out of `native`/`all` (needs Docker + network).
 flasher:
+	uv run python scripts/gen-flasher-devconf.py
 	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile --output type=local,dest=flasher/build .
 
 flasher-windows:
+	uv run python scripts/gen-flasher-devconf.py
 	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows --output type=local,dest=flasher/build .
 
 # Image + dtb + the shipped modules, all built in the hermetic container (container-build.sh

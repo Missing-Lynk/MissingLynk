@@ -39,3 +39,4 @@ The whitelist lives in `internal/whitelist` (edit `Devices` there to add one); a
 | Device | product_version | hardware | firmware |
 |--------|-----------------|----------|----------|
 | BetaFPV VR04 HD goggle | `P1_GND_VR04` | `v2.0` | `1.0.44.rel` |
+| BetaFPV VR04 HD air unit | `P1_SKY` | `v1.0` | `1.0.44.rel` |

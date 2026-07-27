@@ -45,3 +45,6 @@ glue/glue.env
 
 # Active device selection, written by `make setup DEVICE=<name>` (per-machine)
 .device
+
+# Generated flasher device config (built from devices/*/device.mk + rootfs/devices/*/board.conf)
+flasher/internal/devconf/devices.json

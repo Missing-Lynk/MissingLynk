@@ -12,10 +12,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/devconf"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/netcfg"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/payload"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/whitelist"
@@ -23,8 +25,7 @@ import (
 
 // Defaults for the fixed gadget link.
 const (
-	DefaultDeviceIP = device.DefaultIP
-	DefaultOpenIP   = device.OpenIP
+	DefaultDeviceIP = device.DefaultIP // stock/unflashed (.100)
 	DefaultHostCIDR = "192.168.3.222/24"
 	remoteDir       = "/tmp"
 	remoteMlflash   = "/tmp/mlflash"
@@ -42,6 +43,100 @@ const (
 	// The open slot ships the self-contained wdt-reset helper.
 	openRebootCmd = "sync; /usr/local/bin/wdt-reset"
 )
+
+// defaultOpenIPs returns every known open-slot address, sorted for stable probing.
+func defaultOpenIPs() []string {
+	seen := map[string]bool{}
+	for _, ip := range devconf.OpenIP {
+		seen[ip] = true
+	}
+
+	ips := make([]string, 0, len(seen))
+	for ip := range seen {
+		ips = append(ips, ip)
+	}
+
+	return ips
+}
+
+// productFromOpenIP maps a connected open-slot address back to the device's
+// product_version. The open slot's IP is fixed per device by board.conf, so
+// this is reliable even when the vendor sdk_version.json is absent (open slot B).
+func productFromOpenIP(ip string) string {
+	return devconf.ProductByOpenIP[ip]
+}
+
+// imageSize returns the byte size of path, or 0 if unavailable.
+func imageSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+
+	return info.Size()
+}
+
+// stageDir returns a writable directory on the device large enough to hold the
+// flash image. It prefers a removable SD card (goggle path) and falls back to
+// /tmp when no card is inserted and free memory permits. The air unit has no SD
+// slot, so the fallback is required for air-unit flashing.
+func stageDir(client *device.Client, imagePath string, emit Emit) (string, error) {
+	if sd, err := sdCardDir(client); err != nil {
+		return "", err
+	} else if sd != "" {
+		return sd, nil
+	}
+
+	needed := imageSize(imagePath)
+	if needed == 0 {
+		return "", fmt.Errorf("cannot read image size for staging")
+	}
+
+	// Safety margin for tmpfs metadata and whatever else is in /tmp.
+	needed += 20 * 1024 * 1024
+
+	dir, err := tmpStageDir(client, needed)
+	if err == nil {
+		emit(Event{Level: LevelWarn,
+			Msg: "No SD card found; staging the image in /tmp. " +
+				"Make sure the device has enough free RAM or the flash may fail mid-write."})
+	}
+
+	return dir, err
+}
+
+// tmpStageDir checks /tmp free space and returns "/tmp" if it can hold minBytes.
+// BusyBox df on the vendor slot does not support -B1, so we use -k (1024-byte
+// blocks) and scale the result.
+func tmpStageDir(client *device.Client, minBytes int64) (string, error) {
+	out, err := client.Run("df -k /tmp")
+	if err != nil {
+		return "", fmt.Errorf("checking /tmp free space: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		return "", fmt.Errorf("unexpected df output: %s", out)
+	}
+
+	fields := strings.Fields(lines[1])
+	if len(fields) < 4 {
+		return "", fmt.Errorf("unexpected df output: %s", out)
+	}
+
+	kb, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("parsing df output: %w", err)
+	}
+
+	available := kb * 1024
+	if available < minBytes {
+		return "", fmt.Errorf("/tmp has only %d MiB free; need %d MiB. Insert an SD card or free RAM",
+			available/(1024*1024), minBytes/(1024*1024))
+	}
+
+	return "/tmp", nil
+}
 
 // Level classifies an event for rendering.
 type Level int
@@ -68,8 +163,8 @@ type Emit func(Event)
 type Options struct {
 	ImagePath string // .mlimg bundle to flash (required by Flash)
 	DeviceIP  string // stock-slot address, default DefaultDeviceIP (.100)
-	OpenIP    string // open-slot address, default DefaultOpenIP (.101)
-	HostCIDR  string // default DefaultHostCIDR
+	OpenIPs   []string // open-slot addresses to probe (default: all known device open IPs)
+	HostCIDR  string   // default DefaultHostCIDR
 
 	// AllowUnknownVersion bypasses the firmware whitelist (developer use).
 	AllowUnknownVersion bool
@@ -147,8 +242,8 @@ func (o *Options) applyDefaults() {
 		o.DeviceIP = DefaultDeviceIP
 	}
 
-	if o.OpenIP == "" {
-		o.OpenIP = DefaultOpenIP
+	if len(o.OpenIPs) == 0 {
+		o.OpenIPs = defaultOpenIPs()
 	}
 
 	if o.HostCIDR == "" {
@@ -168,7 +263,7 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Reading the device"})
-	client, alreadyOpen, err := connect(opt.DeviceIP, opt.OpenIP)
+	client, alreadyOpen, _, err := connect(opt.DeviceIP, opt.OpenIPs)
 	if err != nil {
 		return nil, fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
@@ -181,12 +276,7 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 			Note: "This device is already running the MissingLynk firmware.",
 		}
 
-		// The inactive slot should be the untouched stock firmware; if it is, offer
-		// switching back to it. Goggle only (the device-tree model names the unit),
-		// matching the gate on the stock branch.
-		if strings.Contains(strings.ToLower(info.Name), "goggle") {
-			fillOtherSlot(client, info, "vendor", emit)
-		}
+		fillOtherSlot(client, info, "vendor", emit)
 		if info.Switchable {
 			info.Detail = "The stock firmware is on the other slot; it can be switched back."
 		}
@@ -200,16 +290,17 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		return nil, fail(emit, fmt.Errorf("reading device firmware version: %w", err))
 	}
 
+	unit := sdk.Identify()
 	info := &DeviceInfo{
-		Unit:     string(sdk.Identify()),
+		Unit:     string(unit),
 		Product:  sdk.ProductVersion,
 		Firmware: sdk.SoftwareVersion,
 		Hardware: sdk.HardwareVersion,
 	}
 
 	switch {
-	case sdk.Identify() != device.UnitGoggle:
-		info.Note = fmt.Sprintf("The connected unit (%s) is not compatible with this image.", sdk.Identify())
+	case unit == device.UnitUnknown:
+		info.Note = "The connected unit could not be identified; refusing to flash."
 
 	case !whitelist.Allowed(sdk.HardwareVersion, sdk.SoftwareVersion, sdk.ProductVersion) && !opt.AllowUnknownVersion:
 		info.Note = fmt.Sprintf("Firmware %s (hardware %s) is not on the validated list; refusing for safety.",
@@ -221,8 +312,8 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	}
 
 	// A previously flashed open image may still be intact on the inactive slot; if
-	// it is (goggle only), the device can be switched to it without reflashing.
-	if sdk.Identify() == device.UnitGoggle {
+	// it is, the device can be switched to it without reflashing.
+	if info.Flashable {
 		fillOtherSlot(client, info, "open", emit)
 		if info.Switchable {
 			info.Detail = "The MissingLynk firmware is on the other slot; it can be switched to directly."
@@ -385,7 +476,7 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 		return err
 	}
 
-	client, runningOpen, err := connect(opt.DeviceIP, opt.OpenIP)
+	client, runningOpen, connectedIP, err := connect(opt.DeviceIP, opt.OpenIPs)
 	if err != nil {
 		return fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
@@ -394,6 +485,16 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 	if runningOpen == switchToOpen {
 		return fail(emit, fmt.Errorf("the device's firmware changed since the scan "+
 			"(the confirmed switch direction no longer applies); re-scan and try again"))
+	}
+
+	// The open slot has no sdk_version.json, so infer the product from its IP.
+	product := productFromOpenIP(connectedIP)
+	if !runningOpen {
+		sdk, err := client.ReadSDKVersion()
+		if err != nil {
+			return fail(emit, fmt.Errorf("reading device firmware version: %w", err))
+		}
+		product = sdk.ProductVersion
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Re-checking the slots"})
@@ -418,9 +519,13 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 	}
 
 	// The reboot mechanism and the password of the firmware we land on differ by
-	// direction. The open slot answers at .101 with the open password, the stock
-	// slot at .100 with the stock password.
-	rebootCmd, targetPassword, targetIP := stockRebootCmd, device.OpenPassword, opt.OpenIP
+	// direction. The open slot answers at the device's fixed open IP with the open
+	// password; the stock slot answers at the stock IP with the stock password.
+	openIP := devconf.OpenIP[product]
+	if openIP == "" {
+		openIP = connectedIP
+	}
+	rebootCmd, targetPassword, targetIP := stockRebootCmd, device.OpenPassword, openIP
 	doneMsg := "Done - the device is now running the MissingLynk open firmware."
 	if runningOpen {
 		rebootCmd, targetPassword, targetIP = openRebootCmd, device.StockPassword, opt.DeviceIP
@@ -455,7 +560,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return err
 	}
 
-	client, alreadyOpen, err := connect(opt.DeviceIP, opt.OpenIP)
+	client, alreadyOpen, _, err := connect(opt.DeviceIP, opt.OpenIPs)
 	if err != nil {
 		return fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
@@ -472,8 +577,9 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("reading device firmware version: %w", err))
 	}
 
-	if sdk.Identify() != device.UnitGoggle {
-		return fail(emit, fmt.Errorf("connected unit %q is not compatible with this image; refusing", sdk.Identify()))
+	unit := sdk.Identify()
+	if unit == device.UnitUnknown {
+		return fail(emit, fmt.Errorf("connected unit could not be identified; refusing to flash"))
 	}
 
 	if !whitelist.Allowed(sdk.HardwareVersion, sdk.SoftwareVersion, sdk.ProductVersion) && !opt.AllowUnknownVersion {
@@ -481,24 +587,16 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 			sdk.SoftwareVersion, sdk.HardwareVersion))
 	}
 
-	// The firmware image is large and must be staged on the SD card, not the tmpfs
-	// /tmp: on a low-memory unit a ~45 MiB image in RAM starves the system and the
-	// low-memory killer reaps the flasher mid-write. This requirement applies only
-	// to flashing (which stages the image); scanning and switching stage nothing
-	// large, so they do not need an SD card.
-	sdDir, err := sdCardDir(client)
+	// Stage the image on the SD card when available (goggle), otherwise fall back
+	// to /tmp (air unit). The image must not live in RAM on low-memory units, so
+	// /tmp is only accepted when it has enough free space.
+	stage, err := stageDir(client, opt.ImagePath, emit)
 	if err != nil {
 		return fail(emit, err)
 	}
 
-	if sdDir == "" {
-		return fail(emit, fmt.Errorf("no SD card is inserted in the device; flashing needs one to stage "+
-			"the firmware image on (the image is kept off RAM so a low-memory unit is not killed mid-write). "+
-			"Insert an SD card and try again"))
-	}
-
 	emit(Event{Level: LevelStep, Msg: "Uploading flasher and image"})
-	remoteImg, err := pushPayload(client, opt.ImagePath, sdDir, emit)
+	remoteImg, err := pushPayload(client, opt.ImagePath, stage, emit)
 	if err != nil {
 		return fail(emit, err)
 	}
@@ -514,8 +612,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	}
 
 	// Remove the staged image now, while the SSH connection is still live (after a
-	// flip+reboot the client is dead). Best-effort: a leftover image on the SD card
-	// is harmless.
+	// flip+reboot the client is dead). Best-effort: a leftover image is harmless.
 	removeRemote(client, remoteImg)
 
 	if opt.FlashOnly {
@@ -530,8 +627,12 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	// Flashing lands on the open slot, which answers at .101 and serves DHCP.
-	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, opt.OpenIP, true, emit); err != nil {
+	// Flashing lands on the open slot, which answers at the device's fixed open IP and serves DHCP.
+	openIP := devconf.OpenIP[sdk.ProductVersion]
+	if openIP == "" {
+		return fail(emit, fmt.Errorf("no open-slot IP configured for product %s", sdk.ProductVersion))
+	}
+	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, openIP, true, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -540,19 +641,30 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 }
 
 // connect finds the device on whichever slot it is running. The stock slot answers
-// at stockIP with the stock password; the open slot answers at a different address
-// (openIP) with the open password (board.conf gives each slot its own IP). Only an
-// address whose SSH port actually answers is dialled, so the slot that is not
-// running costs one short probe instead of a full dial timeout. An open-slot
-// connection is returned with alreadyOpen == true (the caller closes it).
-func connect(stockIP, openIP string) (client *device.Client, alreadyOpen bool, err error) {
-	attempts := []struct {
+// at stockIP with the stock password; the open slot answers at one of the open IPs
+// with the open password (board.conf gives each device its own IP). Only addresses
+// whose SSH port actually answers are dialled, so slots that are not running cost
+// one short probe each instead of a full dial timeout. The returned connectedIP is
+// the address we actually reached, and alreadyOpen reports whether it is an open
+// slot.
+func connect(stockIP string, openIPs []string) (client *device.Client, alreadyOpen bool, connectedIP string, err error) {
+	var attempts []struct {
 		ip       string
 		password string
 		open     bool
-	}{
-		{stockIP, device.StockPassword, false},
-		{openIP, device.OpenPassword, true},
+	}
+	attempts = append(attempts, struct {
+		ip       string
+		password string
+		open     bool
+	}{stockIP, device.StockPassword, false})
+
+	for _, ip := range openIPs {
+		attempts = append(attempts, struct {
+			ip       string
+			password string
+			open     bool
+		}{ip, device.OpenPassword, true})
 	}
 
 	var firstErr error
@@ -563,7 +675,7 @@ func connect(stockIP, openIP string) (client *device.Client, alreadyOpen bool, e
 
 		cli, dialErr := device.Dial(attempt.ip, "root", attempt.password, 10*time.Second)
 		if dialErr == nil {
-			return cli, attempt.open, nil
+			return cli, attempt.open, attempt.ip, nil
 		}
 
 		if firstErr == nil {
@@ -572,10 +684,10 @@ func connect(stockIP, openIP string) (client *device.Client, alreadyOpen bool, e
 	}
 
 	if firstErr != nil {
-		return nil, false, firstErr
+		return nil, false, "", firstErr
 	}
 
-	return nil, false, fmt.Errorf("no device answered SSH at %s or %s", stockIP, openIP)
+	return nil, false, "", fmt.Errorf("no device answered SSH at %s or %v", stockIP, openIPs)
 }
 
 // firstReachable returns the first address whose SSH port answers within timeout,
@@ -674,15 +786,16 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 		}
 	}
 
-	return fail(emit, fmt.Errorf("device did not become reachable at %s or %s after configuring the link",
-		opt.DeviceIP, opt.OpenIP))
+	return fail(emit, fmt.Errorf("device did not become reachable at %s or %v after configuring the link",
+		opt.DeviceIP, opt.OpenIPs))
 }
 
 // deviceAddrs are the addresses the device may answer on, stock first: the stock
-// slot at DeviceIP (.100) and the open slot at OpenIP (.101). The running slot
-// determines which one is live, so link checks probe both.
+// slot at DeviceIP (.100) and the open slot at any of the OpenIPs. The running
+// slot determines which one is live, so link checks probe all candidates.
 func deviceAddrs(opt Options) []string {
-	return []string{opt.DeviceIP, opt.OpenIP}
+	addrs := []string{opt.DeviceIP}
+	return append(addrs, opt.OpenIPs...)
 }
 
 // pushMlflash uploads the embedded on-device flasher to /tmp on the device.
@@ -809,8 +922,9 @@ func runMlflash(client *device.Client, emit Emit, args ...string) error {
 // appears, so the vendor slot is detected as soon as it is up.
 //
 // ip is the address the slot being booted answers on: the stock slot at .100, the
-// open slot at .101 (board.conf). The slots live at different addresses, so waiting
-// on the wrong one would never see the reboot complete.
+// open slot at the unit's fixed board.conf address (.101 goggle, .102 air). The
+// slots live at different addresses, so waiting on the wrong one would never see
+// the reboot complete.
 func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword, ip string, targetServesDHCP bool, emit Emit) error {
 	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
 
