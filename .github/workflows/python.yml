@@ -1,0 +1,64 @@
+# Lint and unit-test the host-side Python: the missinglynk CLI, its tests, and the glue scripts.
+#
+# Deliberately does NOT check out the submodules. Nothing here needs them (the tests fake every
+# device call at the connection seam), they are reached over SSH URLs a CI runner has no key for,
+# and skipping them keeps the job to a few seconds.
+#
+# The matrix is the range pyproject.toml's requires-python advertises. 3.9 is the floor and the
+# one that earns its place: it is older than any interpreter used for development here.
+#
+# The path filters are duplicated between push and pull_request because the workflow parser does
+# not support YAML anchors.
+
+name: python
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "missinglynk/**"
+      - "tests/**"
+      - "glue/**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/python.yml"
+  pull_request:
+    paths:
+      - "missinglynk/**"
+      - "tests/**"
+      - "glue/**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/python.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Stated rather than left to the default: the Python trees do not need the submodules,
+          # and the job must not start depending on them by accident.
+          submodules: false
+
+      # setup-uv publishes no floating major tag past v7, so this pins the exact release.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Lint
+        run: uv run --python ${{ matrix.python-version }} --group dev ruff check .
+
+      - name: Test
+        run: uv run --python ${{ matrix.python-version }} --group dev pytest
