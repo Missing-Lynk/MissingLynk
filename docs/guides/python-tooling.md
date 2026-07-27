@@ -90,7 +90,7 @@ So `native/build.sh` + `apply-patches.py` (both one-off, unless the sources chan
 
 Ruff's configuration lives in `pyproject.toml` (`line-length = 100`, rules `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`) and covers `missinglynk/`, `tests/`, and the host-side `glue/` scripts. Two exemptions are declared there with their reasons: `SIM108` (collapsing an `if`/`else` into a ternary) is off everywhere, and `E501` is off for `glue/`, whose over-long lines are comments, argparse help, and exact serial byte literals. `glue/dev/` is per-machine scratch and is excluded. The `glue/` scripts have no unit tests: they are verified by their own self-tests (`gmi.py selftest`, `mkkernel.py verify`) and by round-tripping `mkkernel`/`mlimg` on synthetic inputs.
 
-Run `make check-python` before sending a change that touches the Python CLI.
+Run `make check-python` before sending a change that touches any of the linted trees.
 
 ## Cross-platform notes / gotchas
 

@@ -51,7 +51,24 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
   - `payload/` the bare-metal aarch64 sources it downloads: `flash_writer.c` (erase/program/verify via the AR9301 qspi controller), `rw.c` (read-only probe), `entry.S`/`data.S`/`*.ld` (startup + the gpt0 image to write + link scripts).
   - `bootrom-0x0.bin` the 32 KB mask-ROM dump the protocol was derived from (git-ignored, proprietary; re-acquire per `RECOVERY.md`).
 
+- `capture/` link measurement and RF-session capture/replay. Mixed: the measurement scripts drive a live device, the two Python tools and `preview-stacked.sh` are offline.
+  - `link-quality.sh`, `ping-bench.sh`, `telem-continuity-watch.sh`, `cma-usage.sh` measure the live goggle/air link and the device's CMA floor. They score identically on slot A and slot B so vendor and open builds are directly comparable. Read each script's header before running: `link-quality.sh` in particular must not overlap a running `ml-rf-video` (its video-open poll wedges the air for ~11 s).
+  - `pcap-to-rfdump.py <capture.pcap> <out.rfdump>` converts a DLT_LINUX_SLL pcap of the RF UDP streams into the replay format, keeping per-packet timestamps so replay preserves the original pacing (`--speed` compresses the gaps, `--telemetry` also includes the `:10000` stream). It reuses ml-rf-udp's SLL/IPv4/UDP parsers by importing `../../archive/libre/tools/ml-rf-udp/ml-rf-udp.py`, so it needs the pre-restructure archive present and exits with that message if it is not.
+  - `make-synth-session.py [--secs N] <out>` generates a synthetic two-tile session with no hardware and no capture.
+  - `ml-rf-replay.c` is the on-device replayer that plays either file back to localhost with the captured pacing; `preview-stacked.sh` reconstructs the full frame from a capture by decoding both tile channels and stacking them (host-side, needs ffmpeg).
+
 - `docs/` the procedure guides this tooling implements: `host-network-setup.md` (static IP + the NetworkManager gotcha), `first-setup-known-good-slot.md` (one-time: pin a trusted slot A), `flash-and-verify-slots.md` (the untainted-A flash + RAM-verify ladder), and `clone-a-slot.md` (component-by-component slot copy).
+
+## Checks
+
+The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). There are no unit tests for these scripts: they drive real devices and serial ports. Verify a change to them offline instead, with the self-tests they ship and a synthetic round-trip:
+
+```sh
+python3 recovery/gmi.py selftest                       # RE-verified .GMI test vector
+python3 flash/mkkernel.py verify <stock-kernel0.bin>   # OTRA container round-trip
+python3 flash/mkkernel.py pack <Image> /tmp/k.otra     # then `unpack` and cmp against the input
+python3 flash/mlimg.py build ... && python3 flash/mlimg.py inspect <bundle>   # re-hashes every component
+```
 
 ## Coupling note
 

@@ -152,7 +152,7 @@ Notes:
 - Re-runs don't re-download (pinned inputs are sha256-checked). `make fast` = incremental kernel + modules dev loop; NOT reproducible, do a plain `make kernel` before flashing.
 - `mtdtool` (from `make native`) is the on-device raw-NAND writer / slot flipper used in Part 2.
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
-- `make check-python` lints and unit-tests the Python CLI. No device, no Docker; run it before sending a change that touches `missinglynk/` ([python-tooling.md](docs/guides/python-tooling.md)).
+- `make check-python` lints the Python code (`missinglynk/`, `tests/`, `glue/`) and unit-tests the CLI. No device, no Docker; run it before sending a change that touches any of them ([python-tooling.md](docs/guides/python-tooling.md)).
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
 **Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.
