@@ -40,7 +40,9 @@ done
 # .100 is in no board.conf (reserved for stock/unflashed, NN=0); add it explicitly so a plugged
 # stock unit still appears in the reachability report.
 UNITS+=("192.168.3.100 stock/unflashed")
-IFS=$'\n' UNITS=($(sort <<<"${UNITS[*]}")); unset IFS
+# Sort by address. printf one-per-line + mapfile keeps each "ip name" entry whole and needs no
+# IFS override, so the entries are never re-split on the space inside them.
+mapfile -t UNITS < <(printf '%s\n' "${UNITS[@]}" | sort)
 
 # Bridge: create once, address once, up.
 if ! ip link show "$BRIDGE" >/dev/null 2>&1; then

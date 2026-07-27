@@ -32,6 +32,8 @@
 #
 # Host-side checks (no device needed):
 #   make check-python lint + unit-test the Python CLI (missinglynk/); also: make lint, make test
+#   make check-shell  shellcheck the host-side shell scripts (glue/, native/)
+#   make check        both of the above
 #
 # Clean:
 #   make clean        remove component build outputs (keeps the pinned kernel tree)
@@ -144,13 +146,15 @@ rootfs-dev: require-device
 # self-verify. The blob capture needs the device connected once; it persists in firmware/bin/
 # and is skipped on later runs, so a rebuild after the first capture needs no device.
 image: require-device all image-blobs
-	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET) --rootfs rootfs/build/rootfs-$(DEVICE).ubi
+	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET) \
+	  --blobs-dir firmware/bin/$(DEV_MLIMG_TARGET) \
+	  --rootfs rootfs/build/rootfs-$(DEVICE).ubi
 
 # Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
-# Captured from a connected device into firmware/bin/<P1_GND>/; skipped when already present.
+# Captured from a connected device into firmware/bin/<DEV_MLIMG_TARGET>/; skipped when already present.
 image-blobs:
-	@if [ -n "$$(find firmware/bin -name 'uboot.bin' -o -name '*uboot0.bin' -o -name '*uboot1.bin' 2>/dev/null | head -1)" ]; then \
-	  echo "[image] vendor slot blobs already in firmware/bin (skipping dump)"; \
+	@if [ -n "$$(find firmware/bin/$(DEV_MLIMG_TARGET) -name '*uboot0.bin' 2>/dev/null | head -1)" ]; then \
+	  echo "[image] vendor slot blobs already in firmware/bin/$(DEV_MLIMG_TARGET) (skipping dump)"; \
 	else \
 	  echo "[image] capturing vendor slot blobs from the connected device..."; \
 	  uv run missinglynk dump-partitions --dest firmware/bin; \
@@ -203,6 +207,30 @@ test:
 
 check-python: lint test
 
+# Shell lint for the host-side scripts. Source resolution and the other shellcheck settings live
+# in .shellcheckrc, so a bare `shellcheck <file>` from the repo root behaves the same as this.
+#
+# missinglynk/templates/ is excluded on purpose: those files hold @PLACEHOLDER@ tokens and are not
+# valid shell until `missinglynk install` renders them ($@NAME@ parses as the $@ array, and
+# @SKIP_MV_MIN@ is not a number). The rendered hook is what actually runs on the device, and the
+# pytest suite shellchecks that.
+#
+# Prefers a packaged shellcheck (what CI has) and falls back to a pinned image, so the check is
+# available without installing anything. The tag is pinned rather than :stable so the fallback
+# does not change findings under you; bump it deliberately.
+SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0
+
+check-shell:
+	@files=$$(git ls-files '*.sh' | grep -v '^missinglynk/templates/'); \
+	if command -v shellcheck >/dev/null 2>&1; then \
+	    shellcheck $$files; \
+	else \
+	    echo "[*] shellcheck not on PATH, running $(SHELLCHECK_IMAGE)"; \
+	    docker run --rm -v "$(CURDIR):/mnt" -w /mnt $(SHELLCHECK_IMAGE) $$files; \
+	fi
+
+check: check-python check-shell
+
 clean:
 	-$(MAKE) -C userspace clean
 	rm -f native/fbtext native/minidhcpd native/mtdtool native/mlmenu/mlmenu
@@ -213,4 +241,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check clean distclean

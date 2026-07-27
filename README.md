@@ -155,6 +155,7 @@ Notes:
 - `mtdtool` (from `make native`) is the on-device raw-NAND writer / slot flipper used in Part 2.
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
 - `make check-python` lints the Python code (`missinglynk/`, `tests/`, `glue/`) and unit-tests the CLI. No device, no Docker; run it before sending a change that touches any of them, and CI runs the identical pair on push and PR ([python-tooling.md](docs/guides/python-tooling.md)).
+- `make check-shell` shellchecks every tracked `.sh`; it uses a packaged shellcheck when there is one and otherwise a pinned container image. `make check` runs both gates. CI runs each on push and PR.
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
 **Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.

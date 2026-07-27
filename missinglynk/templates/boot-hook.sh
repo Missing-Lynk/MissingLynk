@@ -4,8 +4,11 @@
 # then run the stock boot body (copied verbatim from @RUN_SH@, below). usb0 + SSH
 # always come up. Persistent: this file stays in place, no re-arm. No `set -e`,
 # component actions are best-effort.
+#
+# shellcheck disable=SC2129  # the applied-state snapshot below is generated one echo per
+# component, so its repeated >> cannot be collapsed into a single redirect group.
 ML=@ML_DIR@
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin:$PATH
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
 # escape hatch: hold @SKIP_LABEL@ at power-on to skip MissingLynk for this boot
 # (temporary stock boot; config is untouched, the next boot applies normally).
@@ -22,6 +25,7 @@ else
     echo "boot: adc=$mv skip=n" > "$ML/lastboot.log"
     skip=n
 @DEFAULTS@
+    # shellcheck source=/dev/null  # written on the device by `missinglynk enable/disable`
     [ -f "$ML/config" ] && . "$ML/config"
 fi
 

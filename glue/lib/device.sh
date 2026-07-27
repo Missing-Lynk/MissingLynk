@@ -110,6 +110,7 @@ fi
 # password that goes with it - the stock system is not ours to configure, so unlike the open
 # slot's ROOT_PASS it is fixed rather than read from a device profile.
 ML_STOCK_IP="192.168.3.100"
+# shellcheck disable=SC2034  # read by sourcing scripts (ensure_device_reachable in ssh-opts.sh)
 ML_STOCK_PASS="${STOCK_PASS:-artosyn}"
 
 # Final fallback: with no resolved gadget address (missing/partial board.conf), target the stock

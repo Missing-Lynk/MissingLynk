@@ -194,6 +194,24 @@ def test_generated_hook_passes_a_shell_syntax_check(tmp_path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(shutil.which("shellcheck") is None,
+                    reason="shellcheck is not installed (CI runners have it; `make check-shell` "
+                           "falls back to the docker image)")
+def test_generated_hook_passes_shellcheck(tmp_path) -> None:
+    """
+    The templates cannot be linted as they sit: they hold @PLACEHOLDER@ tokens, so `$@NAME@`
+    parses as the $@ array and `@SKIP_MV_MIN@` is not a number. Rendering resolves those, and the
+    rendered hook is the file the device actually boots, so that is what gets checked.
+    """
+    hook = components._gen_hook(components._extract_body(STOCK_RUN_SH.decode()))
+    hook_path = tmp_path / "run_dbg.sh"
+    hook_path.write_text(hook)
+
+    result = subprocess.run(["shellcheck", "--shell=sh", str(hook_path)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout
+
+
 def test_generated_hook_covers_every_component_and_runs_the_stock_body() -> None:
     hook = components._gen_hook(components._extract_body(STOCK_RUN_SH.decode()))
 

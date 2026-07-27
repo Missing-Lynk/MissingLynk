@@ -4,6 +4,8 @@
 # tear down the old rndis netdev so the address is not dual-homed. A BACK-held boot has
 # @NAME@=off, so the gadget stays stock RNDIS (recovery path).
 if [ "$@NAME@" = on ]; then
+    # shellcheck disable=SC2012  # sysfs node names come from the kernel, no odd characters, and
+    # the device's busybox find is not guaranteed to have -maxdepth.
     udc=$(ls /sys/class/udc 2>/dev/null | head -1)
     echo "" > @GADGET@/UDC 2>/dev/null
     sleep 1

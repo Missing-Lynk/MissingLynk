@@ -19,9 +19,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-. "$(dirname "$0")/../lib/ssh-opts.sh"   # provides sshg + the DEVICE_IP/PASS defaults
-. "$(dirname "$0")/../lib/device.sh"     # resolves DEVICE -> DEV_KADDR/DTADDR
-. "$(dirname "$0")/../lib/uboot.sh"
+. "$HERE/../lib/ssh-opts.sh"   # provides sshg + the DEVICE_IP/PASS defaults
+. "$HERE/../lib/device.sh"     # resolves DEVICE -> DEV_KADDR/DTADDR
+. "$HERE/../lib/uboot.sh"
 
 KADDR="${KADDR:-$DEV_KADDR}"      # kernel1 RAM load addr
 DTADDR="${DTADDR:-$DEV_DTADDR}"   # dtb1 RAM load addr

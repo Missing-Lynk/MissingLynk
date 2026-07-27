@@ -16,13 +16,13 @@ SLOT="${SLOT:-?}"; N="${N:-75}"
 sshb(){ device_ssh_timeout $((N+70)) "$@"; }
 
 stats(){ # parse a ping log on stdin, label $1
-  awk -v label="$1" '
+  awk -v label="$1" -v expected="$N" '
     /transmitted/{ for(i=1;i<=NF;i++){
         if($i ~ /transmitted/){ for(j=i;j>=1;j--) if($j ~ /^[0-9]+$/){sent=$j;break} }
         if($i ~ /received/)   { for(j=i;j>=1;j--) if($j ~ /^[0-9]+$/){recv=$j;break} } } }
     /time=/{ for(i=1;i<=NF;i++) if($i~/^time=/){ split($i,a,"="); v[n++]=a[2]; s+=a[2] } }
     END{
-      if(sent=="")sent="'$N'"
+      if(sent=="")sent=expected
       if(n==0){
         printf "  %-7s sent=%s recv=%s  NO REPLIES\n", label, sent, recv+0
       } else {

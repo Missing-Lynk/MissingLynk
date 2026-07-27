@@ -1,0 +1,57 @@
+# Shellcheck the host-side shell scripts: glue/ (device scripts and their libraries) and the
+# native/ build wrappers.
+#
+# The rules, source resolution, and per-site exemptions live in .shellcheckrc and in the scripts
+# themselves, so this job is just `make check-shell` and behaves identically to a local run.
+#
+# ubuntu-latest ships shellcheck preinstalled, so check-shell takes the on-PATH branch and needs
+# no setup step. That version tracks the runner image rather than the pinned SHELLCHECK_IMAGE the
+# local fallback uses, so a shellcheck upgrade can surface a new finding here first. That is the
+# intended direction: CI reports it, and the fix or an explained disable lands in the script.
+#
+# missinglynk/templates/ is not linted here. Those files carry @PLACEHOLDER@ tokens and are not
+# valid shell until rendered; the rendered boot hook is shellchecked by the Python test suite
+# (.github/workflows/python.yml), which is where that check belongs.
+#
+# No submodules: nothing linted here lives in one, and they are reached over SSH URLs a runner
+# has no key for.
+#
+# The path filters are duplicated between push and pull_request because the workflow parser does
+# not support YAML anchors.
+
+name: shell
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "**/*.sh"
+      - ".shellcheckrc"
+      - "Makefile"
+      - ".github/workflows/shell.yml"
+  pull_request:
+    paths:
+      - "**/*.sh"
+      - ".shellcheckrc"
+      - "Makefile"
+      - ".github/workflows/shell.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Shellcheck version
+        run: shellcheck --version
+
+      - name: Lint shell scripts
+        run: make check-shell

@@ -17,6 +17,8 @@ SLOT="${SLOT:-?}"; N="${N:-5}"
 
 echo "===================== LINK QUALITY (slot $SLOT) ====================="
 echo "== association check (telemetry must be flowing; if 0, power-cycle the air) =="
+# shellcheck disable=SC2016  # single-quoted on purpose: this is a remote command string, and
+# $r1/$r2/$(...) must expand on the device, not here.
 sshg 'r1=$(awk "/sdio0:/{gsub(/.*sdio0:/,\"\");print \$2}" /proc/net/dev); sleep 3; r2=$(awk "/sdio0:/{gsub(/.*sdio0:/,\"\");print \$2}" /proc/net/dev); echo "  telemetry RX +$((r2-r1)) pkts/3s $([ $((r2-r1)) -gt 8 ] && echo ASSOCIATED || echo NOT-ASSOCIATED)"'
 
 echo "== (a) ping small (64B x10) =="
@@ -28,6 +30,7 @@ sshg 'ping -c 10 -i 0.3 -s 1400 -W 2 10.0.0.100 2>&1 | tail -2'
 echo "== (c) SSH handshake latency to the air ($N connects) =="
 sshg 'pidof ml-tcprelay >/dev/null 2>&1 || true'
 sshg 'cat > /tmp/ml-tcprelay; chmod +x /tmp/ml-tcprelay' < "$REPO/libre/tools/ml-tcprelay/ml-tcprelay" 2>/dev/null || echo "  (ml-tcprelay push skipped - already there?)"
+# shellcheck disable=SC2016  # remote command string: $(pidof ...) must run on the device.
 sshg 'kill -9 $(pidof ml-tcprelay) 2>/dev/null; setsid /tmp/ml-tcprelay 8822 10.0.0.100 22 >/tmp/relay.log 2>&1 </dev/null & sleep 1; echo "  relay up pid=$(pidof ml-tcprelay)"'
 
 AIR=(-p 8822 -o ConnectTimeout=25 "${SSH_OPTS_LEGACY[@]}")

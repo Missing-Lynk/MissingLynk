@@ -81,6 +81,8 @@ if command -v sshpass >/dev/null 2>&1; then
         -o ConnectTimeout=6 "${SSH_OPTS_LIBRE[@]}" root@"$DEVICE_IP" 'uname -sr; hostname' 2>/dev/null)" || true
     if [ -n "$info" ]; then
         echo "OK: open system reachable at $DEVICE_IP"
+        # shellcheck disable=SC2001  # ${var//old/new} cannot anchor at ^, and this indents
+        # every line of a multi-line capture, not just the first.
         echo "$info" | sed 's/^/  /'
     else
         echo "OK: reachable at $DEVICE_IP (SSH not up yet, give it a moment)"

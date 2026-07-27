@@ -24,6 +24,8 @@ sshg 'ip -br addr show sdio0 2>/dev/null'
 echo
 
 echo "== per-second sdio0 RX for ${SECS}s (watch for STEADY ~11 pkts/s vs burst-then-cliff) =="
+# shellcheck disable=SC2016  # single-quoted on purpose: only $SECS is interpolated here (via the
+# spliced "$SECS"), the rest is a remote script whose variables must expand on the device.
 sshg 'S='"$SECS"'
 pp=0; pb=0; first=1; zeros=0; maxrate=0; total0=0
 for i in $(seq 1 $S); do

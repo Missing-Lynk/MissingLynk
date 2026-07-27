@@ -35,6 +35,8 @@ fi
 # memory node claims 1 GiB would let the kernel run into nonexistent RAM - pass
 # BOOTARGS="... mem=148m ..." explicitly if you must boot one (e.g. an old flashed dtb1
 # via ram-boot-flashed-b.sh).
+# shellcheck disable=SC2034  # read by sourcing scripts (ram-boot.sh, ram-boot-flashed-b.sh,
+# ramboot-at-uboot.sh), which pass it to bootm as the default kernel command line.
 ML_BOOTARGS_DEFAULT="earlycon keep_bootcon ignore_loglevel console=ttyS0,1152000 ubi.mtd=$ML_UBI_PARTITION root=ubi:rootfs rootfstype=ubifs rw mtdparts=$DEV_MTDPARTS"
 
 # Drive uboot_boot.py (load/cmd/...) with the repo venv python.
@@ -45,7 +47,7 @@ ub() {
 # Reach the U-Boot => prompt, retrying (the wdt fire / serial catch can race). Returns 1 if
 # all three attempts miss. Requires sshg() for the between-attempt reachability wait.
 drop_to_uboot_retry() {
-    local attempt i
+    local attempt _
     echo "[*] dropping to U-Boot..."
     for attempt in 1 2 3; do
         if "$_UBOOT_DROP" >/dev/null 2>&1; then
@@ -53,7 +55,7 @@ drop_to_uboot_retry() {
         fi
 
         echo "[*] drop attempt $attempt missed (serial race); waiting for the goggle to re-settle..."
-        for i in $(seq 1 20); do
+        for _ in $(seq 1 20); do
             sshg true 2>/dev/null && break
             sleep 2
         done

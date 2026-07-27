@@ -1,0 +1,8 @@
+# Resolve `. "$(dirname "$0")/../lib/ssh-opts.sh"` against the script's own directory. Without
+# this, shellcheck resolves sourced paths against the working directory, cannot find any of
+# glue/lib/, and reports SC1091 on every script that pulls in a library.
+source-path=SCRIPTDIR
+
+# Follow those sources rather than treating them as opaque, so a helper's definitions are known
+# at the call site. Equivalent to passing -x on every invocation.
+external-sources=true

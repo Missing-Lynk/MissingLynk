@@ -61,7 +61,11 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
 
 ## Checks
 
-The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). There are no unit tests for these scripts: they drive real devices and serial ports. Verify a change to them offline instead, with the self-tests they ship and a synthetic round-trip:
+The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). The shell scripts are linted by `make check-shell`, which runs shellcheck over every tracked `.sh` file; its settings are in `../.shellcheckrc`, and the handful of suppressed findings carry a `# shellcheck disable=` comment naming the reason at the site. `make check` runs both gates.
+
+Sourced libraries resolve because `.shellcheckrc` sets `source-path=SCRIPTDIR`, so `. "$(dirname "$0")/../lib/ssh-opts.sh"` is followed rather than reported as unreadable.
+
+There are no unit tests for these scripts: they drive real devices and serial ports. Verify a change to them offline instead, with the self-tests they ship and a synthetic round-trip:
 
 ```sh
 python3 recovery/gmi.py selftest                       # RE-verified .GMI test vector

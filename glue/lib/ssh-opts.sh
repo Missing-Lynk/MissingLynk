@@ -26,6 +26,8 @@ SSH_OPTS_LIBRE=(
     -o ConnectTimeout=8
 )
 
+# shellcheck disable=SC2054  # the commas separate values WITHIN one ssh option argument
+# (KexAlgorithms=a,b), they are not array element separators.
 SSH_OPTS_LEGACY=(
     -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1
     -o HostKeyAlgorithms=+ssh-rsa,ssh-dss
