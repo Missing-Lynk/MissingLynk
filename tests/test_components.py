@@ -202,6 +202,11 @@ def test_generated_hook_passes_shellcheck(tmp_path) -> None:
     The templates cannot be linted as they sit: they hold @PLACEHOLDER@ tokens, so `$@NAME@`
     parses as the $@ array and `@SKIP_MV_MIN@` is not a number. Rendering resolves those, and the
     rendered hook is the file the device actually boots, so that is what gets checked.
+
+    Unlike `make check-shell`, this runs whatever shellcheck is on PATH rather than the pinned
+    image, so as not to make the test suite need docker. The hook is small and was checked clean
+    against 0.8 through 0.11, so the default-check differences between those releases do not
+    reach it.
     """
     hook = components._gen_hook(components._extract_body(STOCK_RUN_SH.decode()))
     hook_path = tmp_path / "run_dbg.sh"

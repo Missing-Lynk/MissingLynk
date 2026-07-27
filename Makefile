@@ -146,8 +146,10 @@ rootfs-dev: require-device
 # self-verify. The blob capture needs the device connected once; it persists in firmware/bin/
 # and is skipped on later runs, so a rebuild after the first capture needs no device.
 image: require-device all image-blobs
+	@source kernel/scripts/pin.env && \
 	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET) \
 	  --blobs-dir firmware/bin/$(DEV_MLIMG_TARGET) \
+	  --dtb "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)" \
 	  --rootfs rootfs/build/rootfs-$(DEVICE).ubi
 
 # Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
@@ -215,17 +217,19 @@ check-python: lint test
 # @SKIP_MV_MIN@ is not a number). The rendered hook is what actually runs on the device, and the
 # pytest suite shellchecks that.
 #
-# Prefers a packaged shellcheck (what CI has) and falls back to a pinned image, so the check is
-# available without installing anything. The tag is pinned rather than :stable so the fallback
-# does not change findings under you; bump it deliberately.
+# Runs one pinned shellcheck, here and in CI, so the two cannot disagree. Which checks are on by
+# default moves between releases (0.11 turned SC2002 "useless cat" and SC2015 "A && B || C" off),
+# so an unpinned run reports a different set per machine: an installed shellcheck is therefore NOT
+# picked up automatically. Set SHELLCHECK=<path> to override for a one-off, and bump the tag
+# deliberately.
 SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0
+SHELLCHECK ?=
 
 check-shell:
 	@files=$$(git ls-files '*.sh' | grep -v '^missinglynk/templates/'); \
-	if command -v shellcheck >/dev/null 2>&1; then \
-	    shellcheck $$files; \
+	if [ -n "$(SHELLCHECK)" ]; then \
+	    $(SHELLCHECK) $$files; \
 	else \
-	    echo "[*] shellcheck not on PATH, running $(SHELLCHECK_IMAGE)"; \
 	    docker run --rm -v "$(CURDIR):/mnt" -w /mnt $(SHELLCHECK_IMAGE) $$files; \
 	fi
 

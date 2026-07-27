@@ -61,7 +61,7 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
 
 ## Checks
 
-The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). The shell scripts are linted by `make check-shell`, which runs shellcheck over every tracked `.sh` file; its settings are in `../.shellcheckrc`, and the handful of suppressed findings carry a `# shellcheck disable=` comment naming the reason at the site. `make check` runs both gates.
+The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). The shell scripts are linted by `make check-shell`, which runs a pinned shellcheck image over every tracked `.sh` file; its settings are in `../.shellcheckrc`, and the handful of suppressed findings carry a `# shellcheck disable=` comment naming the reason at the site. `make check` runs both gates. The version is pinned, and an installed shellcheck is deliberately not picked up, because releases change which checks are on by default; `SHELLCHECK=<path> make check-shell` overrides for a one-off.
 
 Sourced libraries resolve because `.shellcheckrc` sets `source-path=SCRIPTDIR`, so `. "$(dirname "$0")/../lib/ssh-opts.sh"` is followed rather than reported as unreadable.
 

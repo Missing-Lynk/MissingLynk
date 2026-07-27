@@ -4,10 +4,10 @@
 # The rules, source resolution, and per-site exemptions live in .shellcheckrc and in the scripts
 # themselves, so this job is just `make check-shell` and behaves identically to a local run.
 #
-# ubuntu-latest ships shellcheck preinstalled, so check-shell takes the on-PATH branch and needs
-# no setup step. That version tracks the runner image rather than the pinned SHELLCHECK_IMAGE the
-# local fallback uses, so a shellcheck upgrade can surface a new finding here first. That is the
-# intended direction: CI reports it, and the fix or an explained disable lands in the script.
+# Deliberately does NOT use the shellcheck preinstalled on the runner. Which checks are on by
+# default moves between releases (0.11 turned SC2002 and SC2015 off), so the runner's version and
+# a developer's version disagree about what is a finding. check-shell runs one pinned image
+# instead, the same one locally and here, for the same reason the Python job pins one interpreter.
 #
 # missinglynk/templates/ is not linted here. Those files carry @PLACEHOLDER@ tokens and are not
 # valid shell until rendered; the rendered boot hook is shellchecked by the Python test suite
@@ -49,9 +49,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: false
-
-      - name: Shellcheck version
-        run: shellcheck --version
 
       - name: Lint shell scripts
         run: make check-shell
