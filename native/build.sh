@@ -75,6 +75,11 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     gcc -O2 -Wall -static -Ivendor -Icommon ml-rf-persist.c common/mlfile.c vendor/cJSON.c -o build/ml-rf-persist &&
     gcc -O2 -Wall -static -Ivendor -Icommon ml-boot-record.c common/mlfile.c vendor/cJSON.c -o build/ml-boot-record &&
     gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
+    gcc -O2 -Wall -static ml-regdump.c -o build/ml-regdump &&
+    gcc -O2 -Wall -static ml-mmioreplay.c -o build/ml-mmioreplay &&
+    gcc -O2 -Wall -static ml-i2cprobe.c -o build/ml-i2cprobe &&
+    gcc -O2 -Wall -static ml-camtest.c -o build/ml-camtest &&
+    gcc -O2 -Wall -static ml-v4l2grab.c -o build/ml-v4l2grab &&
     gcc -O2 -I. -Icommon mlmenu/draw.c mlmenu/config.c mlmenu/menu.c common/mlfile.c -o build/mlmenu -lm'
 
 # minidhcpd-musl: static musl build for the open slot-B rootfs (staged by rootfs/build.sh into
