@@ -80,6 +80,49 @@ device_ssh_timeout() {
     timeout "$secs" sshpass -p "$PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$DEVICE_IP" "$@"
 }
 
+# ---------------------------------------------------------------------------
+# File transfer. USE THESE, NOT scp.
+#
+# NEITHER stack has an sftp subsystem: the vendor Dropbear on stock slot A and the air unit
+# has none, and the open slot-B sshd ships without one. scp defaults to sftp, so it fails with
+# "sh: /usr/lib/ssh/sftp-server: not found" / "Connection closed". `scp -O` (legacy protocol)
+# does not save it either, because that needs an `scp` binary on the device and there is none.
+#
+# So bytes go over a plain ssh channel. This keeps being re-derived per script; it is here now
+# so it stops being.
+#
+# One caution that is not about sftp: pushing a LARGE file this way has crashed the goggle's
+# USB gadget mid-transfer. Keep pushed tools small, and prefer several small pushes to one big
+# one. For directories, device_push tars rather than looping, which is both faster and fewer
+# round trips.
+
+# device_push <local> [remote-dir] - copy a file or directory to the device (default /tmp).
+# Files keep their exec bit; directories go as a gzip'd tar and are unpacked with busybox tar.
+device_push() {
+    local src="$1" dest="${2:-/tmp}" base
+    base="$(basename "$src")"
+
+    [ -e "$src" ] || { echo "device_push: no such file or directory: $src" >&2; return 1; }
+    sshg "mkdir -p '$dest'" || return 1
+
+    if [ -d "$src" ]; then
+        tar cz -C "$(dirname "$src")" "$base" | sshg "tar xz -C '$dest'"
+    else
+        sshg "cat > '$dest/$base'" < "$src" || return 1
+        [ -x "$src" ] && sshg "chmod +x '$dest/$base'"
+    fi
+}
+
+# device_pull <remote> [local] - copy a file off the device (default: basename in the cwd).
+# Binary safe: no tty is allocated, so nothing translates newlines.
+device_pull() {
+    local src="$1" dst="${2:-}"
+
+    [ -n "$dst" ] || dst="$(basename "$src")"
+    sshg "cat '$src'" > "$dst" || return 1
+    [ -s "$dst" ] || echo "device_pull: $src arrived empty, does it exist on the device?" >&2
+}
+
 # ensure_device_reachable - confirm the target answers SSH as root/$PASS. If the open slot-B
 # address is silent but the unit is sitting on stock slot A ($ML_STOCK_IP, root/$ML_STOCK_PASS),
 # retarget DEVICE_IP/PASS/ROOT_PASS to it so a drop can still proceed from stock. Exports
