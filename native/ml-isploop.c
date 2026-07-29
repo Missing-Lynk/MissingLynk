@@ -20,7 +20,11 @@
  * pool the per-frame loop re-arms. Markers are written a word at a time because dd on
  * /dev/mem silently writes nothing on this device.
  *
- * Usage: ml-isploop [seconds] [--no-cycle] [--plane ADDR]...
+ * Usage: ml-isploop [seconds] [--cvisp] [--isp-cycle] [--no-cycle] [--plane ADDR]...
+ *   --cvisp     rotate the CVISP output ring once per frame start, no ISP cycle. This is
+ *               the documented sustaining combination.
+ *   --isp-cycle additionally drive the per-frame ISP cycle. Opt-in, because turning it on
+ *               under --cvisp silently changed every existing caller.
  *   --no-cycle  poll and measure only, drive nothing (control run)
  *   --plane     mark and check this address instead of the ISP defaults; repeat
  *               up to three times. Use it to watch the CVISP output ring, whose
@@ -67,8 +71,24 @@ static const uint32_t cvisp_tick[8] = {
 #define MARK_STEP  0x1000u
 #define MARK_WORD  0xa5a5a5a5u
 
+/*
+ * The CGU leaf whose bit12 gates the camera clock domain. Reading CGU is safe at any time;
+ * reading VIF while this gate is clear hard-hangs the SoC into a watchdog reset to slot A.
+ * The frame-start liveness check below cannot protect against that, because the check is
+ * itself a VIF read: it catches "the stream stopped" but not "the clock is gated". So this
+ * is tested first, before the VIF block is touched at all.
+ */
+#define CGU_CAMERA_GATE  0x0a104014u
+#define CGU_GATE_BIT     (1u << 12)
+
 #define VIF_BP_STATUS  0x17c	/* W1C; bit24 = path0 frame start */
 #define FRAME_START    0x01000000u
+
+/*
+ * How long to wait for the first frame start before concluding the stream is down. Three
+ * frames at 60 Hz is 50 ms, so half a second is generous while still failing fast.
+ */
+#define GRACE_S        0.5
 
 struct wr {
 	uint32_t base;
@@ -76,8 +96,30 @@ struct wr {
 	uint32_t val;
 };
 
-/* The vendor's per-frame cycle, in order, from out/au-mmiotrace/mmio-combined.log. */
+/*
+ * The vendor's per-frame cycle, in the order the wide sweep shows the target registers being
+ * written: the statistics buffers first, then the VIF clears, then the three indirect
+ * transactions. An earlier transcription put the VIF clears and the indirect pairs ahead of the
+ * buffers, which is not what the trace shows.
+ *
+ * 0x0cc and 0x0d4 are an indirect access port rather than acknowledgements: each 0x0cc write
+ * selects a target and the following 0x0d4 supplies its data, so they are three transactions
+ * and the pairs must stay adjacent and ordered. The real interrupt acknowledgement is the VIF
+ * 0x17c write.
+ *
+ * 0x6440 and 0x6474 always take the same address as each other, as do 0x75a0 and 0x75bc, so the
+ * eight writes cover five ping-pong pairs and one fixed allocation, not eight buffers. Only the
+ * first member of each pair is written here; alternation is a separate question.
+ */
 static const struct wr cycle[] = {
+	{ ISP_BASE, 0x75a0, 0x2a660400 },
+	{ ISP_BASE, 0x75bc, 0x2a660400 },
+	{ ISP_BASE, 0x6440, 0x2a662200 },
+	{ ISP_BASE, 0x6474, 0x2a662200 },
+	{ ISP_BASE, 0x600c, 0x2a6a0200 },
+	{ ISP_BASE, 0x280c, 0x2a6a3200 },
+	{ ISP_BASE, 0x6508, 0x2a7a4200 },
+	{ ISP_BASE, 0x2808, 0x2b2f8c00 },
 	{ VIF_BASE, 0x17c, 0x01000000 },
 	{ VIF_BASE, 0x184, 0x00000000 },
 	{ VIF_BASE, 0x194, 0x00000000 },
@@ -90,14 +132,6 @@ static const struct wr cycle[] = {
 	{ ISP_BASE, 0x0d4, 0x10000200 },
 	{ ISP_BASE, 0x0cc, 0x00000000 },
 	{ ISP_BASE, 0x0d4, 0x00000100 },
-	{ ISP_BASE, 0x75a0, 0x2a660400 },
-	{ ISP_BASE, 0x75bc, 0x2a660400 },
-	{ ISP_BASE, 0x6440, 0x2a662200 },
-	{ ISP_BASE, 0x6474, 0x2a662200 },
-	{ ISP_BASE, 0x600c, 0x2a6a0200 },
-	{ ISP_BASE, 0x280c, 0x2a6a3200 },
-	{ ISP_BASE, 0x6508, 0x2a7a4200 },
-	{ ISP_BASE, 0x2808, 0x2b2f8c00 },
 };
 
 /* mmap needs a page-aligned offset; the plane addresses are not (they end in 0x200), so
@@ -167,6 +201,7 @@ int main(int argc, char **argv)
 {
 	double seconds = (argc > 1 && argv[1][0] != '-') ? atof(argv[1]) : 10.0;
 	int drive = 1;
+	int force_cycle = 0;
 	int fd, i;
 	volatile uint8_t *vif, *isp;
 	unsigned long starts = 0, cycles = 0, polls = 0;
@@ -185,8 +220,17 @@ int main(int argc, char **argv)
 		if (!strcmp(argv[i], "--no-cycle")) {
 			drive = 0;
 		} else if (!strcmp(argv[i], "--cvisp")) {
+			/*
+			 * Ring rotation only, no ISP cycle. This is the combination that
+			 * kernel/docs/camera-stack.md records as sustaining, and existing
+			 * callers such as au-cvisp-framelock.sh depend on it. Briefly
+			 * making --cvisp also drive the cycle silently changed what every
+			 * one of those callers did, so the cycle is opt-in below instead.
+			 */
 			cvisp = 1;
 			drive = 0;
+		} else if (!strcmp(argv[i], "--isp-cycle")) {
+			force_cycle = 1;
 		} else if (!strcmp(argv[i], "--dump") && i + 1 < argc) {
 			dump = argv[++i];
 		} else if (!strcmp(argv[i], "--plane") && i + 1 < argc) {
@@ -200,6 +244,10 @@ int main(int argc, char **argv)
 	if (given) {
 		nplanes = given;
 	}
+	/* Resolved after the loop so --isp-cycle works regardless of where it sits. */
+	if (force_cycle) {
+		drive = 1;
+	}
 
 	fd = open("/dev/mem", O_RDWR | O_SYNC);
 	if (fd < 0) {
@@ -212,6 +260,22 @@ int main(int argc, char **argv)
 	}
 	printf("marked %u words on each of %u output planes\n", marks, nplanes);
 
+	{
+		volatile uint8_t *cgu = map_block(fd, CGU_CAMERA_GATE, 4);
+		uint32_t gate = *(volatile uint32_t *)cgu;
+
+		unmap_block(cgu, CGU_CAMERA_GATE, 4);
+		if (!(gate & CGU_GATE_BIT)) {
+			fprintf(stderr,
+				"cgu 0x%08x = 0x%08x: camera gate bit12 is CLEAR.\n"
+				"Refusing to touch VIF, which would hang the SoC. Bring the "
+				"pipeline up first.\n",
+				CGU_CAMERA_GATE, gate);
+			close(fd);
+			return 2;
+		}
+	}
+
 	vif = map_block(fd, VIF_BASE, BLOCK_LEN);
 	isp = map_block(fd, ISP_BASE, BLOCK_LEN);
 	if (cvisp) {
@@ -220,6 +284,29 @@ int main(int argc, char **argv)
 
 	printf("%s for %.1f s\n", drive ? "driving the vendor cycle on each frame start"
 				       : "measuring only (control, no writes)", seconds);
+
+	/*
+	 * Liveness gate. Reading VIF registers with the pixel domain stopped hard-hangs this
+	 * SoC into a watchdog reset to slot A, and the polling loop below reads VIF 0x17c on
+	 * every iteration, so the loop itself is the hazard, not just the summary read after
+	 * it. Caching the summary values was an incomplete fix and cost a second session.
+	 *
+	 * So: probe once, and if nothing arrives inside the grace period, conclude the stream
+	 * is down and stop before entering the loop. A stopped stream is the expected state
+	 * when a grabber has timed out or a previous run left the chain half torn down, which
+	 * is exactly when someone reaches for this tool to find out what happened.
+	 */
+	t0 = now_s();
+	while (!(*(volatile uint32_t *)(vif + VIF_BP_STATUS) & FRAME_START)) {
+		if (now_s() - t0 > GRACE_S) {
+			fprintf(stderr,
+				"no frame start within %.1f s: the stream looks stopped.\n"
+				"Refusing to poll VIF, which would hang the SoC. Start the "
+				"capture chain first.\n", GRACE_S);
+			close(fd);
+			return 2;
+		}
+	}
 
 	t0 = now_s();
 	while ((t = now_s()) - t0 < seconds) {
