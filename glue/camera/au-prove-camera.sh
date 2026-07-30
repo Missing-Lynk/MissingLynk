@@ -36,6 +36,12 @@ BULK="${BULK:-1475}"
 #   SEED=1    seed the owned buffers from the vendor's inherited pages first, so the regions we
 #             cannot generate (gamma page 1 and its 0x1000..0x3fff tail) keep working
 #   GAMMA_CURVE / DRC_PROFILE   which tuning-file entry to build, -1 to leave the page alone
+#   COMPANDER=1  own the compander page too and fill it from the carried template. It has no
+#             tuning-file source and no runtime generator: the vendor installs the same bytes
+#             on every unit, so there is nothing to select and no seed path.
+#   LTM=1     own the LTM page and generate its lens-shading grid from the tuning file. Only
+#             region A is generated; the scene-adaptive half has no stored source and follows
+#             SEED, so LTM=1 SEED=0 runs the block on shading with no adaptation at all.
 #
 # The useful runs, in order, one bring-up each:
 #   TABLES=0                          today's behaviour, the control
@@ -46,6 +52,8 @@ TABLES="${TABLES:-1}"
 SEED="${SEED:-1}"
 GAMMA_CURVE="${GAMMA_CURVE:-3}"
 DRC_PROFILE="${DRC_PROFILE:-3}"
+COMPANDER="${COMPANDER:-1}"
+LTM="${LTM:-1}"
 # Capture window in seconds. The one clean frame of the day was a 1 s grab; 4 s grabs are
 # crushed on the same configuration, and this system is documented as giving different answers
 # at 1 s and 4 s. Keep this at 1 unless deliberately probing the drift.
@@ -166,6 +174,23 @@ then
 	push "$REARM" "rearm.bin" || exit 1
 	SWEEP_NAMES="$SWEEP_NAMES rearm"
 	echo "  re-arm step armed: $REARM"
+fi
+
+# LTMPOKE=1: zero the LTM DMA page mid-stream and re-arm its valid bit, to decide whether the
+# block is actually fetching. Registered here so the capture is pulled and rendered like any
+# other sweep step.
+if [ "${LTMPOKE:-0}" = 1 ]
+then
+	SWEEP_NAMES="$SWEEP_NAMES ltm"
+	echo "  LTM fetch probe armed"
+fi
+
+# GTM2POKE=1: zero GTM2's 512-byte payload and re-arm, to decide whether its content matters
+# at all. It is the only table in the tone path with no static source anywhere.
+if [ "${GTM2POKE:-0}" = 1 ]
+then
+	SWEEP_NAMES="$SWEEP_NAMES gtm2"
+	echo "  GTM2 payload probe armed"
 fi
 
 # The device script goes over stdin, not as an ssh argument. It outgrew the command-line
@@ -292,6 +317,7 @@ do
 	insmod /tmp/\$m.ko || fail \"insmod \$m\"
 done
 insmod /tmp/ar-isp.ko tables=$TABLES seed=$SEED gamma_curve=$GAMMA_CURVE drc_profile=$DRC_PROFILE \
+	compander=$COMPANDER ltm=$LTM \
 	|| fail 'insmod ar-isp'
 insmod /tmp/ar-cvisp.ko || fail 'insmod ar-cvisp'
 sleep 1
@@ -649,6 +675,86 @@ then
 	fi
 fi
 
+# Stage 8: is the LTM page actually being fetched?
+#
+# The question this settles: our mid-stream dump and the vendor's agree on every word of the
+# GTM2 and LTM register neighbourhoods except the valid bits, isp 0x1c60 and 0x4c3c, which read
+# 0 on the vendor and 1 on ours. Read one way that is a self-clearing bit we caught before the
+# fetch; read the other way our arm never completed and the block is running on whatever it had.
+# A static register comparison cannot tell those apart, so perturb the page and look at the
+# image: LTM's fetch length is 0x680, and 0x2b2e8600 is its live source.
+#
+# Runs LAST, after every capture that matters, because it deliberately corrupts a live table.
+# Its own before-image is the stage 5 capture of the same scene.
+if [ \"\$LTMPOKE\" = 1 ]
+then
+	# 0x1a0 words is 0x680 bytes, the register-proven fetch length. Save first: this is the
+	# only copy of what the vendor computed for this scene, and it is not reproducible from
+	# the tuning file.
+	/tmp/ml-lutfill 0x2b2e8600 0x1a0 save:/tmp/ltm_pre.bin >/dev/null 2>&1
+	/tmp/ml-lutfill 0x2b2e8600 0x1a0 const:0x00000000 >/dev/null 2>&1
+	echo '  stage 8: LTM page zeroed, valid bit before/after:'
+	\$R 0x08c04c3c 1
+	/tmp/ml-regdump -w 0x08c04c3c 1 >/dev/null 2>&1
+	\$R 0x08c04c3c 1
+	sleep 1
+	# \$PLANES, not all three: this is a yes/no question and /tmp is a 32 MB tmpfs. The
+	# marker check still runs on whatever planes are passed, which is what makes an
+	# unchanged image trustworthy here rather than possibly just a stale frame.
+	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_ltm \\
+		\$PLANES \\
+		>/tmp/il_ltm 2>&1
+	then
+		echo '  stage 8 ok: captured after the poke'
+		grep -E 'markers overwritten' /tmp/il_ltm | sed 's/^/    /'
+	else
+		echo '  stage 8: capture failed after the poke'
+		cat /tmp/il_ltm
+	fi
+	# Put it back, AND re-arm, or the block keeps the zeroed page it already fetched and every
+	# later stage silently measures a broken LTM on top of whatever it is testing. Restoring
+	# DRAM alone is not enough: the fetch is what the valid bit triggers.
+	/tmp/ml-lutfill 0x2b2e8600 0x1a0 load:/tmp/ltm_pre.bin >/dev/null 2>&1
+	/tmp/ml-regdump -w 0x08c04c3c 1 >/dev/null 2>&1
+	sleep 1
+fi
+
+# Stage 9: does GTM2's 512 bytes of content matter?
+#
+# GTM2 fetches 0x1000 from 0x2b2e0200 but only 0xa00 of that is its own: 0x000..0x7ff is zero
+# and 0xa00.. is the compander table, which starts at 0x2b2e0c00 and is read because the fetch
+# overruns. So GTM2's entire payload is the 512 bytes at 0x2b2e0a00, and those are the only
+# bytes in the tone path with no static source anywhere: absent from libmpp_service.so, from
+# the tuning blob, and from all 53 entries of the ISP-init template array.
+#
+# That leaves one question worth a boot: if zeroing them changes nothing, the driver can own
+# the buffer with zeros and GTM2 stops being inherited without recovering anything. If it does
+# change the image, the content matters and the RE has to continue.
+#
+# Runs after the LTM probe, last of everything, because it corrupts a live table.
+if [ \"\$GTM2POKE\" = 1 ]
+then
+	/tmp/ml-lutfill 0x2b2e0a00 0x80 save:/tmp/gtm2_pre.bin >/dev/null 2>&1
+	/tmp/ml-lutfill 0x2b2e0a00 0x80 const:0x00000000 >/dev/null 2>&1
+	echo '  stage 9: GTM2 payload zeroed, valid bit before/after:'
+	\$R 0x08c01c60 1
+	/tmp/ml-regdump -w 0x08c01c60 1 >/dev/null 2>&1
+	\$R 0x08c01c60 1
+	sleep 1
+	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_gtm2 \\
+		\$PLANES \\
+		>/tmp/il_gtm2 2>&1
+	then
+		echo '  stage 9 ok: captured after the poke'
+		grep -E 'markers overwritten' /tmp/il_gtm2 | sed 's/^/    /'
+	else
+		echo '  stage 9: capture failed after the poke'
+		cat /tmp/il_gtm2
+	fi
+	/tmp/ml-lutfill 0x2b2e0a00 0x80 load:/tmp/gtm2_pre.bin >/dev/null 2>&1
+	/tmp/ml-regdump -w 0x08c01c60 1 >/dev/null 2>&1
+fi
+
 # Always clean up the grabber, and verify it is gone. The orphan left by an earlier run is what
 # blocked rmmod and silently invalidated everything after it.
 kill \$GP 2>/dev/null
@@ -671,7 +777,7 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' /tmp/prove.sh $tp $name $cyc"
+	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LTMPOKE='${LTMPOKE:-0}' GTM2POKE='${GTM2POKE:-0}' /tmp/prove.sh $tp $name $cyc"
 	then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
@@ -702,6 +808,17 @@ do
 	do
 		pull "/tmp/pre_$t.bin" "$OUT/pre_$t.bin" 2>/dev/null || true
 	done
+	# The LTM page as the vendor computed it for this scene. hdf-037 established it has no
+	# static source: it is built at runtime from stats, so this capture is the only form of
+	# it we can hold, and the open driver carries a captured page rather than generating one.
+	if [ "${LTMPOKE:-0}" = 1 ]
+	then
+		pull "/tmp/ltm_pre.bin" "$OUT/ltm_pre.bin" 2>/dev/null || true
+	fi
+	if [ "${GTM2POKE:-0}" = 1 ]
+	then
+		pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
+	fi
 	pull "/tmp/oursensor.txt" "$REPO/out/au-snapshot/ours-sensor-full.txt" 2>/dev/null || true
 	# Mid-stream register windows, for the live-against-live diff. Small, so unlike the raw
 	# frame this pull is reliable over the RF link.
