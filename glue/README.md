@@ -11,6 +11,8 @@ The groups talk to the device in **different boot states, with different credent
 - `net/` runs entirely on the **host**, no device contact: it assigns the static IP (or DHCP) and the NetworkManager exclusion that bring the USB-ethernet link up, so the other groups can reach the device.
 - `flash/` and `fetch/` run while the device is booted on **stock slot A** (root / `artosyn`), flash because you never write a slot while it's the one running, fetch because the vendor blobs (and the boot-generated RF config) only exist there. All three scripts refuse to run if the device answers as slot B.
 - `dev/` assumes the device is on the **open slot-B Alpine** (root / `libre`).
+- `camera/` targets the **air unit**, and is the one group that spans both slots: the bring-up and capture scripts run on open slot B, while `au-snapshot-vendor.sh` and `au-slotA-mmiotrace.sh` read stock slot A. Every slot-A path is read-only.
+- `isp/` runs entirely on the **host**, no device contact: table codecs over captured buffers and the vendor tuning blob.
 - `boot/` works from **either slot** (each script probes or takes `ROOT_PASS`), because getting to U-Boot and flipping slots are exactly the operations that cross the slot boundary.
 - `recovery/` needs **no OS at all**, it drives the mask BootROM over the 3 debug-UART wires, the last resort when the device won't boot.
 
@@ -38,6 +40,16 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
 - `dev/` developer inner-loop drivers and transfer primitives.
   - `kdev.sh` chains the kernel build (`../kernel/scripts/build.sh` + `../kernel/modules/build.sh`) and a RAM-boot (`boot/ram-boot.sh`) behind composable `--build`, `--build-fast`, and `--ramboot` flags.
   - `push.sh <file-or-dir> [more...]` streams files or directories to `/tmp` (a 32 MB exec-allowed tmpfs) on the slot-B Alpine over a plain SSH channel (the device has no scp/sftp); `DEST=` overrides the target dir.
+- `camera/` air-unit camera bring-up, capture and analysis. Tracked, unlike `dev/`, because `../kernel/docs/camera-stack.md` cites these by name as how its findings were produced.
+  - `au-prove-camera.sh` the bring-up harness: configures the chain on slot B, captures planes, and reports luma statistics and the marker count. `RUNS=` selects which bring-up to spend the boot on, because only the first one delivers frames.
+  - `au-snapshot-vendor.sh` captures the stock slot A's complete working camera configuration (registers, sensor, DMA table pointers and contents) read-only, mid-stream. The reference every comparison is made against.
+  - `au-slotA-mmiotrace.sh` + `au-run-dbg.template.sh` install the `../native/mmiotrace.c` `LD_PRELOAD` shim under the vendor's `ar_lowdelay` and capture its register writes.
+  - `au-chain-capture.sh` / `au-chain-diff.py` read the same window list from both slots and diff them block by block; `diff-live-registers.py` does the same for two `ml-regdump` window dumps.
+  - `au-cvisp-firstlight.sh`, `au-cvisp-framelock.sh` the CVISP frame-writer experiments.
+  - `gen-block3d.py` emits ISP register writes for the harness; `planes2png.py` renders captured planes and prints the luma statistics a capture is judged by.
+- `isp/` ISP DMA table codecs: pure host-side data transforms, no device contact.
+  - `gamma-codec.py` decodes, encodes and generates the `0x4000` gamma table, including `fromblob` straight from the vendor tuning blob.
+  - `drc-codec.py` the same for the DRC page's dynamic banks, whose records carry three overlapping 20-bit samples.
 - `boot/` U-Boot access, RAM-boots, and the slot flip, the safety-critical layer of the A/B ladder (`docs/flash-and-verify-slots.md`). All serial steps run over a USB-serial adapter (see `../docs/guides/serial-and-debug-access.md`) using the `ML_SERIAL` port from the serial setup above.
   - `drop-to-uboot.sh` gets the device to the U-Boot `=>` prompt hands-off: builds + deploys `uboot-trigger.c` (sets the SPL reboot-reason flag, then watchdog-resets), and catches the autoboot on serial with `wait-for-serial.py`.
   - `ram-boot.sh <Image> <dtb> [bootargs]` RAM-boots an arbitrary kernel with **zero flash writes**: packs the Image into the OTRA container (`../glue/flash/mkkernel.py`), drops to U-Boot, `loady`s dtb + container over serial (~4 min), `bootm`s. The proving step of the flash ladder; a reset falls back to the flashed active slot. Without explicit `bootargs` it boots the active device's slot-B rootfs (`lib/uboot.sh`); `--initramfs` boots the bare busybox initramfs instead.
@@ -61,7 +73,7 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
 
 ## Checks
 
-The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; `dev/` is excluded as per-machine scratch). The shell scripts are linted by `make check-shell`, which runs a pinned shellcheck image over every tracked `.sh` file; its settings are in `../.shellcheckrc`, and the handful of suppressed findings carry a `# shellcheck disable=` comment naming the reason at the site. `make check` runs both gates. The version is pinned, and an installed shellcheck is deliberately not picked up, because releases change which checks are on by default; `SHELLCHECK=<path> make check-shell` overrides for a one-off.
+The Python here is linted by the repo-root `make check-python` (ruff config and the per-path exemptions are in `../pyproject.toml`; only `dev/` is excluded, as per-machine scratch). The shell scripts are linted by `make check-shell`, which runs a pinned shellcheck image over every tracked `.sh` file; its settings are in `../.shellcheckrc`, and the handful of suppressed findings carry a `# shellcheck disable=` comment naming the reason at the site. `make check` runs both gates. The version is pinned, and an installed shellcheck is deliberately not picked up, because releases change which checks are on by default; `SHELLCHECK=<path> make check-shell` overrides for a one-off.
 
 Sourced libraries resolve because `.shellcheckrc` sets `source-path=SCRIPTDIR`, so `. "$(dirname "$0")/../lib/ssh-opts.sh"` is followed rather than reported as unreadable.
 
