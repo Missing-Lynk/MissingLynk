@@ -272,10 +272,11 @@ static int capture_frames(int fd, struct capture_buffer *buffers, unsigned int b
         printf("frame %u: buffer %u, sequence %u, %u bytes\n", captured, buffer.index,
                buffer.sequence, buffer.bytesused);
 
-        /* Write the last frame, and describe it so a blank capture is obvious here
-         * rather than after it has been pulled to a host.
+        /* Write the first frame as well as the last. Callers that stream continuously pass a
+         * large -n and kill the process long before it is reached, so a last-frame-only write
+         * leaves no file at all: the raw capture silently never happened.
          */
-        if (captured + 1 == frame_count) {
+        if (captured == 0 || captured + 1 == frame_count) {
             FILE *output = fopen(path, "wb");
 
             report_frame_content(buffers[buffer.index].start, buffers[buffer.index].length);
