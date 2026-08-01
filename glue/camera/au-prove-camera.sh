@@ -54,11 +54,39 @@ GAMMA_CURVE="${GAMMA_CURVE:-3}"
 DRC_PROFILE="${DRC_PROFILE:-3}"
 COMPANDER="${COMPANDER:-1}"
 LSC="${LSC:-1}"
+# STATS=1 allocates the AE statistics buffers here and points the RRO engines and the raw
+# histogram at them instead of the vendor's. Only holds while the per-frame ISP cycle is off:
+# that cycle re-arms the vendor's addresses, so a run with --isp-cycle silently reverts it.
+STATS="${STATS:-1}"
+# CCM=1 installs the colour matrix from the tuning file into ccm1 after the register prefix.
+# It matters more than it looks: the replay carries the vendor's runtime matrix, but at setup
+# entry 1718, so any BULK below that leaves ccm1 at the identity the earlier entries wrote.
+# Every bring-up before this one ran with colour correction off for exactly that reason.
+# CCM_BANK picks the illuminant bank, 0 to 3; 0 is the one the vendor was traced writing.
+CCM="${CCM:-1}"
+CCM_BANK="${CCM_BANK:-0}"
+# BLC=1 generates black level correction from the tuning file instead of leaving the constants
+# the CVISP late table carries. BLC_GAIN is the sensor gain it blends for, in the tuning file's
+# ladder units: 187 is the vendor's traced operating point and reproduces its registers exactly.
+# The stage recomputes with gain on the vendor, so this becomes an AE input rather than a knob.
+BLC="${BLC:-1}"
+BLC_GAIN="${BLC_GAIN:-187}"
+# DE3D=1 allocates de3d's three working buffers instead of leaving it writing the vendor's
+# memory. Sizes are bounds derived from the vendor's own packing, not measured extents, and
+# the third has no bound above it at all; see ar-isp.c. Unlike the other levers this one can
+# change the picture, because de3d starts from an empty history rather than an inherited one.
+DE3D="${DE3D:-1}"
+# Complete frames from the VIF frame-done interrupt instead of the polling work item. Off by
+# default because the acknowledge behaviour is unconfirmed and the line is level triggered.
+USE_IRQ="${USE_IRQ:-0}"
 # Capture window in seconds. The one clean frame of the day was a 1 s grab; 4 s grabs are
 # crushed on the same configuration, and this system is documented as giving different answers
 # at 1 s and 4 s. Keep this at 1 unless deliberately probing the drift.
 WATCH="${WATCH:-1}"
-KD="$REPO/kernel/build/kernel-repro-6.18.36/linux/drivers/media/artosyn"
+# Modules are read from the staged module tree, which is what the build actually installs.
+# The in-tree drivers/media/artosyn directory is a sync target and is left without objects,
+# so reading from it silently stages whatever a previous build happened to leave behind.
+KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
 au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
@@ -185,9 +213,9 @@ then
 	echo "  LSC fetch probe armed"
 fi
 
-# GTM2POKE=1: zero GTM2's 512-byte payload and re-arm, to decide whether its content matters
+# HDRPOKE=1: zero GTM2's 512-byte payload and re-arm, to decide whether its content matters
 # at all. It is the only table in the tone path with no static source anywhere.
-if [ "${GTM2POKE:-0}" = 1 ]
+if [ "${HDRPOKE:-0}" = 1 ]
 then
 	SWEEP_NAMES="$SWEEP_NAMES gtm2"
 	echo "  GTM2 payload probe armed"
@@ -312,14 +340,15 @@ insmod /tmp/nt99235.ko exposure=$EXPO gain=$GAIN test_pattern=\$TP || fail 'insm
 # ar-isp is spelled out rather than looped because it is the only one with run-time levers
 # worth steering from here. The ORDER IS THE ORIGINAL ONE and matters: it is the order the
 # media graph was proven to bind in.
-for m in ar-csi2 ar-vif
-do
-	insmod /tmp/\$m.ko || fail \"insmod \$m\"
-done
+insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
+# ar-vif defaults to completing frames by polling. The interrupt line is level triggered and a
+# handler that fails to clear the source wedges the machine, so USE_IRQ=1 is an experiment with
+# a working fallback, not a setting to leave on until an acknowledge is confirmed.
+insmod /tmp/ar-vif.ko use_irq=$USE_IRQ || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko tables=$TABLES seed=$SEED gamma_curve=$GAMMA_CURVE drc_profile=$DRC_PROFILE \
-	compander=$COMPANDER lsc=$LSC \
+	compander=$COMPANDER lsc=$LSC stats=$STATS ccm=$CCM ccm_bank=$CCM_BANK de3d=$DE3D \
 	|| fail 'insmod ar-isp'
-insmod /tmp/ar-cvisp.ko || fail 'insmod ar-cvisp'
+insmod /tmp/ar-cvisp.ko blc=$BLC blc_gain=$BLC_GAIN || fail 'insmod ar-cvisp'
 sleep 1
 echo '  stage 2 ok: modules loaded'
 
@@ -398,7 +427,8 @@ fi
 if [ -x /tmp/ml-i2cprobe ]
 then
 	: > /tmp/oursensor.txt
-	for pg in 0x0000 0x0100 0x0200 0x0300 0x0400 0x0500 0x0600 0x0800 0x0c00 0x3000 0x3100 0x3200 0x3300
+	for pg in 0x0000 0x0100 0x0200 0x0300 0x0400 0x0500 0x0600 0x0800 0x0c00 0x3000 0x3100 0x3200 0x3300 \
+	          0x3500 0x3600 0x3a00 0x8000 0x8200 0x8300 0x8500 0x8700 0x9000
 	do
 		/tmp/ml-i2cprobe 0 0x1a \$pg -n 256 >> /tmp/oursensor.txt 2>/dev/null
 	done
@@ -408,11 +438,14 @@ fi
 dump_windows() {
 	for spec in \\
 		isp:0x08c00000:0x0000:64    isp:0x08c00000:0x0800:322 \\
-		isp:0x08c00000:0x1800:512   isp:0x08c00000:0x2800:64 \\
-		isp:0x08c00000:0x2e00:1032  isp:0x08c00000:0x4800:576 \\
-		isp:0x08c00000:0x5800:28    isp:0x08c00000:0x6000:384 \\
-		isp:0x08c00000:0x6c00:704 \\
+		isp:0x08c00000:0x1800:512   isp:0x08c00000:0x2400:16 \\
+		isp:0x08c00000:0x4000:64 \\
+		isp:0x08c00000:0x2800:64    isp:0x08c00000:0x2e00:1032 \\
+		isp:0x08c00000:0x4800:576   isp:0x08c00000:0x5800:28 \\
+		isp:0x08c00000:0x6000:384   isp:0x08c00000:0x6c00:704 \\
 		cvisp:0x08e00000:0x8000:64  cvisp:0x08e00000:0x4600:16 \\
+		cvisp:0x08e00000:0x4000:256 cvisp:0x08e00000:0x4400:64 \\
+		cvisp:0x08e00000:0x4700:16 \\
 		vif:0x08870000:0x0000:256   vif:0x08870000:0x0300:64 \\
 		csi2:0x08880000:0x0400:64   csi2:0x08880000:0x0800:64 \\
 		cgu:0x0a104000:0x0000:32
@@ -675,10 +708,51 @@ then
 	fi
 fi
 
+# Stage 7b: are the AE statistics buffers ours, and is the hardware writing them?
+#
+# Passive: reads debugfs and dumps DRAM, poking nothing. It runs before the stages that zero
+# pages on purpose, so a confounded statistics read cannot be blamed on one of those.
+#
+# The question is narrow. The RRO engines keep whatever address was last written to them, so a
+# buffer that reads all zero means our address never took, or was overwritten. A non-zero count
+# with a plausible frame mean means the hardware is writing memory we own, which is the whole
+# point of stats=1.
+#
+# Also takes the two dumps queued by the parallel track: the LUT3D banks, to byte-verify them
+# against the library templates, and the raw zone grid, which is worth far more in a
+# deliberately non-uniform scene. Point the lens at a bright window and a dark corner.
+echo '  stage 7b: AE statistics'
+if [ -r /sys/kernel/debug/ar-isp/stats ]
+then
+	head -1 /sys/kernel/debug/ar-isp/stats | sed 's/^/    /'
+	tail -1 /sys/kernel/debug/ar-isp/stats | sed 's/^/    /'
+else
+	echo '    no debugfs stats node (stats=0, or ar-isp did not probe)'
+fi
+dmesg | grep -E 'stats: rro' | tail -1 | sed 's/^/    /'
+# Raw grid, from the address the driver printed, so this follows our allocation instead of a
+# hardcoded vendor address. ml-lutfill counts words: 0x1200 words is the 0x4800 extent.
+RRO=\$(dmesg | grep -oE 'stats: rro 0x[0-9a-f]+' | tail -1 | sed 's/.*0x/0x/')
+if [ -n \"\$RRO\" ]
+then
+	/tmp/ml-lutfill \$RRO 0x1200 save:/tmp/rro_raw.bin >/dev/null 2>&1 &&
+		echo \"    saved raw zone grid from \$RRO\"
+fi
+# LUT3D bank 0, 0x2a00 words. The module is disabled on the vendor, so this only byte-verifies
+# the banks against the library templates; no live claim depends on it.
+/tmp/ml-lutfill 0x2b3f8c00 0xa80 save:/tmp/lut3d.bin >/dev/null 2>&1 &&
+	echo '    saved lut3d bank 0'
+# The LTM coefficient page, 0x4000 = 0x1000 words, 64 tiles of a 128-sample u16 curve. The
+# vendor recomputes this every frame rather than installing it, so this capture is scene
+# dependent and only means something alongside a second one of a visibly different scene:
+# comparing the two is what decides whether an open LTM has to compute or can ship a constant.
+/tmp/ml-lutfill 0x2b2f8c00 0x1000 save:/tmp/ltm_page.bin >/dev/null 2>&1 &&
+	echo '    saved ltm coefficient page'
+
 # Stage 8: is the LSC page actually being fetched?
 #
 # The question this settles: our mid-stream dump and the vendor's agree on every word of the
-# GTM2 and LSC register neighbourhoods except the valid bits, isp 0x1c60 and 0x4c3c, which read
+# HDR and LSC register neighbourhoods except the valid bits, isp 0x1c60 and 0x4c3c, which read
 # 0 on the vendor and 1 on ours. Read one way that is a self-clearing bit we caught before the
 # fetch; read the other way our arm never completed and the block is running on whatever it had.
 # A static register comparison cannot tell those apart, so perturb the page and look at the
@@ -732,7 +806,7 @@ fi
 # change the image, the content matters and the RE has to continue.
 #
 # Runs after the LSC probe, last of everything, because it corrupts a live table.
-if [ \"\$GTM2POKE\" = 1 ]
+if [ \"\$HDRPOKE\" = 1 ]
 then
 	/tmp/ml-lutfill 0x2b2e0a00 0x80 save:/tmp/gtm2_pre.bin >/dev/null 2>&1
 	/tmp/ml-lutfill 0x2b2e0a00 0x80 const:0x00000000 >/dev/null 2>&1
@@ -777,7 +851,7 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' GTM2POKE='${GTM2POKE:-0}' /tmp/prove.sh $tp $name $cyc"
+	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' /tmp/prove.sh $tp $name $cyc"
 	then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
@@ -815,7 +889,12 @@ do
 	then
 		pull "/tmp/lsc_pre.bin" "$OUT/lsc_pre.bin" 2>/dev/null || true
 	fi
-	if [ "${GTM2POKE:-0}" = 1 ]
+	# Stage 7b's artifacts. Unconditional: that stage is passive and always runs, so gating
+	# these on a poke lever loses them silently, which is how the first run lost both.
+	pull "/tmp/rro_raw.bin" "$OUT/rro_raw.bin" 2>/dev/null || true
+	pull "/tmp/lut3d.bin" "$OUT/lut3d.bin" 2>/dev/null || true
+	pull "/tmp/ltm_page.bin" "$OUT/ltm_page_${SCENE:-a}.bin" 2>/dev/null || true
+	if [ "${HDRPOKE:-0}" = 1 ]
 	then
 		pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
 	fi

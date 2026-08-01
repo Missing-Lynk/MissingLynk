@@ -76,9 +76,34 @@ def excluded(off):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("vendor", "table", "diff", "sweep", "sweepreg"):
+    # The harness passes BLOCK3D as one argument, so "set 0x0c10=0x0" arrives as a single
+    # string; split it back into mode and spec before dispatch.
+    if len(sys.argv) >= 2 and sys.argv[1].startswith("set ") and len(sys.argv[1].split()) == 2:
+        sys.argv[1:2] = sys.argv[1].split()
+
+    if len(sys.argv) < 2 or sys.argv[1] not in ("vendor", "table", "diff", "sweep", "sweepreg", "set"):
         sys.stderr.write(__doc__)
         return 2
+
+    if sys.argv[1] == "set":
+        # Explicit writes: `set 0x0c10=0x0,0x2408=0x40000000`. ISP-relative offsets get the
+        # base added; a full 0x08xxxxxx address passes through. The exclusions still apply,
+        # since they exist for safety rather than for the diff modes' bookkeeping.
+        if len(sys.argv) < 3:
+            sys.stderr.write("set mode needs ADDR=VAL[,ADDR=VAL...]\n")
+            return 2
+        n = 0
+        for pair in sys.argv[2].split(","):
+            a, v = pair.split("=", 1)
+            addr, val = int(a, 0), int(v, 0)
+            off = addr - ISP_BASE if addr >= ISP_BASE else addr
+            if excluded(off):
+                sys.stderr.write(f"refusing excluded register 0x{off:04x}\n")
+                return 1
+            print(f"0x{ISP_BASE + off:08x} 0x{val:08x}")
+            n += 1
+        sys.stderr.write(f"set mode: {n} writes\n")
+        return 0
 
     lo, hi = LO, HI
     if len(sys.argv) >= 3 and "-" in sys.argv[2]:
