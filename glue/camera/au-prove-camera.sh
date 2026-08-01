@@ -78,7 +78,7 @@ BLC_GAIN="${BLC_GAIN:-187}"
 DE3D="${DE3D:-1}"
 # Complete frames from the VIF frame-done interrupt instead of the polling work item. Off by
 # default because the acknowledge behaviour is unconfirmed and the line is level triggered.
-USE_IRQ="${USE_IRQ:-0}"
+USE_IRQ="${USE_IRQ:-1}"
 # Capture window in seconds. The one clean frame of the day was a 1 s grab; 4 s grabs are
 # crushed on the same configuration, and this system is documented as giving different answers
 # at 1 s and 4 s. Keep this at 1 unless deliberately probing the drift.
@@ -341,13 +341,13 @@ insmod /tmp/nt99235.ko exposure=$EXPO gain=$GAIN test_pattern=\$TP || fail 'insm
 # worth steering from here. The ORDER IS THE ORIGINAL ONE and matters: it is the order the
 # media graph was proven to bind in.
 insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
-# ar-vif defaults to completing frames by polling. The interrupt line is level triggered and a
-# handler that fails to clear the source wedges the machine, so USE_IRQ=1 is an experiment with
-# a working fallback, not a setting to leave on until an acknowledge is confirmed.
+# Interrupt completion is the default and the vendor's own mode on both blocks;
+# both handlers are validated at frame rate. USE_IRQ=0 falls back to polling for
+# debugging, which also leaves the W1C status words observable between polls.
 insmod /tmp/ar-vif.ko use_irq=$USE_IRQ || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko tables=$TABLES seed=$SEED gamma_curve=$GAMMA_CURVE drc_profile=$DRC_PROFILE \
 	compander=$COMPANDER lsc=$LSC stats=$STATS ccm=$CCM ccm_bank=$CCM_BANK de3d=$DE3D \
-	|| fail 'insmod ar-isp'
+	use_irq=$USE_IRQ || fail 'insmod ar-isp'
 insmod /tmp/ar-cvisp.ko blc=$BLC blc_gain=$BLC_GAIN || fail 'insmod ar-cvisp'
 sleep 1
 echo '  stage 2 ok: modules loaded'
@@ -395,14 +395,27 @@ then
 	# time-dependent, so one look at t+3s can miss a pipeline that is running perfectly.
 	# A single-sample version of this gate failed a first bring-up whose VIF counters were
 	# advancing normally, which cost a boot.
+	# Two live signals, either passes. The 0x17c bit is W1C and the interrupt
+	# handler acknowledges it microseconds after it asserts, so under
+	# USE_IRQ=1 a once-a-second snapshot reads zero on a perfectly healthy
+	# pipeline (measured: a boot failed this gate with the front-end frame
+	# counter advancing at 60/s). The counter at 0x1f8 is ack-proof: it
+	# advances per incoming frame in both completion modes.
 	ev=0
 	i=0
+	fc0=\$(\$R 0x088701f8 1 | awk '/^\\+/{print \$2}')
 	while [ \$i -lt 16 ]
 	do
 		v=\$(\$R 0x0887017c 1 | awk '/^\\+/{print \$2}')
 		if [ -n \"\$v\" ] && [ \$(( 0x\$v & 0x01000000 )) -ne 0 ]
 		then
 			ev=\$v
+			break
+		fi
+		fc=\$(\$R 0x088701f8 1 | awk '/^\\+/{print \$2}')
+		if [ -n \"\$fc0\" ] && [ -n \"\$fc\" ] && [ \$(( 0x\$fc )) -gt \$(( 0x\$fc0 )) ]
+		then
+			ev=\$fc
 			break
 		fi
 		i=\$(( i + 1 ))
@@ -488,6 +501,17 @@ echo '  coefficient descriptors (gamma x3, drc, compander):'
 echo \"  cvisp control (expect 0x00800806):\"
 \$R 0x08e08000 1
 
+# A quiet 3 s CPU sample while the whole pipeline streams and nothing else
+# runs: the delta is the true streaming load (ISRs plus any driver work),
+# since the frame path itself is hardware end to end. Fields: user nice
+# system idle iowait irq softirq.
+S0=\$(head -1 /proc/stat)
+sleep 3
+S1=\$(head -1 /proc/stat)
+echo \"  cpu streaming sample (3 s, 2 cpus, 100 Hz jiffies):\"
+echo \"    t0: \$S0\"
+echo \"    t1: \$S1\"
+
 if [ \"\$CYC\" = cycle ]
 then
 	EXTRA=--isp-cycle
@@ -512,6 +536,13 @@ echo \"  stage 5 ok: captured \$NAME\"
 # stay identical or the two dumps cannot be diffed.
 dump_windows > /tmp/ourisp.txt 2>/dev/null
 echo \"  stage 5c ok: \$(grep -c '^+0x' /tmp/ourisp.txt) register lines read mid-stream, post-arm\"
+
+# ISP interrupt counters, meaningful only under USE_IRQ=1: events should track
+# roughly three per frame and irq_seen0/1 name the observed sources.
+if [ -r /sys/kernel/debug/ar-isp/irq_events ]
+then
+	echo \"  isp irq: events \$(cat /sys/kernel/debug/ar-isp/irq_events), stats-events \$(cat /sys/kernel/debug/ar-isp/irq_stats_events), seen0 \$(cat /sys/kernel/debug/ar-isp/irq_seen0), seen1 \$(cat /sys/kernel/debug/ar-isp/irq_seen1)\"
+fi
 
 # Stage 5d: the 0x3d60-0x3e1c curve-bank experiment. Runs only when the host staged the file.
 #
