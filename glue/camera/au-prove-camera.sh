@@ -614,11 +614,30 @@ then
 		[ -n \"\${V4L2MARK:-}\" ] && MARK='-m'
 		if /tmp/ml-v4l2grab -d \$NODE \$MARK -o /tmp/\${NAME}_v4l2 -n \$V4L2CAP -t 5 >/tmp/g4.out 2>&1
 		then
-			grep -E 'interface|allocated|current|plane |frame |wrote|content|coverage' /tmp/g4.out | sed 's/^/    /'
+			grep -E 'interface|allocated|current|plane |frame |wrote|content|coverage|delivered' /tmp/g4.out | sed 's/^/    /'
 			echo \"  stage 5v ok: captured \${NAME}_v4l2 through the node\"
 		else
 			echo '  stage 5v FAILED: grabber error'
 			cat /tmp/g4.out
+		fi
+
+		# Rate pass. The capture above reads every byte of a frame twice, once to
+		# histogram it and once to write it out, and these buffers are uncached: they
+		# come from a no-map shared-dma-pool, so a CPU pass over a plane costs far more
+		# than a frame period and the delivered rate measures the tool. -q cycles
+		# buffers without touching their contents, which is what a consumer importing
+		# the dmabuf into the encoder does, and separates the two.
+		if /tmp/ml-v4l2grab -d \$NODE -q -n 200 -t 5 >/tmp/g5.out 2>&1
+		then
+			grep -E 'delivered' /tmp/g5.out | sed 's/^/    rate pass: /'
+			for c in rotations completions drops
+			do
+				[ -r /sys/kernel/debug/ar-cvisp/\$c ] && \\
+					echo \"    rate pass cvisp \$c: \$(cat /sys/kernel/debug/ar-cvisp/\$c)\"
+			done
+		else
+			echo '  stage 5v: rate pass FAILED'
+			cat /tmp/g5.out
 		fi
 		# rotations counts every tick that armed something, completions only the buffers
 		# handed back, and drops the ticks that found nothing queued. completions well

@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,8 +63,23 @@ struct capture_device {
     enum v4l2_buf_type type;
     int multiplanar;
     int mark;
+    int quiet;
     unsigned int stride[MAX_PLANES];
 };
+
+/**
+ * @brief Monotonic seconds, for rate reporting.
+ *
+ * @return seconds since an unspecified epoch.
+ */
+static double now_seconds(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 
 /**
  * @brief Fill a plane with a position-keyed pattern.
@@ -428,6 +444,8 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
     enum v4l2_buf_type type = device->type;
     unsigned int index;
     unsigned int captured;
+    double started;
+    double elapsed;
     int result = 1;
 
     for (index = 0; index < buffer_count; index++) {
@@ -465,6 +483,8 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
         fprintf(stderr, "ml-v4l2grab: STREAMON: %s\n", strerror(errno));
         return 1;
     }
+
+    started = now_seconds();
 
     for (captured = 0; captured < frame_count; captured++) {
         struct v4l2_plane planes[MAX_PLANES];
@@ -506,14 +526,16 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
             goto done;
         }
 
-        printf("frame %u: buffer %u, sequence %u\n", captured, buffer.index,
-               buffer.sequence);
+        if (!device->quiet) {
+            printf("frame %u: buffer %u, sequence %u\n", captured, buffer.index,
+                   buffer.sequence);
+        }
 
         /* Write the first frame as well as the last. Callers that stream continuously pass a
          * large -n and kill the process long before it is reached, so a last-frame-only write
          * leaves no file at all: the raw capture silently never happened.
          */
-        if (captured == 0 || captured + 1 == frame_count) {
+        if (!device->quiet && (captured == 0 || captured + 1 == frame_count)) {
             if (device->mark) {
                 unsigned int p;
 
@@ -548,6 +570,13 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
     result = 0;
 
 done:
+    elapsed = now_seconds() - started;
+
+    if (elapsed > 0.0) {
+        printf("delivered %u frames in %.3f s, %.1f per second\n", captured, elapsed,
+               (double)captured / elapsed);
+    }
+
     ioctl_retry(device->fd, VIDIOC_STREAMOFF, &type);
 
     return result;
@@ -572,7 +601,7 @@ int main(int argc, char **argv)
 
     memset(&device_state, 0, sizeof(device_state));
 
-    while ((option = getopt(argc, argv, "d:mn:o:t:")) != -1) {
+    while ((option = getopt(argc, argv, "d:mn:o:qt:")) != -1) {
         switch (option) {
         case 'd': {
             device = optarg;
@@ -580,6 +609,10 @@ int main(int argc, char **argv)
 
         case 'm': {
             device_state.mark = 1;
+        } break;
+
+        case 'q': {
+            device_state.quiet = 1;
         } break;
 
         case 'n': {
@@ -596,12 +629,17 @@ int main(int argc, char **argv)
 
         default: {
             fprintf(stderr,
-                    "usage: ml-v4l2grab [-d device] [-m] [-n frames] [-o file] "
+                    "usage: ml-v4l2grab [-d device] [-m] [-q] [-n frames] [-o file] "
                     "[-t seconds]\n"
                     "  -m  fill each buffer with a marker before queueing it and report\n"
                     "      how much of it the hardware overwrote. Diagnostic: the fill\n"
                     "      and the scan cost more than a frame period, so the capture\n"
-                    "      will drop frames.\n");
+                    "      will drop frames.\n"
+                    "  -q  cycle buffers without reading or writing their contents, and\n"
+                    "      report the delivered frame rate. Capture buffers can be\n"
+                    "      uncached, in which case a CPU pass over a plane costs far more\n"
+                    "      than a frame period; this separates that cost from the rate\n"
+                    "      the device can sustain.\n");
             return 2;
         } break;
         }
