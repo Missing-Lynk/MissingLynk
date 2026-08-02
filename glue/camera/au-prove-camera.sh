@@ -395,15 +395,26 @@ then
 	# time-dependent, so one look at t+3s can miss a pipeline that is running perfectly.
 	# A single-sample version of this gate failed a first bring-up whose VIF counters were
 	# advancing normally, which cost a boot.
-	# Two live signals, either passes. The 0x17c bit is W1C and the interrupt
-	# handler acknowledges it microseconds after it asserts, so under
-	# USE_IRQ=1 a once-a-second snapshot reads zero on a perfectly healthy
-	# pipeline (measured: a boot failed this gate with the front-end frame
-	# counter advancing at 60/s). The counter at 0x1f8 is ack-proof: it
-	# advances per incoming frame in both completion modes.
+	# Two live signals, either passes, one per completion mode.
+	#
+	# Polling: 0x17c bit 24 stays latched between polls, so a once-a-second
+	# sample sees it. Interrupts: the ISR clears that bit microseconds after
+	# it asserts, so the same sample reads zero on a perfectly healthy
+	# pipeline; the driver's own interrupt counter is used instead, which is
+	# monotonic, software owned, and cannot be acknowledged away.
+	#
+	# Do NOT reintroduce a check on 0x088701f8. It is not a frame counter
+	# despite having been used as one: it oscillates (0x1354, 0x134c, 0x134e
+	# on consecutive reads while streaming), so a strict-increase test on it
+	# passes dead pipelines and fails live ones at random. That cost a night.
+	#
+	# ar-vif/v4l2_completions is deliberately NOT used: it counts v4l2 buffer
+	# handbacks, which this pipeline never produces because the bypass view
+	# does not complete, so it reads zero even when everything is healthy.
 	ev=0
 	i=0
-	fc0=\$(\$R 0x088701f8 1 | awk '/^\\+/{print \$2}')
+	ic0=0
+	[ -r /sys/kernel/debug/ar-vif/irq_events ] && ic0=\$(cat /sys/kernel/debug/ar-vif/irq_events)
 	while [ \$i -lt 16 ]
 	do
 		v=\$(\$R 0x0887017c 1 | awk '/^\\+/{print \$2}')
@@ -412,10 +423,11 @@ then
 			ev=\$v
 			break
 		fi
-		fc=\$(\$R 0x088701f8 1 | awk '/^\\+/{print \$2}')
-		if [ -n \"\$fc0\" ] && [ -n \"\$fc\" ] && [ \$(( 0x\$fc )) -gt \$(( 0x\$fc0 )) ]
+		ic=0
+		[ -r /sys/kernel/debug/ar-vif/irq_events ] && ic=\$(cat /sys/kernel/debug/ar-vif/irq_events)
+		if [ \"\$ic\" -gt \"\$ic0\" ] 2>/dev/null
 		then
-			ev=\$fc
+			ev=\$ic
 			break
 		fi
 		i=\$(( i + 1 ))
@@ -423,7 +435,7 @@ then
 	done
 	if [ \"\$ev\" != 0 ]
 	then
-		echo \"  stage 4: NO raw buffer (bypass view never completes) but VIF 0x17c = 0x\$ev\"
+		echo \"  stage 4: NO raw buffer (bypass view never completes) but live signal = \$ev\"
 		echo \"           frame event seen after \$i s, so the pixel domain is live: continuing.\"
 	else
 		fail 'no raw buffer AND no VIF frame event in 16 s: pipeline is dead'
@@ -524,6 +536,34 @@ fi
 grep -E 'cycles driven|markers overwritten' /tmp/il
 echo \"  stage 5 ok: captured \$NAME\"
 
+# Stage 5b: switch the sensor's pattern generator and capture again, WITHOUT
+# rebringing anything up.
+#
+# A warm re-bring-up never writes DRAM on this SoC (see the defect note in
+# plans/au-b-pipeline-dead-20260802.md), which is what forced one capture per
+# boot and made comparing a pattern against a live scene cost two boots. None of
+# that is necessary: TEST_PATTERN_MODE is a plain 16-bit i2c register, 0x0600
+# high and 0x0601 low, so it can be switched mid-stream. With the output ring
+# rotating, the block keeps writing and the second grab gets genuinely fresh
+# frames rather than a re-read of the first.
+#
+# SWITCH_TP is the value to switch TO: 0 live, 1 solid, 2 colour bars, 3 fade.
+if [ -n \"\${SWITCH_TP:-}\" ]
+then
+	/tmp/ml-i2cprobe 0 0x1a 0x0600 0 >/dev/null 2>&1
+	/tmp/ml-i2cprobe 0 0x1a 0x0601 \$SWITCH_TP >/dev/null 2>&1
+	RB=\$(/tmp/ml-i2cprobe 0 0x1a 0x0601 2>/dev/null)
+	echo \"  stage 5b: sensor pattern switched to \$SWITCH_TP (\$RB)\"
+	# Several frame periods, so the new content is fully through the ring
+	# and no partially-written slot is sampled.
+	sleep 2
+	/tmp/ml-isploop \$WATCH --cvisp \$EXTRA --dump /tmp/\${NAME}_sw \\
+		--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000 \\
+		>/tmp/il_sw 2>&1 || { cat /tmp/il_sw; fail 'capture after switch'; }
+	grep -E 'markers overwritten' /tmp/il_sw
+	echo \"  stage 5b ok: captured \${NAME}_sw after the switch\"
+fi
+
 # Stage 5c: our own ISP, CVISP, VIF, CSI-2 and CGU windows, read MID-STREAM and POST-ARM.
 #
 # Both halves of that matter, and getting the order wrong wastes a boot. It must be mid-stream,
@@ -542,6 +582,15 @@ echo \"  stage 5c ok: \$(grep -c '^+0x' /tmp/ourisp.txt) register lines read mid
 if [ -r /sys/kernel/debug/ar-isp/irq_events ]
 then
 	echo \"  isp irq: events \$(cat /sys/kernel/debug/ar-isp/irq_events), stats-events \$(cat /sys/kernel/debug/ar-isp/irq_stats_events), seen0 \$(cat /sys/kernel/debug/ar-isp/irq_seen0), seen1 \$(cat /sys/kernel/debug/ar-isp/irq_seen1)\"
+fi
+
+# Statistics ping-pong. A flip count tracking the stats-event count says every
+# frame's event rotated the halves. The grid must then read real luma rather
+# than the not-yet-flipped placeholder a reader sees before the first flip.
+if [ -r /sys/kernel/debug/ar-isp/stats_flips ]
+then
+	echo \"  isp stats: flips \$(cat /sys/kernel/debug/ar-isp/stats_flips)\"
+	echo \"    grid: \$(head -1 /sys/kernel/debug/ar-isp/stats 2>/dev/null)\"
 fi
 
 # Stage 5d: the 0x3d60-0x3e1c curve-bank experiment. Runs only when the host staged the file.
@@ -882,7 +931,7 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' /tmp/prove.sh $tp $name $cyc"
+	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' /tmp/prove.sh $tp $name $cyc"
 	then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
@@ -1007,6 +1056,28 @@ for nm, size in (("gamma", 0x4000), ("compander", 0x7800), ("drc", 0x2000)):
               f"(no decoder: the generator is not recovered)")
 PYE
 	python3 "$HERE/planes2png.py" "$OUT/$name" "$OUT/$name" || true
+
+	# The mid-stream pattern switch, if SWITCH_TP asked for one. Same bring-up,
+	# so this pair is directly comparable: same optics, same ISP state, only the
+	# sensor's pattern generator changed between them.
+	if [ -n "${SWITCH_TP:-}" ]
+	then
+		for p in 0 1 2
+		do
+			pull "/tmp/${name}_sw.$p" "$OUT/${name}_sw.$p" 2>/dev/null || true
+		done
+		au "rm -f /tmp/${name}_sw.[012]" </dev/null 2>/dev/null || true
+		python3 "$HERE/planes2png.py" "$OUT/${name}_sw" "$OUT/${name}_sw" || true
+		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_sw.0" ]
+		then
+			if cmp -s "$OUT/$name.0" "$OUT/${name}_sw.0"
+			then
+				echo "  switch check: IDENTICAL -> the second grab is stale, not a new frame"
+			else
+				echo "  switch check: DIFFER -> both grabs are real frames from one bring-up"
+			fi
+		fi
+	fi
 done
 
 echo
