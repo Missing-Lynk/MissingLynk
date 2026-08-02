@@ -6,7 +6,7 @@
 # is pointed at. Nothing here configures tone tables, pokes registers or runs an experiment.
 #
 # Every stage is gated. The reason is specific: a previous run let an orphaned ml-v4l2grab hold
-# /dev/video2, which made rmmod fail silently, so later bring-ups ran on stale half-rebound
+# the capture node, which made rmmod fail silently, so later bring-ups ran on stale half-rebound
 # modules and produced black frames that looked like real measurements. Worse, the script then
 # continued into the ISP arm and ml-isploop with no live pixel domain, and VIF reads in that
 # state hard-hang the SoC into a watchdog reset to slot A.
@@ -352,103 +352,47 @@ insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
 insmod /tmp/ar-vif.ko use_irq=$USE_IRQ || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko tables=$TABLES seed=$SEED gamma_curve=$GAMMA_CURVE drc_profile=$DRC_PROFILE \
 	compander=$COMPANDER lsc=$LSC stats=$STATS ccm=$CCM ccm_bank=$CCM_BANK de3d=$DE3D \
-	use_irq=$USE_IRQ || fail 'insmod ar-isp'
+	setup_entries=$BULK use_irq=$USE_IRQ || fail 'insmod ar-isp'
 insmod /tmp/ar-cvisp.ko blc=$BLC blc_gain=$BLC_GAIN depth=$CVDEPTH || fail 'insmod ar-cvisp'
 sleep 1
 echo '  stage 2 ok: modules loaded'
 
-# Stage 3: the graph must have bound. No video node means the subdev never attached, and every
-# later stage would be operating on a dead pipeline.
-[ -e /dev/video2 ] || fail 'no /dev/video2, the media graph did not bind'
-echo '  stage 3 ok: /dev/video2 exists'
-
-# Stage 4: the sensor must actually be streaming before anything reads VIF.
-rm -f /tmp/f.raw
-/tmp/ml-v4l2grab -d /dev/video2 -o /tmp/f.raw -n 6000 -t 300 >/tmp/g.out 2>&1 &
-GP=\$!
-sleep 3
-kill -0 \$GP 2>/dev/null || { echo '--- grabber output ---'; cat /tmp/g.out; fail 'grabber died, sensor is not streaming'; }
-# Alive is not the same as delivering. On a second bring-up the grabber blocks forever waiting
-# for a buffer that never completes, and a liveness-only check calls that success, so every
-# later stage runs against a pipeline that is not producing frames.
-#
-# Gate on the raw file, not on the grabber's log: its stdout is fully buffered when redirected,
-# so the log stays empty until the process exits and an empty log proves nothing. The grabber
-# writes its output file on the first frame, so that file existing IS a delivered frame.
-if [ ! -s /tmp/f.raw ]
-then
-	# Diagnose before failing. The grabber still holds the stream, so the VIF clock is live
-	# and these reads are in the one window where they are safe. 0x17c and 0x184 are the W1C
-	# completion statuses the poll path waits on, 0x1b0 the block status, 0x020 the armed
-	# view address. All zero on 0x17c means the view DMA never signalled a done.
-	echo '  --- VIF window, mid-stream, for diffing against the vendor ---'
-	echo '--- vif +0x0000 (256 words) ---'
-	\$R 0x08870000 256
-	echo '--- vif +0x0300 (64 words) ---'
-	\$R 0x08870300 64
-	# A missing raw frame does NOT mean the pipeline is dead. The bypass view backing
-	# /dev/video2 has never completed a buffer on any run, and the vendor holds that view in
-	# reset and streams through the ISP path instead, so requiring a delivered V4L2 buffer
-	# gates every bring-up on a path that has never worked and blocks all later stages.
-	#
-	# What this gate actually has to establish is narrower: that the pixel domain is LIVE, so
-	# that reading VIF and the ISP below cannot hard-hang the SoC. VIF +0x17c bit 24 is a
-	# frame event on the ISP path, and nothing in our sequence acknowledges it before now, so
-	# a non-zero read means frames are being produced.
-	# POLL, do not sample once. A single read is racy in both directions: this register is
-	# an event flag, the read itself may clear it, and the camera is documented as
-	# time-dependent, so one look at t+3s can miss a pipeline that is running perfectly.
-	# A single-sample version of this gate failed a first bring-up whose VIF counters were
-	# advancing normally, which cost a boot.
-	# Two live signals, either passes, one per completion mode.
-	#
-	# Polling: 0x17c bit 24 stays latched between polls, so a once-a-second
-	# sample sees it. Interrupts: the ISR clears that bit microseconds after
-	# it asserts, so the same sample reads zero on a perfectly healthy
-	# pipeline; the driver's own interrupt counter is used instead, which is
-	# monotonic, software owned, and cannot be acknowledged away.
-	#
-	# Do NOT reintroduce a check on 0x088701f8. It is not a frame counter
-	# despite having been used as one: it oscillates (0x1354, 0x134c, 0x134e
-	# on consecutive reads while streaming), so a strict-increase test on it
-	# passes dead pipelines and fails live ones at random. That cost a night.
-	#
-	# ar-vif/v4l2_completions is deliberately NOT used: it counts v4l2 buffer
-	# handbacks, which this pipeline never produces because the bypass view
-	# does not complete, so it reads zero even when everything is healthy.
-	ev=0
-	i=0
-	ic0=0
-	[ -r /sys/kernel/debug/ar-vif/irq_events ] && ic0=\$(cat /sys/kernel/debug/ar-vif/irq_events)
-	while [ \$i -lt 16 ]
-	do
-		v=\$(\$R 0x0887017c 1 | awk '/^\\+/{print \$2}')
-		if [ -n \"\$v\" ] && [ \$(( 0x\$v & 0x01000000 )) -ne 0 ]
-		then
-			ev=\$v
-			break
-		fi
-		ic=0
-		[ -r /sys/kernel/debug/ar-vif/irq_events ] && ic=\$(cat /sys/kernel/debug/ar-vif/irq_events)
-		if [ \"\$ic\" -gt \"\$ic0\" ] 2>/dev/null
-		then
-			ev=\$ic
-			break
-		fi
-		i=\$(( i + 1 ))
-		sleep 1
-	done
-	if [ \"\$ev\" != 0 ]
+# Stage 3: the graph must have bound. ar-vif has no video node of its own any more, so the node
+# to find is the CVISP one, by name rather than by number: probe order decides which /dev/videoN
+# it lands on. No node means the media graph did not bind and every later stage would be
+# operating on a dead pipeline.
+NODE=''
+for d in /sys/class/video4linux/video*
+do
+	[ -r \"\$d/name\" ] || continue
+	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]
 	then
-		echo \"  stage 4: NO raw buffer (bypass view never completes) but live signal = \$ev\"
-		echo \"           frame event seen after \$i s, so the pixel domain is live: continuing.\"
-	else
-		fail 'no raw buffer AND no VIF frame event in 16 s: pipeline is dead'
+		NODE=/dev/\$(basename \$d)
+		break
 	fi
-else
-	echo \"  stage 4 ok: streaming, raw frame \$(wc -c < /tmp/f.raw) bytes\"
-fi
+done
+[ -n \"\$NODE\" ] || fail 'no video node named ar-cvisp, the media graph did not bind'
+echo \"  stage 3 ok: capture node \$NODE\"
 
+# Stage 4: bring the chain up, then hand the output queue back.
+#
+# STREAMON on the node starts the sensor, the VIF input path and the ISP, in that order, and
+# waits for a frame event before touching the ISP. That replaces both the old grabber on
+# /dev/video2 and the configure_upto plus arm that stage 5 used to write by hand.
+#
+# It streams briefly and stops. STREAMOFF puts the vendor's fixed ring back under the block
+# while leaving the chain running, which is what the /dev/mem captures below need: they read the
+# vendor's slot addresses, and those are only live when the node is not streaming.
+/tmp/ml-v4l2grab -d \$NODE -q -n 8 -t 15 >/tmp/g.out 2>&1
+GP=''
+if grep -q 'delivered [1-9]' /tmp/g.out
+then
+	echo \"  stage 4: chain up, \$(grep -o 'delivered .*' /tmp/g.out)\"
+else
+	echo '--- bring-up output ---'
+	cat /tmp/g.out
+	fail 'the node delivered no frame, the chain did not come up'
+fi
 # Stage 4b: our own sensor registers, read while streaming. The sensor is powered down when the
 # stream stops, so i2c reads fail outside this window; that is why this cannot be a post-run
 # check. Comparing against the vendor's dump decides whether the 271 registers the vendor holds
@@ -495,10 +439,9 @@ echo '  csi-2 core0 mid-stream:'
 /tmp/ml-regdump 0x08880400 4
 
 # Stage 5: only now is it safe to touch the ISP and VIF.
-echo $BULK > /sys/kernel/debug/ar-isp/configure_upto || fail 'configure_upto'
-echo 1 > /sys/kernel/debug/ar-isp/arm || fail 'isp arm'
-sleep 2
-echo 1 > /sys/kernel/debug/ar-cvisp/configure || fail 'cvisp configure'
+# The ISP and CVISP were configured by the node's STREAMON in stage 4; ar-isp applies
+# setup_entries of the setup table, which is BULK, passed at insmod. Nothing to do here but let
+# the pipeline settle before reading it.
 sleep 1
 
 # Whose buffers is the block actually reading? The replay arms the vendor's addresses and
@@ -1020,13 +963,19 @@ then
 	/tmp/ml-regdump -w 0x08c01c60 1 >/dev/null 2>&1
 fi
 
-# Always clean up the grabber, and verify it is gone. The orphan left by an earlier run is what
-# blocked rmmod and silently invalidated everything after it.
-kill \$GP 2>/dev/null
-sleep 1
-kill -0 \$GP 2>/dev/null && kill -9 \$GP 2>/dev/null
-sleep 1
-kill -0 \$GP 2>/dev/null && echo '  WARNING: grabber still alive, next run will start dirty'
+# No grabber is left running: stage 4 streams briefly and exits, and every later capture opens
+# the node for as long as it needs. The orphan that used to be left here is what blocked rmmod
+# and silently invalidated everything after it, so check for one anyway rather than assume.
+for pp in /proc/[0-9]*
+do
+	[ -r \"\$pp/comm\" ] || continue
+	case \"\$(cat \$pp/comm 2>/dev/null)\" in
+	ml-v4l2grab|ml-isploop)
+		echo \"  WARNING: \$(cat \$pp/comm) still alive, next run will start dirty\"
+		kill -9 \${pp#/proc/} 2>/dev/null
+		;;
+	esac
+done
 exit 0"
 printf '%s\n' "$PROVE" | au 'cat > /tmp/prove.sh; chmod +x /tmp/prove.sh' || exit 1
 
@@ -1108,18 +1057,6 @@ do
 		echo "  pulled mid-stream registers: $(grep -c '^+0x' "$REPO/out/au-snapshot/ours-registers-live.txt") lines"
 	else
 		echo "  WARNING: mid-stream register pull came back EMPTY"
-	fi
-	# The grabber's output would be RAW BAYER from the VIF bypass view (SRGGB12), pre-ISP.
-	# Every pull of it so far has come back zero bytes, and it is 4 MB over a flaky RF link,
-	# so "empty here" has never distinguished "the view delivered nothing" from "the transfer
-	# failed". Record the DEVICE-side size first, which is one line and always survives.
-	rawsz=$(au "wc -c < /tmp/f.raw 2>/dev/null || echo -1" </dev/null 2>/dev/null | tr -d ' \r')
-	echo "  raw bypass frame, device-side size: ${rawsz:-unknown} bytes"
-	pull "/tmp/f.raw" "$OUT/$name-raw.bayer" 2>/dev/null || true
-	if [ "${rawsz:-0}" -gt 0 ] && [ ! -s "$OUT/$name-raw.bayer" ]
-	then
-		echo "  NOTE: the frame EXISTS on the device but the pull returned nothing."
-		echo "        The bypass view is then not dead, and hdf-028's conclusion needs revisiting."
 	fi
 	# What the vendor left at its own addresses, which the driver may seed from.
 	#
