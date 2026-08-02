@@ -25,11 +25,11 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.100}"		# STOCK slot A
-AU_PORT="${AU_PORT:-22}"
-AU_PASS="${AU_PASS:-artosyn}"		# vendor password
+# Reads the vendor stack: slot A only. AU_PORT reaches a unit behind a relay.
+au_stock_slot_a
+
 OUT="$REPO/out/au-mmiotrace"
 # Physical logging + TRAP window. Narrowed to just VIF (0x8870000) + CSI (0x8880000):
 # a wider window traps the ENCODER (wave5/JPU ~0x8830000) too, and our store emulation
@@ -61,27 +61,19 @@ SKIP_HI="${MMIO_SKIP_HI:-0}"
 CENSUS="${MMIO_IOCTL_CENSUS:-0}"
 mkdir -p "$OUT"
 
-au() {
-    sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" -p "$AU_PORT" "root@$AU_IP" "$@"
-}
-push_file() {
-    sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" -p "$AU_PORT" "root@$AU_IP" "cat > $2" < "$1" \
-        && echo "pushed $2"
-}
-
 cmd="${1:-discover}"
 
 case "$cmd" in
 push)
-    push_file "$REPO/native/build/mmiotrace.so" /tmp/mmiotrace.so
-    push_file "$REPO/native/build/ml-regdump" /tmp/ml-regdump
-    au 'chmod +x /tmp/ml-regdump; ls -la /tmp/mmiotrace.so /tmp/ml-regdump'
+    device_push_as "$REPO/native/build/mmiotrace.so" /tmp/mmiotrace.so
+    device_push_as "$REPO/native/build/ml-regdump" /tmp/ml-regdump
+    sshg 'chmod +x /tmp/ml-regdump; ls -la /tmp/mmiotrace.so /tmp/ml-regdump'
     ;;
 
 discover)
     echo "=== processes that map MMIO (/dev/mem or /dev/ar_sys) = the register writers ==="
     # shellcheck disable=SC2016  # remote command string: the loop expands on the device, not here.
-    au '
+    sshg '
     for m in /proc/[0-9]*/maps; do
       pid=${m%/maps}; pid=${pid##*/}
       if grep -qE "/dev/mem|/dev/ar_sys" "$m" 2>/dev/null; then
@@ -111,7 +103,7 @@ discover)
 trace)
     pid="${2:?usage: $0 trace <PID>}"
     echo "=== capturing argv/cwd of PID $pid ==="
-    au "
+    sshg "
     exe=\$(readlink /proc/$pid/exe)
     cwd=\$(readlink /proc/$pid/cwd)
     echo \"exe=\$exe cwd=\$cwd\"
@@ -169,10 +161,10 @@ install-preload)
     TEMPLATE="$HERE/au-run-dbg.template.sh"
     [ -f "$TEMPLATE" ] || { echo "ABORT: missing $TEMPLATE"; exit 1; }
     echo "=== installing thin debug hook /usrdata/run_dbg.sh (writable ubifs) ==="
-    push_file "$REPO/native/build/mmiotrace.so" /usrdata/mmiotrace.so
-    push_file "$TEMPLATE" /usrdata/run_dbg.sh.tmpl
+    device_push_as "$REPO/native/build/mmiotrace.so" /usrdata/mmiotrace.so || exit 1
+    device_push_as "$TEMPLATE" /usrdata/run_dbg.sh.tmpl || exit 1
     # shellcheck disable=SC2016  # remote command string: every expansion below runs on the device.
-    au '
+    sshg '
     set -e
     # 1. buildtime byte-exact FIRST, then verify - guards the rm -rf /usrdata/* wipe path.
     cp /usr/usrdata/buildtime /usrdata/buildtime
@@ -227,26 +219,25 @@ verify)
     # wrapper reached (shim install, ar_lowdelay hooked, run.sh sourced), and usb0
     # state confirms the gadget bound. Works over UART if USB is down.
     echo "=== boot-hook markers (/usrdata/hook.log) ==="
-    au 'cat /usrdata/hook.log 2>/dev/null || echo "(no hook.log - hook did not run, or already cleaned)"'
+    sshg 'cat /usrdata/hook.log 2>/dev/null || echo "(no hook.log - hook did not run, or already cleaned)"'
     echo "=== usb0 gadget state (want: usb0 present, UDC attached) ==="
-    au 'ip -o link show usb0 2>/dev/null || echo "usb0 ABSENT"; echo "udc:"; cat /sys/class/udc/*/state 2>/dev/null || echo "(no udc)"'
+    sshg 'ip -o link show usb0 2>/dev/null || echo "usb0 ABSENT"; echo "udc:"; cat /sys/class/udc/*/state 2>/dev/null || echo "(no udc)"'
     echo "=== ar_lowdelay running + hooked? ==="
     # shellcheck disable=SC2016  # remote command string: $(pidof ...) and $p must expand on the device.
-    au 'p=$(pidof ar_lowdelay 2>/dev/null); echo "pid=$p"; [ -n "$p" ] && grep -o "mmiotrace.so" /proc/$p/maps 2>/dev/null | head -1'
+    sshg 'p=$(pidof ar_lowdelay 2>/dev/null); echo "pid=$p"; [ -n "$p" ] && grep -o "mmiotrace.so" /proc/$p/maps 2>/dev/null | head -1'
     echo "=== mmio.log lines so far ==="
-    au 'wc -l /tmp/mmio.log 2>/dev/null || echo "(no mmio.log yet)"'
+    sshg 'wc -l /tmp/mmio.log 2>/dev/null || echo "(no mmio.log yet)"'
     ;;
 
 remove-preload)
     echo "=== removing the debug hook (restores normal boot) ==="
-    au '
+    sshg '
     rm -rf /usrdata/run_dbg.sh /usrdata/run_dbg.sh.tmpl /usrdata/buildtime /usrdata/mmiotrace.so /usrdata/bin /usrdata/hook.log
     echo "run_dbg.sh present? (want: no such file)"; ls -la /usrdata/run_dbg.sh 2>&1 || true'
     ;;
 
 pull)
-    sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" -p "$AU_PORT" "root@$AU_IP" \
-        'cat /tmp/mmio.log' > "$OUT/mmio.log" 2>/dev/null
+    device_pull /tmp/mmio.log "$OUT/mmio.log" || exit 1
     echo "saved $OUT/mmio.log ($(wc -l < "$OUT/mmio.log") lines)"
     echo "=== VIF (0x8870xxx) writes, in order ==="
     grep -iE 'pa=0x08870' "$OUT/mmio.log" | head -80

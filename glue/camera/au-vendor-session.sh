@@ -19,25 +19,25 @@
 # Stages 1 to 5 are proven by the 2026-08-02 session. Stages 6 and 7 have never run.
 #
 # Usage: glue/camera/au-vendor-session.sh [stage ...]        default: 1 2 3 5
-# Env:   AU_IP (192.168.3.100), AU_PASS (artosyn), TAG (label for stage 4 light levels)
+# Env:   TAG (label for stage 4 light levels). Targets stock slot A (192.168.3.100 / artosyn);
+#        AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=/dev/null
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.100}"
-AU_PASS="${AU_PASS:-artosyn}"
+# Reads the vendor stack: slot A only.
+au_stock_slot_a
+
 TAG="${TAG:-light1}"
 OUT="$REPO/out/au-vendor-session"
-
-au() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
 
 mkdir -p "$OUT"
 
 echo "=== gate: stock slot A, pipeline actually streaming ==="
-KREL="$(au 'uname -r' 2>/dev/null)" || { echo "cannot reach $AU_IP as root/$AU_PASS"; exit 1; }
+KREL="$(sshg 'uname -r' 2>/dev/null)" || { echo "cannot reach $DEVICE_IP as root/$PASS"; exit 1; }
 case "$KREL" in
 4.9.*) echo "  kernel $KREL: stock slot A" ;;
 *)     echo "  kernel $KREL is not the stock vendor kernel; this must run on slot A"; exit 1 ;;
@@ -45,16 +45,14 @@ esac
 
 for t in ml-regdump ml-i2cprobe
 do
-	sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-		"cat > /tmp/$t; chmod +x /tmp/$t" < "$REPO/native/build/$t" || {
-		echo "  cannot stage $t"; exit 1; }
+	device_push "$REPO/native/build/$t" || { echo "  cannot stage $t"; exit 1; }
 done
 
 # The frame counter is the only honest liveness signal: ar_lowdelay runs whether or not the
 # sensor is delivering, and a zero bank is indistinguishable from a bad read without it.
-FC0="$(au '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
+FC0="$(sshg '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
 sleep 2
-FC1="$(au '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
+FC1="$(sshg '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
 if [ "0x${FC0:-0}" = "0x${FC1:-0}" ]
 then
 	echo "  VIF frame counter is not advancing ($FC0 -> $FC1): the pipeline is NOT streaming."
@@ -63,7 +61,7 @@ then
 fi
 echo "  frame counter $FC0 -> $FC1: streaming"
 
-PID="$(au 'ps | grep -v grep | grep ar_lowdelay' 2>/dev/null | awk '{print $1}')"
+PID="$(sshg 'ps | grep -v grep | grep ar_lowdelay' 2>/dev/null | awk '{print $1}')"
 echo "  ar_lowdelay pid $PID"
 
 STAGES="${*:-1 2 3 5}"
@@ -78,14 +76,14 @@ case "$1" in
 	# The AE algorithm object, its 0x9680 state block (holding the generated exposure table at
 	# +0x68 with the count at +4) and the 85080-byte algorithm input are all bfm_malloc'd, so
 	# they live in the process heap. Take the whole heap; offsets are resolved off-device.
-	au "cat /proc/$PID/maps" > "$OUT/maps-live.txt"
+	sshg "cat /proc/$PID/maps" > "$OUT/maps-live.txt"
 	HEAP="$(awk '/\[heap\]/{split($1,a,"-"); print a[1], a[2]}' "$OUT/maps-live.txt")"
 	# shellcheck disable=SC2086  # word splitting is the point: base and limit into $1 and $2.
 	set -- $HEAP
 	SKIP=$(( 0x$1 / 4096 ))
 	CNT=$(( (0x$2 - 0x$1) / 4096 ))
 	echo "  heap 0x$1-0x$2, $CNT pages"
-	au "dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null" > "$OUT/heap-live.bin"
+	sshg "dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null" > "$OUT/heap-live.bin"
 	ls -l "$OUT/heap-live.bin"
 	;;
 
@@ -100,7 +98,7 @@ case "$1" in
 	# hdf-061: the thresholds are bytes inside a register image isp_memcpy'd into the bank head,
 	# plus a defect LUT of up to 2239 words. Read both generously rather than the 20 words the
 	# old capture took.
-	au '/tmp/ml-regdump 0x08c00c00 128; echo "--- lut"; /tmp/ml-regdump 0x08c00e00 128' \
+	sshg '/tmp/ml-regdump 0x08c00c00 128; echo "--- lut"; /tmp/ml-regdump 0x08c00e00 128' \
 		> "$OUT/dpc-banks.txt" 2>&1
 	head -5 "$OUT/dpc-banks.txt"
 	;;
@@ -110,7 +108,7 @@ case "$1" in
 	# One breath, nothing in between: the abscissa solve needs every stage read at the same
 	# operating point. Two runs at light levels far enough apart to land in different bands.
 	# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	au 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
+	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
 	echo "--- sensor exposure 0x0202"; $I 0 0x1a 0x0202 -n 4
 	echo "--- sensor gain 0x0205";     $I 0 0x1a 0x0205 -n 4
 	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
@@ -127,7 +125,7 @@ case "$1" in
 	# points at. Pairing each page with the statistics of the SAME frame is what makes these
 	# oracles rather than snapshots.
 	# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	au 'R=/tmp/ml-regdump
+	sshg 'R=/tmp/ml-regdump
 	echo "--- ltm page ptr 0x2808";  $R 0x08c02808 2
 	echo "--- lsc page ptr 0x4c34";  $R 0x08c04c34 4
 	echo "--- rro_stats 0x6400";     $R 0x08c06400 64
@@ -143,7 +141,7 @@ case "$1" in
 	# is the operating point the older vendor captures were taken at, so this is what makes the
 	# old and new capture sets directly comparable.
 	# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	au 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
+	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
 	echo "--- sensor exposure 0x0202"; $I 0 0x1a 0x0202 -n 4
 	echo "--- sensor gain 0x0205";     $I 0 0x1a 0x0205 -n 4
 	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
@@ -152,7 +150,7 @@ case "$1" in
 	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56' > "$OUT/breath-covered.txt" 2>&1
 	SKIP=$(( 0x50c000 / 4096 ))
 	CNT=$(( (0x1b90000 - 0x50c000) / 4096 ))
-	au "dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null" > "$OUT/heap-covered.bin"
+	sshg "dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null" > "$OUT/heap-covered.bin"
 	ls -l "$OUT/heap-covered.bin"
 	;;
 
@@ -170,7 +168,7 @@ case "$1" in
 	# and write each sample through so a truncated run still yields everything up to the cut.
 	{
 		# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	au 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
+	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
 		i=0
 		while [ $i -lt 180 ]
 		do

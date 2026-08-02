@@ -29,10 +29,13 @@ sshg 'ping -c 10 -i 0.3 -s 1400 -W 2 10.0.0.100 2>&1 | tail -2'
 
 echo "== (c) SSH handshake latency to the air ($N connects) =="
 sshg 'pidof ml-tcprelay >/dev/null 2>&1 || true'
-sshg 'cat > /tmp/ml-tcprelay; chmod +x /tmp/ml-tcprelay' < "$REPO/libre/tools/ml-tcprelay/ml-tcprelay" 2>/dev/null || echo "  (ml-tcprelay push skipped - already there?)"
+device_push_as "$REPO/archive/libre/tools/ml-tcprelay/ml-tcprelay" /tmp/ml-tcprelay 2>/dev/null \
+  || echo "  (ml-tcprelay push skipped - already there?)"
 # shellcheck disable=SC2016  # remote command string: $(pidof ...) must run on the device.
 sshg 'kill -9 $(pidof ml-tcprelay) 2>/dev/null; setsid /tmp/ml-tcprelay 8822 10.0.0.100 22 >/tmp/relay.log 2>&1 </dev/null & sleep 1; echo "  relay up pid=$(pidof ml-tcprelay)"'
 
+# Raw sshpass rather than device_ssh: ConnectTimeout=25 is what this stanza measures, and
+# OpenSSH keeps the FIRST value it sees, so the override has to precede the shared array.
 AIR=(-p 8822 -o ConnectTimeout=25 "${SSH_OPTS_LEGACY[@]}")
 ok=0
 

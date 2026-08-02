@@ -88,8 +88,8 @@ esac
 
 # Deploy the static helpers (dropbear has no SFTP -> cat over ssh)
 echo "[*] deploying mtdtool + wdt-reset to $STAGE..."
-cat "$MTDTOOL"  | sshg "cat >$STAGE/mtdtool  && chmod +x $STAGE/mtdtool"
-cat "$WDTRESET" | sshg "cat >$STAGE/wdt-reset && chmod +x $STAGE/wdt-reset"
+device_push_as "$MTDTOOL"  "$STAGE/mtdtool"
+device_push_as "$WDTRESET" "$STAGE/wdt-reset"
 
 # Locate gpt0 by name (mtd index varies with kernel partition layout)
 GPTMTD="$(sshg 'grep -m1 "\"gpt0\"" /proc/mtd | cut -d: -f1')"
@@ -100,7 +100,7 @@ fi
 echo "[*] gpt0 = /dev/$GPTMTD"
 
 # Read gpt0 off the device to a local file; show it; and pull the active slot letter (a/b).
-read_gpt()    { sshg "cat /dev/$GPTMTD" > "$1" 2>/dev/null; }
+read_gpt()    { device_pull "/dev/$GPTMTD" "$1"; }
 show_gpt()    { python3 "$GPTPARSE" "$1" | sed 's/^/    /'; }
 active_slot() { python3 "$GPTPARSE" "$1" | sed -n 's/^active slot: \([AB]\).*/\1/p' | tr 'AB' 'ab'; }
 

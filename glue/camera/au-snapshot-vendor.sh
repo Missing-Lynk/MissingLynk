@@ -19,31 +19,27 @@
 # a block whose clock is gated, which is why this refuses to run unless the camera is streaming.
 #
 # Usage: glue/camera/au-snapshot-vendor.sh
-# Env: AU_IP (192.168.3.100), AU_PASS (artosyn)
+# Env: none. Targets stock slot A (192.168.3.100 / artosyn); AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.100}"
-AU_PASS="${AU_PASS:-artosyn}"
+# Reads the vendor stack: slot A only.
+au_stock_slot_a
+
 OUT="$REPO/out/au-snapshot"
-
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-pull() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "cat '$1'" > "$2"; }
 
 mkdir -p "$OUT"
 
 echo "=== gate: stock slot A, camera streaming ==="
-KREL="$(au 'uname -r' 2>/dev/null)" || { echo "cannot reach $AU_IP as root/$AU_PASS"; exit 1; }
+KREL="$(sshg 'uname -r' 2>/dev/null)" || { echo "cannot reach $DEVICE_IP as root/$PASS"; exit 1; }
 case "$KREL" in
 4.9.*) echo "  kernel $KREL: stock slot A" ;;
 *)     echo "  kernel $KREL is not the stock vendor kernel; this must run on slot A"; exit 1 ;;
 esac
-au 'ps | grep -v grep | grep -q ar_lowdelay' || {
+sshg 'ps | grep -v grep | grep -q ar_lowdelay' || {
 	echo "  ar_lowdelay is not running: the pipeline is not live, so register reads are unsafe"
 	echo "  and any table pointer would be stale. Nothing read."
 	exit 1
@@ -52,7 +48,7 @@ echo "  ar_lowdelay running: pipeline is live"
 
 for t in ml-regdump ml-lutfill ml-i2cprobe
 do
-	push "$REPO/native/build/$t" "$t" 2>/dev/null || echo "  (optional tool $t not staged)"
+	device_push "$REPO/native/build/$t" 2>/dev/null || echo "  (optional tool $t not staged)"
 done
 
 # Register clusters. The ISP list is exactly the span our replay writes, derived from
@@ -78,7 +74,7 @@ echo "=== register windows ==="
 		base=${rest%%:*}; rest=${rest#*:}
 		off=${rest%%:*}; cnt=${rest##*:}
 		echo "--- $blk +$off ($cnt words) ---"
-		au "/tmp/ml-regdump \$(printf '0x%x' \$(( $base + $off ))) $cnt" 2>/dev/null
+		sshg "/tmp/ml-regdump \$(printf '0x%x' \$(( $base + $off ))) $cnt" 2>/dev/null
 	done
 } | tee "$OUT/registers.txt"
 
@@ -86,7 +82,7 @@ echo "=== register windows ==="
 # the one operation with any chance of disturbing it.
 echo
 echo "=== sensor registers over i2c ==="
-au '/tmp/ml-i2cprobe 0 0x1a 0x0200 -n 12 2>/dev/null; /tmp/ml-i2cprobe 0 0x1a 0x0340 -n 4 2>/dev/null' \
+sshg '/tmp/ml-i2cprobe 0 0x1a 0x0200 -n 12 2>/dev/null; /tmp/ml-i2cprobe 0 0x1a 0x0340 -n 4 2>/dev/null' \
 	| tee "$OUT/sensor.txt" || echo "  (i2c probe unavailable, skipped)"
 
 # Auto-discover every DMA table: any register holding what looks like a DRAM pointer into the
@@ -133,9 +129,9 @@ do
 	set -- $line
 	blk="$1"; off="$2"; addr="$3"
 	nm="$(printf '%s_%s' "$blk" "${off#+}")"
-	if au "/tmp/ml-lutfill $addr 8192 save:/tmp/tbl_$nm.bin" </dev/null >/dev/null 2>&1
+	if sshg "/tmp/ml-lutfill $addr 8192 save:/tmp/tbl_$nm.bin" </dev/null >/dev/null 2>&1
 	then
-		pull "/tmp/tbl_$nm.bin" "$OUT/tbl_$nm.bin" 2>/dev/null && echo "  $nm from $addr"
+		device_pull "/tmp/tbl_$nm.bin" "$OUT/tbl_$nm.bin" 2>/dev/null && echo "  $nm from $addr"
 	else
 		echo "  $nm at $addr: unreadable, skipped"
 	fi

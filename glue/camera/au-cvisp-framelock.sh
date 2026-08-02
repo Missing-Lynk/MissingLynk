@@ -28,7 +28,7 @@
 # Also pulls the slot 1 luma plane so the picture can be looked at rather than inferred.
 #
 # Usage: glue/camera/au-cvisp-framelock.sh
-# Env: AU_IP (192.168.3.102), AU_PASS (libre), BULK (1475), WATCH (8), TP (0).
+# Env: BULK (1475), WATCH (8), TP (0). Target: the active device profile, AU_IP / AU_PASS override.
 #
 # TP is the sensor test pattern: 0 off, 2 colour bars. Nothing sets exposure or gain on this
 # stack, so a correct capture is black and a black frame cannot be told from a broken one by
@@ -43,10 +43,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.102}"
-AU_PASS="${AU_PASS:-libre}"
 BULK="${BULK:-1475}"
 WATCH="${WATCH:-8}"
 TP="${TP:-0}"
@@ -63,20 +61,16 @@ S1=0x2834c000
 S2=0x2856a000
 S3=0x285f3000
 
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-
 mkdir -p "$OUT"
 
 echo "=== staging (tmpfs is wiped by every power cycle) ==="
-for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do push "$KD/$m.ko" "$m.ko"; done
-push "$REPO/native/build/ml-regdump" ml-regdump
-push "$REPO/native/build/ml-v4l2grab" ml-v4l2grab
-push "$REPO/native/build/ml-isploop" ml-isploop
-au 'cd /tmp && md5sum ar-cvisp.ko ml-isploop | cut -c1-12'
+for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do device_push "$KD/$m.ko"; done
+device_push "$REPO/native/build/ml-regdump"
+device_push "$REPO/native/build/ml-v4l2grab"
+device_push "$REPO/native/build/ml-isploop"
+sshg 'cd /tmp && md5sum ar-cvisp.ko ml-isploop | cut -c1-12'
 
-au "cat > /tmp/fl.sh <<'EOS'
+sshg "cat > /tmp/fl.sh <<'EOS'
 #!/bin/sh
 R=/tmp/ml-regdump
 
@@ -131,12 +125,12 @@ kill \$GP 2>/dev/null
 EOS
 chmod +x /tmp/fl.sh"
 
-au "/tmp/fl.sh"
+sshg "/tmp/fl.sh"
 
 echo
 echo "=== fetching slot 1 luma plane ==="
 # Not scp: neither stack has an sftp subsystem. See AGENTS.md, "Working on a live device".
-for i in 0 1 2; do au "cat /tmp/pl.$i" > "$OUT/pl.$i"; done
+for i in 0 1 2; do device_pull "/tmp/pl.$i" "$OUT/pl.$i"; done
 ls -l "$OUT"/pl.[012]
 
 if [ -s "$OUT/pl.0" ]; then

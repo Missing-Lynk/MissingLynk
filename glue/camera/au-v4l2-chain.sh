@@ -17,50 +17,34 @@
 # has touched VIF or the ISP outside the driver's own ordered sequence.
 #
 # Usage: glue/camera/au-v4l2-chain.sh
-# Env: AU_IP, AU_PASS, FRAMES (200), EXPO, GAIN
+# Env: FRAMES (200), EXPO, GAIN. Target: the active device profile, AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.102}"
-AU_PASS="${AU_PASS:-libre}"
 EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 FRAMES="${FRAMES:-200}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-pull() {
-	if sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "cat '$1'" > "$2.part" 2>/dev/null &&
-	   [ -s "$2.part" ]
-	then
-		mv -f "$2.part" "$2"
-		return 0
-	fi
-	rm -f "$2.part"
-	return 1
-}
-
 mkdir -p "$OUT"
 
 echo "=== staging ==="
 for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp
 do
-	push "$KD/$m.ko" "$m.ko" || exit 1
+	device_push "$KD/$m.ko" || exit 1
 done
-push "$REPO/native/build/ml-v4l2grab" ml-v4l2grab || exit 1
-push "$REPO/native/build/ml-regdump" ml-regdump || exit 1
+device_push "$REPO/native/build/ml-v4l2grab" || exit 1
+device_push "$REPO/native/build/ml-regdump" || exit 1
 
 # The vendor tuning file, verbatim. ar-isp generates its gamma and DRC pages from it.
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"
 if [ -s "$TUNING" ]
 then
-	push "$TUNING" "nt99235-tuning-preview-fpv.bin" || exit 1
+	device_push_as "$TUNING" "/tmp/nt99235-tuning-preview-fpv.bin" || exit 1
 else
 	echo "  no tuning file at $TUNING: ar-isp will seed, not generate"
 fi
@@ -212,14 +196,14 @@ exit 0
 
 echo
 echo "=== self bring-up: modules only, no debugfs ==="
-printf '%s\n' "$REMOTE" | au 'cat > /tmp/chain.sh; chmod +x /tmp/chain.sh' || exit 1
-au '/tmp/chain.sh'
+printf '%s\n' "$REMOTE" | sshg 'cat > /tmp/chain.sh; chmod +x /tmp/chain.sh' || exit 1
+sshg '/tmp/chain.sh'
 
 echo
 echo "=== rendering ==="
 for p in 0 1 2
 do
-	pull "/tmp/chain.$p" "$OUT/chain.$p" || echo "  no plane $p"
+	device_pull "/tmp/chain.$p" "$OUT/chain.$p" || echo "  no plane $p"
 done
-au 'rm -f /tmp/chain.0 /tmp/chain.1 /tmp/chain.2' </dev/null 2>/dev/null || true
+sshg 'rm -f /tmp/chain.0 /tmp/chain.1 /tmp/chain.2' </dev/null 2>/dev/null || true
 python3 "$HERE/planes2png.py" "$OUT/chain" "$OUT/chain" || true

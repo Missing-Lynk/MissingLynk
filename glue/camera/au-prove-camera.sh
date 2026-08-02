@@ -19,15 +19,14 @@
 # started the whole problem.
 #
 # Usage: glue/camera/au-prove-camera.sh
-# Env: AU_IP, AU_PASS, EXPO (1123), GAIN (0x2f), BULK (1475).
+# Env: EXPO (1123), GAIN (0x2f), BULK (1475). Target: the active device profile, AU_IP /
+#      AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.102}"
-AU_PASS="${AU_PASS:-libre}"
 EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 BULK="${BULK:-1475}"
@@ -94,33 +93,16 @@ WATCH="${WATCH:-1}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-# Write to a temporary and move only on success. A plain `> "$2"` truncates the destination
-# before the remote cat runs, so a missing or unreadable source DESTROYS the previous result.
-# That is not hypothetical: the sweep runs, which never create live_b3d.*, silently zeroed the
-# planes of the earlier capture that first showed the fixed image.
-pull() {
-	if sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "cat '$1'" > "$2.part" 2>/dev/null && [ -s "$2.part" ]
-	then
-		mv -f "$2.part" "$2"
-		return 0
-	fi
-	rm -f "$2.part"
-	return 1
-}
-
 mkdir -p "$OUT"
 
 echo "=== staging ==="
 for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp
 do
-	push "$KD/$m.ko" "$m.ko" || exit 1
+	device_push "$KD/$m.ko" || exit 1
 done
 for t in ml-regdump ml-v4l2grab ml-isploop ml-lutfill ml-i2cprobe
 do
-	push "$REPO/native/build/$t" "$t" || exit 1
+	device_push "$REPO/native/build/$t" || exit 1
 done
 
 # The vendor tuning file, verbatim. ar-isp loads it through request_firmware and generates the
@@ -130,11 +112,11 @@ done
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"
 if [ -s "$TUNING" ]
 then
-	push "$TUNING" "nt99235-tuning-preview-fpv.bin" || exit 1
+	device_push_as "$TUNING" "/tmp/nt99235-tuning-preview-fpv.bin" || exit 1
 	echo "  staged tuning file, $(stat -c %s "$TUNING") bytes"
 else
 	echo "  NO tuning file at $TUNING: ar-isp will seed, not generate"
-	au 'rm -f /tmp/nt99235-tuning-preview-fpv.bin' </dev/null 2>/dev/null || true
+	sshg 'rm -f /tmp/nt99235-tuning-preview-fpv.bin' </dev/null 2>/dev/null || true
 fi
 
 # BLOCK3D writes the ISP 0x3d60-0x3e1c curve bank mid-stream and captures again, so one
@@ -159,10 +141,10 @@ rm -f "$OUT/block3d.txt"
 if [ -n "${BLOCK3D:-}" ]
 then
 	python3 "$HERE/gen-block3d.py" "${BLOCK3D}" ${BLOCK3D_RANGE:+"$BLOCK3D_RANGE"} > "$OUT/block3d.txt" || exit 1
-	push "$OUT/block3d.txt" "block3d.txt" || exit 1
+	device_push "$OUT/block3d.txt" || exit 1
 	echo "  staged BLOCK3D=$BLOCK3D: $(wc -l < "$OUT/block3d.txt") register writes"
 else
-	au 'rm -f /tmp/block3d.txt' </dev/null 2>/dev/null || true
+	sshg 'rm -f /tmp/block3d.txt' </dev/null 2>/dev/null || true
 fi
 
 # GAMMA=<file> injects a captured vendor gamma table into the ISP's gamma buffer before the
@@ -172,17 +154,17 @@ fi
 if [ -n "${GAMMA:-}" ]
 then
 	[ -s "$GAMMA" ] || { echo "GAMMA=$GAMMA is missing or empty"; exit 1; }
-	push "$GAMMA" "gamma.bin" || exit 1
+	device_push_as "$GAMMA" "/tmp/gamma.bin" || exit 1
 	echo "  gamma injection armed from $GAMMA"
 else
-	au 'rm -f /tmp/gamma.bin'
+	sshg 'rm -f /tmp/gamma.bin'
 fi
 
 # SWEEP="<file> <file> ...": inside the single good bring-up, load each gamma table in turn and
 # capture a frame for each. This is the only way to compare more than one curve per boot, since
 # only the first bring-up after a RAM-boot writes to DRAM. Files are numbered so the device-side
 # glob keeps the order given here.
-au 'rm -f /tmp/sw_*.bin'
+sshg 'rm -f /tmp/sw_*.bin'
 SWEEP_NAMES=""
 if [ -n "${SWEEP:-}" ]
 then
@@ -192,7 +174,7 @@ then
 		[ -s "$f" ] || { echo "SWEEP entry $f is missing or empty"; exit 1; }
 		i=$((i + 1))
 		tag="$(printf '%02d_%s' "$i" "$(basename "$f" .bin)")"
-		push "$f" "sw_$tag.bin" || exit 1
+		device_push_as "$f" "/tmp/sw_$tag.bin" || exit 1
 		SWEEP_NAMES="$SWEEP_NAMES sw_$tag"
 		echo "  sweep $i armed: $f"
 	done
@@ -200,11 +182,11 @@ fi
 
 # REARM=<file>: after the sweep, load this table and re-run the full ISP replay rather than
 # pulsing the fetch bits. Runs last, so it cannot cost an earlier capture.
-au 'rm -f /tmp/rearm.bin'
+sshg 'rm -f /tmp/rearm.bin'
 if [ -n "${REARM:-}" ]
 then
 	[ -s "$REARM" ] || { echo "REARM=$REARM is missing or empty"; exit 1; }
-	push "$REARM" "rearm.bin" || exit 1
+	device_push_as "$REARM" "/tmp/rearm.bin" || exit 1
 	SWEEP_NAMES="$SWEEP_NAMES rearm"
 	echo "  re-arm step armed: $REARM"
 fi
@@ -977,7 +959,7 @@ do
 	esac
 done
 exit 0"
-printf '%s\n' "$PROVE" | au 'cat > /tmp/prove.sh; chmod +x /tmp/prove.sh' || exit 1
+printf '%s\n' "$PROVE" | sshg 'cat > /tmp/prove.sh; chmod +x /tmp/prove.sh' || exit 1
 
 # Only the FIRST bring-up after a boot writes to DRAM; every later one re-reads the frame the
 # first one left. So a boot buys exactly one trustworthy capture, and RUNS selects which.
@@ -991,14 +973,14 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' V4L2CAP='${V4L2CAP:-}' V4L2MARK='${V4L2MARK:-}' /tmp/prove.sh $tp $name $cyc"
+	if ! sshg "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' V4L2CAP='${V4L2CAP:-}' V4L2MARK='${V4L2MARK:-}' /tmp/prove.sh $tp $name $cyc"
 	then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
 	fi
 	for p in 0 1 2
 	do
-		pull "/tmp/$name.$p" "$OUT/$name.$p" 2>/dev/null || true
+		device_pull "/tmp/$name.$p" "$OUT/$name.$p" 2>/dev/null || true
 	done
 	ESWEEP_NAMES=""
 	for es in ${ESWEEP:-}
@@ -1009,48 +991,48 @@ do
 	do
 		for p in 0 1 2
 		do
-			pull "/tmp/${name}_$sw.$p" "$OUT/${name}_$sw.$p" 2>/dev/null || true
+			device_pull "/tmp/${name}_$sw.$p" "$OUT/${name}_$sw.$p" 2>/dev/null || true
 		done
 		# /tmp is a 32 MB tmpfs and each capture is about 5.4 MB, so a sweep of more than
 		# five steps fills it. The failure is silent and looks exactly like a capture that
 		# had no effect: the last plane comes back zero-length. Free each one once it is off
 		# the device.
-		au "rm -f /tmp/${name}_$sw.[012]" </dev/null 2>/dev/null || true
+		sshg "rm -f /tmp/${name}_$sw.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_$sw" "$OUT/${name}_$sw" || true
 	done
 	for t in gamma compander drc
 	do
-		pull "/tmp/pre_$t.bin" "$OUT/pre_$t.bin" 2>/dev/null || true
+		device_pull "/tmp/pre_$t.bin" "$OUT/pre_$t.bin" 2>/dev/null || true
 	done
 	# The LSC page as the vendor computed it for this scene. hdf-037 established it has no
 	# static source: it is built at runtime from stats, so this capture is the only form of
 	# it we can hold, and the open driver carries a captured page rather than generating one.
 	if [ "${LSCPOKE:-0}" = 1 ]
 	then
-		pull "/tmp/lsc_pre.bin" "$OUT/lsc_pre.bin" 2>/dev/null || true
+		device_pull "/tmp/lsc_pre.bin" "$OUT/lsc_pre.bin" 2>/dev/null || true
 	fi
 	# Stage 7b's artifacts. Unconditional: that stage is passive and always runs, so gating
 	# these on a poke lever loses them silently, which is how the first run lost both.
-	pull "/tmp/rro_raw.bin" "$OUT/rro_raw.bin" 2>/dev/null || true
-	pull "/tmp/lut3d.bin" "$OUT/lut3d.bin" 2>/dev/null || true
-	pull "/tmp/ltm_page.bin" "$OUT/ltm_page_${SCENE:-a}.bin" 2>/dev/null || true
+	device_pull "/tmp/rro_raw.bin" "$OUT/rro_raw.bin" 2>/dev/null || true
+	device_pull "/tmp/lut3d.bin" "$OUT/lut3d.bin" 2>/dev/null || true
+	device_pull "/tmp/ltm_page.bin" "$OUT/ltm_page_${SCENE:-a}.bin" 2>/dev/null || true
 	if [ "${HDRPOKE:-0}" = 1 ]
 	then
-		pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
+		device_pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
 	fi
-	pull "/tmp/oursensor.txt" "$REPO/out/au-snapshot/ours-sensor-full.txt" 2>/dev/null || true
+	device_pull "/tmp/oursensor.txt" "$REPO/out/au-snapshot/ours-sensor-full.txt" 2>/dev/null || true
 	# Mid-stream register windows, for the live-against-live diff. Small, so unlike the raw
 	# frame this pull is reliable over the RF link.
-	pull "/tmp/ourisp.txt" "$REPO/out/au-snapshot/ours-registers-live.txt" 2>/dev/null || true
+	device_pull "/tmp/ourisp.txt" "$REPO/out/au-snapshot/ours-registers-live.txt" 2>/dev/null || true
 	if [ -n "${BLOCK3D:-}" ]
 	then
 		for p in 0 1 2
 		do
-			pull "/tmp/${name}_b3d.$p" "$OUT/${name}_b3d.$p" 2>/dev/null || true
+			device_pull "/tmp/${name}_b3d.$p" "$OUT/${name}_b3d.$p" 2>/dev/null || true
 		done
-		au "rm -f /tmp/${name}_b3d.[012]" </dev/null 2>/dev/null || true
+		sshg "rm -f /tmp/${name}_b3d.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_b3d" "$OUT/${name}_b3d" || true
-		pull "/tmp/ourisp_b3d.txt" "$REPO/out/au-snapshot/ours-registers-live-b3d.txt" 2>/dev/null || true
+		device_pull "/tmp/ourisp_b3d.txt" "$REPO/out/au-snapshot/ours-registers-live-b3d.txt" 2>/dev/null || true
 	fi
 	if [ -s "$REPO/out/au-snapshot/ours-registers-live.txt" ]
 	then
@@ -1072,13 +1054,11 @@ do
 import importlib.util, os, struct, sys
 out, isp = sys.argv[1], sys.argv[2]
 
-
 def load(name):
     spec = importlib.util.spec_from_file_location(name, os.path.join(isp, name + "-codec.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
-
 
 print("  tuning pages the vendor left resident, before this bring-up:")
 for nm, size in (("gamma", 0x4000), ("compander", 0x7800), ("drc", 0x2000)):
@@ -1113,9 +1093,9 @@ PYE
 	then
 		for p in 0 1 2
 		do
-			pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
+			device_pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
 		done
-		au "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
+		sshg "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_v4l2" "$OUT/${name}_v4l2" || true
 		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_v4l2.0" ]
 		then
@@ -1135,9 +1115,9 @@ PYE
 	then
 		for p in 0 1 2
 		do
-			pull "/tmp/${name}_sw.$p" "$OUT/${name}_sw.$p" 2>/dev/null || true
+			device_pull "/tmp/${name}_sw.$p" "$OUT/${name}_sw.$p" 2>/dev/null || true
 		done
-		au "rm -f /tmp/${name}_sw.[012]" </dev/null 2>/dev/null || true
+		sshg "rm -f /tmp/${name}_sw.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_sw" "$OUT/${name}_sw" || true
 		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_sw.0" ]
 		then

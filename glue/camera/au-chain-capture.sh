@@ -20,12 +20,13 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
+# Slot B's address comes from the device profile, slot A's from au_stock_slot_a.
 SLOT="${SLOT:-a}"
 case "$SLOT" in
-	a) AU_IP="${AU_IP:-192.168.3.100}"; AU_PASS="${AU_PASS:-artosyn}"; TAG=slotA ;;
-	b) AU_IP="${AU_IP:-192.168.3.102}"; AU_PASS="${AU_PASS:-libre}";   TAG=slotB ;;
+	a) au_stock_slot_a; TAG=slotA ;;
+	b) TAG=slotB ;;
 	*) echo "SLOT must be a or b" >&2; exit 1 ;;
 esac
 
@@ -35,32 +36,27 @@ DST="$OUT/$TAG.txt"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/linux/drivers/media/artosyn"
 ISP_PAGES="00 08 0c 18 1c 1d 1e 1f 28 2e 30 34 38 3c 3d 48 4c 50 58 60 64 65 6c 6d 70 72 74 75 76"
 
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-
-echo "=== $TAG at $AU_IP ==="
-au 'cat /proc/uptime; uname -r'
+echo "=== $TAG at $DEVICE_IP ==="
+sshg 'cat /proc/uptime; uname -r'
 
 echo "=== staging read tools ==="
-push "$REPO/native/build/ml-regdump"  ml-regdump
-push "$REPO/native/build/ml-i2cprobe" ml-i2cprobe
-sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	'cat > /tmp/sns.list' < "$HERE/nt99235-regs.list"
+device_push "$REPO/native/build/ml-regdump"
+device_push "$REPO/native/build/ml-i2cprobe"
+device_push_as "$HERE/nt99235-regs.list" /tmp/sns.list
 
 if [ "$SLOT" = b ]; then
 	echo "=== slot B: CGU prologue, then a fresh module load ==="
-	push "$KD/nt99235.ko" nt99235.ko
-	push "$KD/ar-csi2.ko" ar-csi2.ko
-	push "$KD/ar-vif.ko"  ar-vif.ko
-	push "$KD/ar-isp.ko"  ar-isp.ko
-	push "$REPO/native/build/ml-v4l2grab" ml-v4l2grab
+	device_push "$KD/nt99235.ko"
+	device_push "$KD/ar-csi2.ko"
+	device_push "$KD/ar-vif.ko"
+	device_push "$KD/ar-isp.ko"
+	device_push "$REPO/native/build/ml-v4l2grab"
 	# One at a time and in dependency order: busybox rmmod aborts the whole command on the
 	# first name it cannot remove, and ar_isp is not loaded at boot. A failed rmmod leaves the
 	# modules probed, so the CGU prologue lands after probe and the front end comes up dead.
-	au "for m in ar_isp ar_vif ar_csi2 nt99235; do rmmod \$m 2>/dev/null || true; done"
-	au "lsmod | grep -qE '^(ar_vif|ar_csi2|nt99235) ' && { echo 'ABORT: capture modules still loaded'; exit 1; } || true"
-	au "true
+	sshg "for m in ar_isp ar_vif ar_csi2 nt99235; do rmmod \$m 2>/dev/null || true; done"
+	sshg "lsmod | grep -qE '^(ar_vif|ar_csi2|nt99235) ' && { echo 'ABORT: capture modules still loaded'; exit 1; } || true"
+	sshg "true
 	    /tmp/ml-regdump -w 0x0a10400c 0x13001300 >/dev/null
 	    V=\$(/tmp/ml-regdump 0x0a104010 4 | awk '{print \$2}')
 	    /tmp/ml-regdump -w 0x0a104010 \$(printf '0x%08x' \$(( (0x\$V & 0xffff0000) | 0x1300 ))) >/dev/null
@@ -72,7 +68,7 @@ fi
 
 # The capture runs entirely on the device and writes a file there, so a dropped ssh session
 # truncates nothing. Only the finished file is fetched.
-au "cat > /tmp/cap.sh <<'EOS'
+sshg "cat > /tmp/cap.sh <<'EOS'
 #!/bin/sh
 OUT=/tmp/cap.txt
 : > \$OUT
@@ -119,7 +115,7 @@ echo CAPTURE-DONE
 EOS
 chmod +x /tmp/cap.sh; /tmp/cap.sh"
 
-au 'cat /tmp/cap.txt' > "$DST"
+device_pull /tmp/cap.txt "$DST"
 
 echo
 grep -E '^GATE-' "$DST" || true

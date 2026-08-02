@@ -87,7 +87,7 @@ D0_MTD="$(sshg 'grep -m1 "\"dtb0\"" /proc/mtd' | cut -d: -f1)"
 
 # --- OTRA template: kernel1's own current bytes (read-only, before we overwrite it) -----
 echo "[*] pulling kernel1's current bytes as the OTRA header template..."
-sshg "cat /dev/$K_MTD" > "$SCRATCH/kernel1-template.bin" 2>/dev/null
+device_pull "/dev/$K_MTD" "$SCRATCH/kernel1-template.bin"
 [ "$(head -c4 "$SCRATCH/kernel1-template.bin")" = "OTRA" ] \
     || { echo "kernel1 readback has no OTRA magic - unexpected, aborting." >&2; exit 1; }
 
@@ -102,9 +102,9 @@ echo "[*] packing $IMG into the OTRA container..."
 [ -x "$MTDTOOL" ] || { echo "missing $MTDTOOL (run native/build.sh first)" >&2; exit 1; }
 STAGE=/tmp
 echo "[*] deploying mtdtool + payloads to $DEVICE_IP:$STAGE..."
-cat "$MTDTOOL" | sshg "cat >$STAGE/mtdtool && chmod +x $STAGE/mtdtool"
-cat "$SCRATCH/kernel1-container.bin" | sshg "cat >$STAGE/kernel1-container.bin"
-cat "$DTB" | sshg "cat >$STAGE/dtb1.bin"
+device_push_as "$MTDTOOL" "$STAGE/mtdtool"
+device_push_as "$SCRATCH/kernel1-container.bin" "$STAGE/kernel1-container.bin"
+device_push_as "$DTB" "$STAGE/dtb1.bin"
 
 # The vendor BusyBox has no `stat` applet (docs/reference/hardware-overview.md); use `wc -c`.
 remote_size() { sshg "wc -c < $1" 2>/dev/null | tr -d '[:space:]'; }

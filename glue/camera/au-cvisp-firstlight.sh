@@ -28,15 +28,13 @@
 # gone in run 1 is CVISP writing, and is first light.
 #
 # Usage: glue/camera/au-cvisp-firstlight.sh
-# Env: AU_IP (192.168.3.102), AU_PASS (libre), BULK (1475), WATCH (10).
+# Env: BULK (1475), WATCH (10). Target: the active device profile, AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-. "$HERE/../lib/ssh-opts.sh"
+. "$HERE/../lib/au-camera.sh"
 
-AU_IP="${AU_IP:-192.168.3.102}"
-AU_PASS="${AU_PASS:-libre}"
 BULK="${BULK:-1475}"
 WATCH="${WATCH:-10}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/linux/drivers/media/artosyn"
@@ -46,22 +44,18 @@ PY=0x28014000
 PU=0x28232000
 PV=0x282bb000
 
-au()   { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" "$@"; }
-push() { sshpass -p "$AU_PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$AU_IP" \
-	         "cat > /tmp/$2; chmod +x /tmp/$2" < "$1"; }
-
 echo "=== staging (tmpfs is wiped by every power cycle) ==="
-for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do push "$KD/$m.ko" "$m.ko"; done
-push "$REPO/native/build/ml-regdump"  ml-regdump
-push "$REPO/native/build/ml-v4l2grab" ml-v4l2grab
-push "$REPO/native/build/ml-isploop"  ml-isploop
-au 'cd /tmp && md5sum ar-cvisp.ko ml-isploop | cut -c1-12'
+for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do device_push "$KD/$m.ko"; done
+device_push "$REPO/native/build/ml-regdump"
+device_push "$REPO/native/build/ml-v4l2grab"
+device_push "$REPO/native/build/ml-isploop"
+sshg 'cd /tmp && md5sum ar-cvisp.ko ml-isploop | cut -c1-12'
 
 # Confirm the running DTB has the reservation before pointing a DMA writer at it.
 echo "=== reserved ranges on the device ==="
-au 'ls /proc/device-tree/reserved-memory/ 2>/dev/null | tr "\n" " "; echo'
+sshg 'ls /proc/device-tree/reserved-memory/ 2>/dev/null | tr "\n" " "; echo'
 
-au "cat > /tmp/cvisp.sh <<'EOS'
+sshg "cat > /tmp/cvisp.sh <<'EOS'
 #!/bin/sh
 # \$1 = mode: cvisp | control
 R=/tmp/ml-regdump
@@ -120,7 +114,7 @@ chmod +x /tmp/cvisp.sh"
 for mode in cvisp control; do
 	echo
 	echo "############ $mode ############"
-	au "/tmp/cvisp.sh $mode"
+	sshg "/tmp/cvisp.sh $mode"
 done
 
 echo
