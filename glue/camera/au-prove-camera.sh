@@ -71,6 +71,11 @@ CCM_BANK="${CCM_BANK:-0}"
 # The stage recomputes with gain on the vendor, so this becomes an AE input rather than a knob.
 BLC="${BLC:-1}"
 BLC_GAIN="${BLC_GAIN:-187}"
+# Frame ticks the CVISP capture node holds a buffer before handing it back. 2 is measured
+# sufficient; 1 is the open question, and worth settling because it returns a buffer to a pool
+# that only holds five. Run it with V4L2MARK=1: too low shows up as bottom rows coming back
+# still carrying the marker.
+CVDEPTH="${CVDEPTH:-2}"
 # DE3D=1 allocates de3d's three working buffers instead of leaving it writing the vendor's
 # memory. Sizes are bounds derived from the vendor's own packing, not measured extents, and
 # the third has no bound above it at all; see ar-isp.c. Unlike the other levers this one can
@@ -348,7 +353,7 @@ insmod /tmp/ar-vif.ko use_irq=$USE_IRQ || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko tables=$TABLES seed=$SEED gamma_curve=$GAMMA_CURVE drc_profile=$DRC_PROFILE \
 	compander=$COMPANDER lsc=$LSC stats=$STATS ccm=$CCM ccm_bank=$CCM_BANK de3d=$DE3D \
 	use_irq=$USE_IRQ || fail 'insmod ar-isp'
-insmod /tmp/ar-cvisp.ko blc=$BLC blc_gain=$BLC_GAIN || fail 'insmod ar-cvisp'
+insmod /tmp/ar-cvisp.ko blc=$BLC blc_gain=$BLC_GAIN depth=$CVDEPTH || fail 'insmod ar-cvisp'
 sleep 1
 echo '  stage 2 ok: modules loaded'
 
@@ -562,6 +567,93 @@ then
 		>/tmp/il_sw 2>&1 || { cat /tmp/il_sw; fail 'capture after switch'; }
 	grep -E 'markers overwritten' /tmp/il_sw
 	echo \"  stage 5b ok: captured \${NAME}_sw after the switch\"
+fi
+
+# Stage 5v: capture through the CVISP V4L2 node instead of /dev/mem.
+#
+# Everything above reads frames by mapping the vendor's five fixed ring addresses out of
+# /dev/mem. This stage asks the block to write into videobuf2 buffers instead: STREAMON hands
+# the output queue over, the per-frame tick walks the queued buffers rather than ar_cvisp_ring,
+# and STREAMOFF puts the vendor ring back. So this runs AFTER the baseline capture on purpose,
+# and the two are directly comparable: same bring-up, same scene, same ISP state, only the
+# owner of the output queue differs.
+#
+# V4L2CAP is the number of frames to pull. The node is found by name rather than by number:
+# ar-vif also registers one, and which of the two lands on which /dev/videoN depends on probe
+# order.
+#
+# Note the node does NOT bring the chain up. The sensor, VIF and ISP are already streaming by
+# the time this runs, which is the whole reason the old path stays intact in the same boot: if
+# this stage fails, nothing before it has been disturbed.
+if [ -n \"\${V4L2CAP:-}\" ]
+then
+	NODE=''
+	for d in /sys/class/video4linux/video*
+	do
+		[ -r \"\$d/name\" ] || continue
+		if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]
+		then
+			NODE=/dev/\$(basename \$d)
+			break
+		fi
+	done
+	if [ -z \"\$NODE\" ]
+	then
+		echo '  stage 5v FAILED: no video node named ar-cvisp'
+	else
+		echo \"  stage 5v: capture node \$NODE\"
+		rm -f /tmp/\${NAME}_v4l2.0 /tmp/\${NAME}_v4l2.1 /tmp/\${NAME}_v4l2.2
+		# V4L2MARK=1 fills every buffer with a position-keyed pattern before queueing
+		# it and reports what came back still holding it. That decides two things this
+		# driver would otherwise be guessing: how many rows the block actually writes,
+		# which is whether the vendor's per-slot plane extents are real geometry or
+		# allocator padding, and whether a completed buffer is finished, which is
+		# whether the hold depth is long enough. It costs more than a frame period per
+		# frame, so it drops frames by design and its throughput numbers mean nothing.
+		MARK=''
+		[ -n \"\${V4L2MARK:-}\" ] && MARK='-m'
+		if /tmp/ml-v4l2grab -d \$NODE \$MARK -o /tmp/\${NAME}_v4l2 -n \$V4L2CAP -t 5 >/tmp/g4.out 2>&1
+		then
+			grep -E 'interface|allocated|current|plane |frame |wrote|content|coverage' /tmp/g4.out | sed 's/^/    /'
+			echo \"  stage 5v ok: captured \${NAME}_v4l2 through the node\"
+		else
+			echo '  stage 5v FAILED: grabber error'
+			cat /tmp/g4.out
+		fi
+		# rotations counts every tick that armed something, completions only the buffers
+		# handed back, and drops the ticks that found nothing queued. completions well
+		# below rotations means userspace is not requeueing fast enough, which is a
+		# throughput problem and not a broken queue.
+		for c in rotations completions drops
+		do
+			[ -r /sys/kernel/debug/ar-cvisp/\$c ] && \\
+				echo \"    cvisp \$c: \$(cat /sys/kernel/debug/ar-cvisp/\$c)\"
+		done
+		# The driver's own account, which is where a missing capture pool shows
+		# up: without cvisp_cma the buffers come from the default CMA instead,
+		# which is ordinary kernel RAM and not where this DMA master should be
+		# writing. That is a warning, not a probe failure, so it is only visible
+		# here.
+		dmesg | grep -i 'ar-cvisp\\|cvisp:' | tail -6 | sed 's/^/    /'
+
+		# Stage 5w: STREAMOFF has to put the vendor's ring back under the block, or
+		# the tick is left pointing at buffers that have gone back to the allocator
+		# and every capture path that is not the node reads a dead address. Nothing
+		# in the run above exercises that, so it is checked here rather than assumed:
+		# markers overwritten at the vendor's own slot means the ring is live again.
+		/tmp/ml-isploop 1 --cvisp --dump /tmp/\${NAME}_post \\
+			--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000 \\
+			>/tmp/il_post 2>&1
+		if grep -q 'markers overwritten' /tmp/il_post
+		then
+			grep -E 'markers overwritten' /tmp/il_post | sed 's/^/    /'
+			echo '  stage 5w: vendor ring re-armed after STREAMOFF'
+		else
+			echo '  stage 5w FAILED: no capture after STREAMOFF'
+			cat /tmp/il_post
+		fi
+		rm -f /tmp/\${NAME}_post.0 /tmp/\${NAME}_post.1 /tmp/\${NAME}_post.2
+	fi
 fi
 
 # Stage 5c: our own ISP, CVISP, VIF, CSI-2 and CGU windows, read MID-STREAM and POST-ARM.
@@ -931,7 +1023,7 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' /tmp/prove.sh $tp $name $cyc"
+	if ! au "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' V4L2CAP='${V4L2CAP:-}' V4L2MARK='${V4L2MARK:-}' /tmp/prove.sh $tp $name $cyc"
 	then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
@@ -1056,6 +1148,29 @@ for nm, size in (("gamma", 0x4000), ("compander", 0x7800), ("drc", 0x2000)):
               f"(no decoder: the generator is not recovered)")
 PYE
 	python3 "$HERE/planes2png.py" "$OUT/$name" "$OUT/$name" || true
+
+	# The capture taken through the CVISP video node, if V4L2CAP asked for one.
+	# Rendered with the same script as every other capture: the node's plane
+	# sizes carry the vendor's slot tails, which are longer than stride x height,
+	# and planes2png.py crops rather than assuming an exact length.
+	if [ -n "${V4L2CAP:-}" ]
+	then
+		for p in 0 1 2
+		do
+			pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
+		done
+		au "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
+		python3 "$HERE/planes2png.py" "$OUT/${name}_v4l2" "$OUT/${name}_v4l2" || true
+		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_v4l2.0" ]
+		then
+			if cmp -s "$OUT/$name.0" "$OUT/${name}_v4l2.0"
+			then
+				echo "  node check: IDENTICAL to the /dev/mem capture -> suspect a stale read, not a node frame"
+			else
+				echo "  node check: DIFFERS from the /dev/mem capture, as two frames of a live scene should"
+			fi
+		fi
+	fi
 
 	# The mid-stream pattern switch, if SWITCH_TP asked for one. Same bring-up,
 	# so this pair is directly comparable: same optics, same ISP state, only the
