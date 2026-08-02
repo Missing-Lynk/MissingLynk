@@ -75,28 +75,77 @@ do
 	rmmod \$m 2>/dev/null
 done
 
-# The camera CGU leaves, exactly as au-prove-camera.sh stage 1b writes them.
+# The camera CGU leaves.
 #
-# These do NOT belong here. Each write sets a leaf's parent mux at bits[10:8] as well as its
-# gate at bit12, and clk-ar9311-cgu registers the camera leaves gate-only, so
-# clk_prepare_enable in the drivers sets the gate and leaves the mux at whatever the boot left.
-# Without the mux the ISP and VIF clocks run from the wrong parent: their registers read back
-# zero and no frame ever starts, which looks like a dead sensor.
+# These do NOT belong here. Each leaf carries a parent mux and a gate in one register half, and
+# clk-ar9311-cgu registers the camera leaves gate-only, so clk_prepare_enable sets the gate and
+# leaves the mux where the boot left it. The ISP and VIF then run from the wrong parent: their
+# registers read back zero and no frame ever starts, which looks like a dead sensor.
 #
-# So this is a placeholder for making the leaves' parent mux settable and naming the parents in
-# the device tree, after which the clock framework programs them at probe and this goes away.
-# It is reproduced here so the rest of the self bring-up can be tested meanwhile.
+# Two ways of writing them, because which one works decides how the driver should do it.
+#
+# rmw, the default, rewrites ONLY the fields the clock driver models: sel and gate, one
+# read-modify-write per half, which is exactly what clk_set_parent and clk_prepare_enable would
+# emit. If the chain comes up under this, the driver can own the clocks with no device tree
+# change and no reflash.
+#
+# full writes the whole register with the literal values au-prove-camera.sh stage 1b uses.
+# Those carry bits the driver's model does not describe, bits[6:0] on the two MIPI leaves, and
+# the header states these leaves have no dividers. Dumping the registers before either write
+# says whether the boot already sets those bits, in which case rmw preserves them anyway.
+# none, the default, writes nothing: clk-ar9311-cgu installs the vendor's parent and divider
+# for the camera leaves at probe, on a board that declares a camera. The other two modes are
+# kept for bisecting that against what the harness used to do by hand.
+CGU_MODE=\${CGU_MODE:-none}
+
 G=\$(/tmp/ml-regdump 0x0a104014 1 | cut -d' ' -f2)
 case \$G in
 *[13579bdf]???) : ;;
 *) fail \"cgu 0x0a104014=\$G, gate bit12 is CLEAR\" ;;
 esac
-/tmp/ml-regdump -w 0x0a10400c 0x13001300 >/dev/null || fail 'cgu 0x0a10400c'
-/tmp/ml-regdump -w 0x0a104010 0x02001300 >/dev/null || fail 'cgu 0x0a104010'
-/tmp/ml-regdump -w 0x0a104020 0x10001103 >/dev/null || fail 'cgu 0x0a104020'
-/tmp/ml-regdump -w 0x0a10401c 0x02011201 >/dev/null || fail 'cgu 0x0a10401c'
-/tmp/ml-regdump -w 0x0a104044 0x01001000 >/dev/null || fail 'cgu 0x0a104044'
-echo '  camera clocks programmed (harness stage 1b, see comment)'
+
+# Read before anything here writes, which on a kernel that owns these is AFTER clk-ar9311-cgu
+# installed the vendor pairs at probe. Under CGU_MODE=none the six leaves should already read
+# the vendor's sel and divider with their gates still off, the consumers having gated their own.
+echo '  cgu leaves before this script writes:'
+for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044
+do
+	echo \"    \$a \$(/tmp/ml-regdump \$a 1 | awk '/^\\+/{print \$2}')\"
+done
+
+# Clear both halves' sel and gate, leave every other bit as found.
+CGU_FIELDS=0x17001700
+
+cgu_rmw() {
+	cur=\$(/tmp/ml-regdump \$1 1 | awk '/^\\+/{print \$2}')
+	[ -n \"\$cur\" ] || fail \"cgu read \$1\"
+	new=\$(printf '%08x' \$(( (0x\$cur & ~CGU_FIELDS) | \$2 )))
+	/tmp/ml-regdump -w \$1 0x\$new >/dev/null || fail \"cgu write \$1\"
+}
+
+if [ \"\$CGU_MODE\" = none ]
+then
+	:
+elif [ \"\$CGU_MODE\" = full ]
+then
+	/tmp/ml-regdump -w 0x0a10400c 0x13001300 >/dev/null || fail 'cgu 0x0a10400c'
+	/tmp/ml-regdump -w 0x0a104010 0x02001300 >/dev/null || fail 'cgu 0x0a104010'
+	/tmp/ml-regdump -w 0x0a104020 0x10001103 >/dev/null || fail 'cgu 0x0a104020'
+	/tmp/ml-regdump -w 0x0a10401c 0x02011201 >/dev/null || fail 'cgu 0x0a10401c'
+	/tmp/ml-regdump -w 0x0a104044 0x01001000 >/dev/null || fail 'cgu 0x0a104044'
+else
+	cgu_rmw 0x0a10400c 0x13001300	# isp sel 3 gate on, isp_hdr sel 3 gate on
+	cgu_rmw 0x0a104010 0x02001300	# vif_axi sel 3 gate on, dla sel 2 gate off
+	cgu_rmw 0x0a104020 0x10001100	# mipi_pcs sel 1 gate on, sd0_fix sel 0 gate on
+	cgu_rmw 0x0a10401c 0x02001200	# mipi_csi_0 sel 2 gate on, mipi_csi_1 sel 2 gate off
+	cgu_rmw 0x0a104044 0x01001000	# sensor_mclk0 sel 0 gate on, mclk1 sel 1 gate off
+fi
+
+echo \"  camera clocks programmed (\$CGU_MODE):\"
+for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044
+do
+	echo \"    \$a \$(/tmp/ml-regdump \$a 1 | awk '/^\\+/{print \$2}')\"
+done
 
 mkdir -p /tmp/fw/artosyn
 [ -f /tmp/nt99235-tuning-preview-fpv.bin ] && \\

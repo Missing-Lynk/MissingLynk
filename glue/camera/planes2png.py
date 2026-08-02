@@ -68,6 +68,14 @@ def main():
     # pipeline gives one or two, a real frame gives hundreds.
     print(f"  distinct luma values: {len(set(flat))}")
 
+    # An all-zero plane means the buffer was never written, and it has to be called out rather
+    # than left to the picture. Zero chroma is not neutral chroma, neutral is 128, so an
+    # untouched YUV buffer renders as solid green rather than black: a plausible-looking image
+    # that reads as a colour fault instead of as no data at all.
+    if len(set(flat)) == 1:
+        print(f"  WARNING: luma is entirely {flat[0]}, the buffer was never written."
+              " A colour render of this is solid green, not an image.")
+
     upath, vpath = src + ".1", src + ".2"
     if not (os.path.exists(upath) and os.path.exists(vpath)):
         print("  (no chroma planes, greyscale only)")
