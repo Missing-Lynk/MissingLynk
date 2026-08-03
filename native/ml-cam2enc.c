@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
@@ -79,6 +80,17 @@ static int opt_frames = 60;
 static int opt_bufs = 5;
 static int opt_probe;
 static int opt_no_streamoff;
+static int opt_gop;
+static unsigned long opt_max_bytes;
+
+/** SIGINT/SIGTERM: finish the loop, drain, STREAMOFF, close the file. */
+static volatile sig_atomic_t g_stop;
+
+static void on_stop_signal(int sig)
+{
+    (void)sig;
+    g_stop = 1;
+}
 static int opt_static;
 static int opt_hold;
 static unsigned int opt_settle_us;
@@ -121,7 +133,8 @@ static int wait_ready(int fd, short events, int ms, const char *step)
 
     if (ret == 0) {
         printf("  NO: %s: timed out after %d ms\n", step, ms);
-    } else {
+    } else if (errno != EINTR || !g_stop) {
+        /* EINTR from the stop signal is the operator ending the run, not a failure. */
         bad(step);
     }
 
@@ -552,6 +565,21 @@ static int encoder_setup(int fd, struct geometry *g, uint32_t codec)
 
     fourcc(codec, cc);
     printf("  ok: S_FMT CAPTURE %s\n", cc);
+
+    /* GOP length in frames; a recording wants a periodic IRAP so a lost byte range costs one
+     * GOP and seeking works. Unset keeps the driver default (a single opening IRAP). */
+    if (opt_gop > 0) {
+        struct v4l2_control c;
+
+        memset(&c, 0, sizeof c);
+        c.id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
+        c.value = opt_gop;
+        if (ioctl(fd, VIDIOC_S_CTRL, &c)) {
+            bad("S_CTRL(GOP_SIZE)");
+        } else {
+            printf("  ok: GOP %d\n", opt_gop);
+        }
+    }
 
     memset(&rb, 0, sizeof rb);
     rb.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -1018,9 +1046,14 @@ static int run_joined(uint32_t codec)
            opt_static ? "static, camera not streaming" : "streaming",
            opt_frames, max_inflight);
 
-    for (int n = 0; n < opt_frames; n++) {
+    for (int n = 0; (n < opt_frames || opt_frames == 0) && !g_stop; n++) {
         struct v4l2_buffer b;
         struct v4l2_plane p[MAX_PLANES];
+
+        if (opt_max_bytes && total >= opt_max_bytes) {
+            printf("byte cap reached (%lu), stopping\n", total);
+            break;
+        }
 
         /* Reclaim before taking another frame, so the camera never starves. */
         while (inflight >= max_inflight) {
@@ -1160,7 +1193,7 @@ static int run_joined(uint32_t codec)
 
 done:
     /* Drain whatever the encoder still holds before judging the run. */
-    for (int i = 0; i < 8 && coded < opt_frames; i++) {
+    for (int i = 0; i < 8 && (opt_frames == 0 || coded < opt_frames); i++) {
         struct pollfd pf = { .fd = enc, .events = POLLIN };
 
         if (poll(&pf, 1, 200) <= 0) {
@@ -1570,10 +1603,20 @@ int main(int argc, char **argv)
     /* Line-buffered even into a file, so a backgrounded run's log is current. */
     setvbuf(stdout, NULL, _IOLBF, 0);
 
+    /* No SA_RESTART: a pending stop has to break poll() out, not restart it. */
+    {
+        struct sigaction sa;
+
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = on_stop_signal;
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGTERM, &sa, NULL);
+    }
+
     int mode = 0;                              /* 0 joined, 1 export only, 2 encoder only */
     int c;
 
-    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phS")) != -1) {
+    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:")) != -1) {
         switch (c) {
         case 'x':
             mode = 1;
@@ -1634,9 +1677,16 @@ int main(int argc, char **argv)
         case 'S':
             opt_no_streamoff = 1;
             break;
+        case 'G':
+            opt_gop = atoi(optarg);
+            break;
+        case 'm':
+            opt_max_bytes = (unsigned long)atoi(optarg) << 20;
+            break;
         default:
-            fprintf(stderr, "usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames] [-b bufs] [-o file] "
-                            "[-c h264|hevc] [-H heap] [-p] [-S]\n");
+            fprintf(stderr, "usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames (0=until signal)] "
+                            "[-b bufs] [-o file] [-c h264|hevc] [-H heap] [-G gop] [-m MB] "
+                            "[-p] [-S]\n");
             return 2;
         }
     }
