@@ -25,6 +25,10 @@ REPO="$(cd "$HERE/../.." && pwd)"
 SECONDS_RUN="${SECONDS_RUN:-30}"
 GOP="${GOP:-60}"
 CAP_MB="${CAP_MB:-24}"
+# CBR target in bps; 0 keeps the driver's constant-QP default. The wave5 driver ships with
+# rate control OFF, which pixelates motion badly; the vendor runs 8 Mbps CBR. Mind /tmp:
+# at 10 Mbps the 24 MB cap truncates past ~19 s.
+BITRATE="${BITRATE:-10000000}"
 OUT="${OUT:-$REPO/out/au-record}"
 FRAMES=$((SECONDS_RUN * 60))
 
@@ -39,8 +43,17 @@ then
 	exit 1
 fi
 
-echo "=== recording ${SECONDS_RUN}s (GOP $GOP, cap ${CAP_MB} MB) ==="
-sshg "rm -f /tmp/rec.265; /tmp/ml-cam2enc -n $FRAMES -G $GOP -m $CAP_MB -o /tmp/rec.265" </dev/null | tail -5
+# Depth 1 re-arms one buffer per frame, so any encode latency reads a buffer
+# mid-overwrite: torn frames with a clean drop counter. Refuse to record.
+DEPTH=$(sshg 'cat /sys/module/ar_cvisp/parameters/depth' </dev/null)
+if [ "${DEPTH:-0}" -lt 3 ]
+then
+	echo "cvisp depth is ${DEPTH:-unknown}, recording needs 3: run CVDEPTH=3 glue/camera/au-v4l2-chain.sh" >&2
+	exit 1
+fi
+
+echo "=== recording ${SECONDS_RUN}s (GOP $GOP, cap ${CAP_MB} MB, CBR $BITRATE) ==="
+sshg "rm -f /tmp/rec.265; /tmp/ml-cam2enc -n $FRAMES -G $GOP -m $CAP_MB -R $BITRATE -o /tmp/rec.265" </dev/null | tail -5
 
 echo "=== pulling ==="
 if ! device_pull /tmp/rec.265 "$OUT/rec.265"

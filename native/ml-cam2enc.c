@@ -66,6 +66,7 @@ struct dma_heap_allocation_data {
 #define AR_ROWS     1080                       /* luma rows the block writes */
 #define AR_NOISE_MAD 40                        /* mean adjacent-pixel delta above which a plane is noise */
 #define N_CAP       2                          /* encoder bitstream buffers */
+#define FRAME_RATE  60                         /* the chain's fixed 1080p60 rate, for the CBR budget */
 
 /** Geometry read from the capture node, or synthesised in encoder-only mode. */
 struct geometry {
@@ -81,6 +82,7 @@ static int opt_bufs = 5;
 static int opt_probe;
 static int opt_no_streamoff;
 static int opt_gop;
+static int opt_bitrate;
 static unsigned long opt_max_bytes;
 
 /** SIGINT/SIGTERM: finish the loop, drain, STREAMOFF, close the file. */
@@ -578,6 +580,39 @@ static int encoder_setup(int fd, struct geometry *g, uint32_t codec)
             bad("S_CTRL(GOP_SIZE)");
         } else {
             printf("  ok: GOP %d\n", opt_gop);
+        }
+    }
+
+    /* Rate control. The driver default is FRAME_RC_ENABLE=0, which encodes at the firmware's
+     * constant default QP with no bitrate target and pixelates any motion; the vendor runs
+     * this encoder CBR at 8 Mbps. The driver's frame_rate also defaults to 30, so S_PARM must
+     * carry the real rate or the CBR budget is computed for half the frames. */
+    if (opt_bitrate > 0) {
+        struct v4l2_streamparm sp;
+        struct v4l2_control c;
+
+        memset(&sp, 0, sizeof sp);
+        sp.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        sp.parm.output.timeperframe.numerator = 1;
+        sp.parm.output.timeperframe.denominator = FRAME_RATE;
+        if (ioctl(fd, VIDIOC_S_PARM, &sp)) {
+            bad("S_PARM(encoder frame rate)");
+        }
+
+        memset(&c, 0, sizeof c);
+        c.id = V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE;
+        c.value = 1;
+        if (ioctl(fd, VIDIOC_S_CTRL, &c)) {
+            bad("S_CTRL(FRAME_RC_ENABLE)");
+        }
+
+        memset(&c, 0, sizeof c);
+        c.id = V4L2_CID_MPEG_VIDEO_BITRATE;
+        c.value = opt_bitrate;
+        if (ioctl(fd, VIDIOC_S_CTRL, &c)) {
+            bad("S_CTRL(BITRATE)");
+        } else {
+            printf("  ok: CBR %d bps at %d fps\n", opt_bitrate, FRAME_RATE);
         }
     }
 
@@ -1616,7 +1651,7 @@ int main(int argc, char **argv)
     int mode = 0;                              /* 0 joined, 1 export only, 2 encoder only */
     int c;
 
-    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:")) != -1) {
+    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:R:")) != -1) {
         switch (c) {
         case 'x':
             mode = 1;
@@ -1683,10 +1718,13 @@ int main(int argc, char **argv)
         case 'm':
             opt_max_bytes = (unsigned long)atoi(optarg) << 20;
             break;
+        case 'R':
+            opt_bitrate = atoi(optarg);
+            break;
         default:
             fprintf(stderr, "usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames (0=until signal)] "
                             "[-b bufs] [-o file] [-c h264|hevc] [-H heap] [-G gop] [-m MB] "
-                            "[-p] [-S]\n");
+                            "[-R bps (CBR; default constant-QP)] [-p] [-S]\n");
             return 2;
         }
     }

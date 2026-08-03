@@ -28,12 +28,12 @@ EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 FRAMES="${FRAMES:-200}"
 CVDEPTH="${CVDEPTH:-1}"
-# ISP ladder abscissas, Q8 (256 = 1.0). 3938 is the vendor dark-capture
-# abscissa; whether it fixes the motion artifacts is unresolved, see
-# plans/isp-de3d.md. The AE loop will drive these eventually.
+# ISP ladder abscissas, Q8 (256 = 1.0). 3938 (15.38, the vendor dark-capture
+# abscissa) is the validated indoor operating point for all three ladders;
+# the AE loop will drive these per frame eventually.
 DE3D_GAIN="${DE3D_GAIN:-3938}"
-LNR_GAIN="${LNR_GAIN:-256}"
-RNR_GAIN="${RNR_GAIN:-256}"
+LNR_GAIN="${LNR_GAIN:-3938}"
+RNR_GAIN="${RNR_GAIN:-3938}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
