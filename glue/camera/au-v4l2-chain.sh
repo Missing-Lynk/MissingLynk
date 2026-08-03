@@ -46,6 +46,7 @@ do
 done
 device_push "$REPO/native/build/ml-v4l2grab" || exit 1
 device_push "$REPO/native/build/ml-regdump" || exit 1
+device_push "$REPO/native/build/ml-3a" || exit 1
 
 # The vendor tuning file, verbatim. ar-isp generates its gamma and DRC pages from it.
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"

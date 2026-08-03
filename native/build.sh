@@ -81,6 +81,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     gcc -O2 -Wall -static ml-camtest.c -o build/ml-camtest &&
     gcc -O2 -Wall -static ml-v4l2grab.c -o build/ml-v4l2grab &&
     gcc -O2 -Wall -static ml-cam2enc.c -o build/ml-cam2enc &&
+    gcc -O2 -Wall -static ml-3a.c -o build/ml-3a -lm &&
     gcc -O2 -Wall -fPIC -shared mmiotrace.c -o build/mmiotrace.so -ldl &&
     gcc -O2 -Wall -static ml-isploop.c -o build/ml-isploop &&
     gcc -O2 -Wall -static ml-lutfill.c -o build/ml-lutfill &&
