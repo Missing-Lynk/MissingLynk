@@ -28,6 +28,12 @@ EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 FRAMES="${FRAMES:-200}"
 CVDEPTH="${CVDEPTH:-1}"
+# ISP ladder abscissas, Q8 (256 = 1.0). 3938 is the vendor dark-capture
+# abscissa; whether it fixes the motion artifacts is unresolved, see
+# plans/isp-de3d.md. The AE loop will drive these eventually.
+DE3D_GAIN="${DE3D_GAIN:-3938}"
+LNR_GAIN="${LNR_GAIN:-256}"
+RNR_GAIN="${RNR_GAIN:-256}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
@@ -140,7 +146,7 @@ echo -n /tmp/fw > /sys/module/firmware_class/parameters/path 2>/dev/null
 insmod /tmp/nt99235.ko exposure=$EXPO gain=$GAIN || fail 'insmod nt99235'
 insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
 insmod /tmp/ar-vif.ko || fail 'insmod ar-vif'
-insmod /tmp/ar-isp.ko || fail 'insmod ar-isp'
+insmod /tmp/ar-isp.ko de3d_gain=$DE3D_GAIN lnr_gain=$LNR_GAIN rnr_gain=$RNR_GAIN || fail 'insmod ar-isp'
 insmod /tmp/ar-cvisp.ko depth=$CVDEPTH || fail 'insmod ar-cvisp'
 sleep 1
 echo '  modules loaded'
