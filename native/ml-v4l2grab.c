@@ -36,6 +36,16 @@
 /** Number of buffers to request from the driver. */
 #define BUFFER_COUNT 4
 
+/**
+ * Capacity of the buffer array.
+ *
+ * A driver may hand back MORE buffers than were asked for: vb2 raises the count to
+ * min_queued_buffers + 1, and on the CVISP node that minimum tracks the capture depth. Asking
+ * for BUFFER_COUNT and indexing the array by the returned count is how this tool wrote past the
+ * end of a stack array and then queued a buffer it had never mapped.
+ */
+#define MAX_BUFFERS 8
+
 /** Default number of frames to capture before stopping. */
 #define DEFAULT_FRAME_COUNT 5
 
@@ -292,6 +302,12 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
     }
 
     printf("allocated %u buffers\n", request.count);
+
+    if (request.count > MAX_BUFFERS) {
+        fprintf(stderr, "ml-v4l2grab: driver returned %u buffers, this tool holds %u\n",
+                request.count, MAX_BUFFERS);
+        return 1;
+    }
 
     for (index = 0; index < request.count; index++) {
         struct v4l2_plane planes[MAX_PLANES];
@@ -591,7 +607,7 @@ int main(int argc, char **argv)
     const char *output = "/tmp/frame.raw";
     unsigned int frame_count = DEFAULT_FRAME_COUNT;
     unsigned int timeout = DEFAULT_TIMEOUT_SECONDS;
-    struct capture_buffer buffers[BUFFER_COUNT];
+    struct capture_buffer buffers[MAX_BUFFERS];
     struct capture_device device_state;
     unsigned int buffer_count = 0;
     unsigned int plane;
@@ -666,7 +682,7 @@ int main(int argc, char **argv)
     result = capture_frames(&device_state, buffers, buffer_count, frame_count, timeout,
                             output);
 
-    for (buffer_count = 0; buffer_count < BUFFER_COUNT; buffer_count++) {
+    for (buffer_count = 0; buffer_count < MAX_BUFFERS; buffer_count++) {
         for (plane = 0; plane < MAX_PLANES; plane++) {
             struct capture_plane *mapped = &buffers[buffer_count].plane[plane];
 

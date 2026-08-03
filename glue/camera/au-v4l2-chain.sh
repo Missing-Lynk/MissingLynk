@@ -27,6 +27,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 FRAMES="${FRAMES:-200}"
+CVDEPTH="${CVDEPTH:-1}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
@@ -140,7 +141,7 @@ insmod /tmp/nt99235.ko exposure=$EXPO gain=$GAIN || fail 'insmod nt99235'
 insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
 insmod /tmp/ar-vif.ko || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko || fail 'insmod ar-isp'
-insmod /tmp/ar-cvisp.ko || fail 'insmod ar-cvisp'
+insmod /tmp/ar-cvisp.ko depth=$CVDEPTH || fail 'insmod ar-cvisp'
 sleep 1
 echo '  modules loaded'
 
