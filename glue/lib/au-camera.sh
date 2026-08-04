@@ -41,6 +41,27 @@ if [ "${RF_ROLE:-}" != "air" ]; then
     fi
 fi
 
+# The goggle's address on the RF link, which is what the AU reaches over sdio0 once the chip has
+# associated. ml-air-video sends video to port 10001 there.
+AU_RF_PEER="${AU_RF_PEER:-10.0.0.1}"
+
+# au_require_rf_link - refuse to continue unless sdio0 is up, and print what it is.
+#
+# A link-down run still looks healthy from the AU side: sendto() fails per frame, but the frame
+# counters count encoder output, so a bench reports its full rate while nothing reaches the
+# goggle. A run costs a battery on both boards, so it is cheaper to refuse than to re-read.
+au_require_rf_link() {
+    if sshg "ip -br addr show sdio0 2>/dev/null | grep -q UP" </dev/null; then
+        sshg "ip -br addr show sdio0; ip route get $AU_RF_PEER 2>&1 | head -1" </dev/null
+        return 0
+    fi
+
+    echo "sdio0 is not up: ml-air-link brings RF up at boot, so this is a link failure" >&2
+    echo "  check: rc-service ml-air-link status; dmesg | grep -i artosyn_sdio" >&2
+    echo "  never warm-reload artosyn_sdio; RF does not recover its TX credit. Re-boot." >&2
+    exit 1
+}
+
 # au_stock_slot_a - retarget at the STOCK vendor system, ML_STOCK_IP/ML_STOCK_PASS. AU_IP and
 # AU_PASS still win. No probe: the callers gate on their own first command. Where the wrong slot
 # is destructive rather than useless (the flashers) use ensure_stock_slot_a from ssh-opts.sh.
