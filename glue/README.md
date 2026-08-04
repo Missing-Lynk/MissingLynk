@@ -46,7 +46,6 @@ Serial setup (one-time): the `boot/`, `dev/`, and `recovery/` serial steps need 
   - `au-snapshot-vendor.sh` captures the stock slot A's complete working camera configuration (registers, sensor, DMA table pointers and contents) read-only, mid-stream. The reference every comparison is made against.
   - `au-slotA-mmiotrace.sh` + `au-run-dbg.template.sh` install the `../native/mmiotrace.c` `LD_PRELOAD` shim under the vendor's `ar_lowdelay` and capture its register writes.
   - `au-chain-capture.sh` / `au-chain-diff.py` read the same window list from both slots and diff them block by block; `diff-live-registers.py` does the same for two `ml-regdump` window dumps.
-  - `au-cvisp-firstlight.sh`, `au-cvisp-framelock.sh` the CVISP frame-writer experiments.
   - `gen-block3d.py` emits ISP register writes for the harness; `planes2png.py` renders captured planes and prints the luma statistics a capture is judged by.
 - `isp/` ISP DMA table codecs: pure host-side data transforms, no device contact.
   - `gamma-codec.py` decodes, encodes and generates the `0x4000` gamma table, including `fromblob` straight from the vendor tuning blob.

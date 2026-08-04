@@ -223,7 +223,7 @@ int main(int argc, char **argv)
 			/*
 			 * Ring rotation only, no ISP cycle. This is the combination that
 			 * kernel/docs/camera-stack.md records as sustaining, and existing
-			 * callers such as au-cvisp-framelock.sh depend on it. Briefly
+			 * callers such as au-prove-camera.sh depend on it. Briefly
 			 * making --cvisp also drive the cycle silently changed what every
 			 * one of those callers did, so the cycle is opt-in below instead.
 			 */
