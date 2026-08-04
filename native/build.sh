@@ -52,11 +52,25 @@ MTDUTILS_LIB="vendor/mtd-utils/lib/libmtd.c vendor/mtd-utils/lib/libmtd_legacy.c
 vendor/mtd-utils/lib/libubi.c vendor/mtd-utils/lib/libubigen.c vendor/mtd-utils/lib/libscan.c \
 vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/lib/execinfo.c"
 
+# The single-file tools, as "<name>" or "<name>:<extra ld flags>". Each builds from <name>.c with
+# one static link, so they go through one loop rather than a line apiece. The split says which is
+# which: DEVICE_TOOLS ship on the device, BRINGUP_TOOLS exist to answer a hardware question and
+# are staged by hand when one is being asked. Tools whose compile line is not this shape stay
+# spelled out in the container script below.
+DEVICE_TOOLS="air-qpower ml-rfcmd"
+BRINGUP_TOOLS="ml-regdump ml-mmioreplay ml-i2cprobe ml-camtest ml-v4l2grab ml-cam2enc ml-3a:-lm
+ml-isploop ml-lutfill"
+
+# Same shape plus the JSON config pair every one of them reads. Both ship.
+JSON_TOOLS="ml-rf-persist ml-boot-record"
+
 # mlflash links vendored mtd-utils. Compile the upstream units with -w (their warnings are not
 # ours to fix) and -Dmain=ubiformat_main so ubiformat's main() links in as a callable function.
 docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     -e MTDUTILS_VERSION="$MTDUTILS_VERSION" -e MTDUTILS_INC="$MTDUTILS_INC" \
-    -e MTDUTILS_LIB="$MTDUTILS_LIB" gcc:7 sh -c '
+    -e MTDUTILS_LIB="$MTDUTILS_LIB" \
+    -e DEVICE_TOOLS="$DEVICE_TOOLS" -e BRINGUP_TOOLS="$BRINGUP_TOOLS" \
+    -e JSON_TOOLS="$JSON_TOOLS" gcc:7 sh -c '
     gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm &&
     gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
     gcc -O2 -Wall -static -Imtdtool mtdtool/main.c mtdtool/mtd.c mtdtool/gpt.c \
@@ -70,18 +84,15 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
         mlflash/src/probe.c mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
         mlflash/src/device_record.c common/mlfile.c \
         vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
-    gcc -O2 -Wall -static air-qpower.c -o build/air-qpower &&
-    gcc -O2 -Wall -static ml-rfcmd.c -o build/ml-rfcmd &&
-    gcc -O2 -Wall -static -Ivendor -Icommon ml-rf-persist.c common/mlfile.c vendor/cJSON.c -o build/ml-rf-persist &&
-    gcc -O2 -Wall -static -Ivendor -Icommon ml-boot-record.c common/mlfile.c vendor/cJSON.c -o build/ml-boot-record &&
-    gcc -O2 -Wall -static enc-import-test.c -o build/enc-import-test &&
-    gcc -O2 -Wall -static ml-regdump.c -o build/ml-regdump &&
-    gcc -O2 -Wall -static ml-mmioreplay.c -o build/ml-mmioreplay &&
-    gcc -O2 -Wall -static ml-i2cprobe.c -o build/ml-i2cprobe &&
-    gcc -O2 -Wall -static ml-camtest.c -o build/ml-camtest &&
-    gcc -O2 -Wall -static ml-v4l2grab.c -o build/ml-v4l2grab &&
-    gcc -O2 -Wall -static ml-cam2enc.c -o build/ml-cam2enc &&
-    gcc -O2 -Wall -static ml-3a.c -o build/ml-3a -lm &&
+    for spec in $DEVICE_TOOLS $BRINGUP_TOOLS; do
+        name=${spec%%:*}
+        extra=${spec#"$name"}
+        gcc -O2 -Wall -static "$name.c" -o "build/$name" ${extra#:} || exit 1
+    done &&
+    for name in $JSON_TOOLS; do
+        gcc -O2 -Wall -static -Ivendor -Icommon "$name.c" common/mlfile.c vendor/cJSON.c \
+            -o "build/$name" || exit 1
+    done &&
     gcc -O2 -Wall -fPIC -shared mmiotrace.c -o build/mmiotrace.so -ldl &&
     gcc -O2 -Wall -static ml-isploop.c -o build/ml-isploop &&
     gcc -O2 -Wall -static ml-lutfill.c -o build/ml-lutfill &&
