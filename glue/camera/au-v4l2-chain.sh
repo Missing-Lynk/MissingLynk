@@ -27,7 +27,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 EXPO="${EXPO:-1123}"
 GAIN="${GAIN:-0x2f}"
 FRAMES="${FRAMES:-200}"
-CVDEPTH="${CVDEPTH:-1}"
+# Unset means: pass no depth= at all, so the run tests the driver's own default.
+CVDEPTH="${CVDEPTH:-}"
 # ISP ladder abscissas, Q8 (256 = 1.0). 3938 (15.38, the vendor dark-capture
 # abscissa) is the validated indoor operating point for all three ladders;
 # the AE loop will drive these per frame eventually.
@@ -148,7 +149,7 @@ insmod /tmp/nt99235.ko exposure=$EXPO gain=$GAIN || fail 'insmod nt99235'
 insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
 insmod /tmp/ar-vif.ko || fail 'insmod ar-vif'
 insmod /tmp/ar-isp.ko de3d_gain=$DE3D_GAIN lnr_gain=$LNR_GAIN rnr_gain=$RNR_GAIN || fail 'insmod ar-isp'
-insmod /tmp/ar-cvisp.ko depth=$CVDEPTH || fail 'insmod ar-cvisp'
+insmod /tmp/ar-cvisp.ko ${CVDEPTH:+depth=$CVDEPTH} || fail 'insmod ar-cvisp'
 sleep 1
 echo '  modules loaded'
 
