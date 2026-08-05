@@ -105,10 +105,9 @@ static void mark_plane(struct capture_plane *plane)
 {
     uint32_t *words = (uint32_t *)plane->start;
     size_t count = plane->length / sizeof(uint32_t);
-    size_t index;
 
-    for (index = 0; index < count; index++) {
-        words[index] = (uint32_t)index ^ 0xa5a5a5a5u;
+    for (size_t i = 0; i < count; i++) {
+        words[i] = (uint32_t)i ^ 0xa5a5a5a5u;
     }
 }
 
@@ -130,13 +129,12 @@ static void report_plane_coverage(const struct capture_plane *plane, unsigned in
     size_t count = plane->length / sizeof(uint32_t);
     size_t written = 0;
     size_t last = 0;
-    size_t index;
     int found = 0;
 
-    for (index = 0; index < count; index++) {
-        if (words[index] != ((uint32_t)index ^ 0xa5a5a5a5u)) {
+    for (size_t i = 0; i < count; i++) {
+        if (words[i] != ((uint32_t)i ^ 0xa5a5a5a5u)) {
             written++;
-            last = index;
+            last = i;
             found = 1;
         }
     }
@@ -192,7 +190,7 @@ static void report_device(struct capture_device *device)
     struct v4l2_fmtdesc description;
     struct v4l2_format format;
     unsigned int capabilities;
-    unsigned int index;
+    unsigned int i;
 
     memset(&capability, 0, sizeof(capability));
     if (ioctl_retry(device->fd, VIDIOC_QUERYCAP, &capability) == 0) {
@@ -209,16 +207,16 @@ static void report_device(struct capture_device *device)
     device->type = device->multiplanar ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE
                                        : V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
-    for (index = 0;; index++) {
+    for (i = 0;; i++) {
         memset(&description, 0, sizeof(description));
-        description.index = index;
+        description.index = i;
         description.type = device->type;
 
         if (ioctl_retry(device->fd, VIDIOC_ENUM_FMT, &description) != 0) {
             break;
         }
 
-        printf("format %u: %c%c%c%c\n", index,
+        printf("format %u: %c%c%c%c\n", i,
                (char)(description.pixelformat & 0xff),
                (char)((description.pixelformat >> 8) & 0xff),
                (char)((description.pixelformat >> 16) & 0xff),
@@ -236,13 +234,13 @@ static void report_device(struct capture_device *device)
         printf("current: %ux%u, %u planes\n", format.fmt.pix_mp.width,
                format.fmt.pix_mp.height, format.fmt.pix_mp.num_planes);
 
-        for (index = 0; index < format.fmt.pix_mp.num_planes && index < MAX_PLANES;
-             index++) {
-            device->stride[index] = format.fmt.pix_mp.plane_fmt[index].bytesperline;
+        for (i = 0; i < format.fmt.pix_mp.num_planes && i < MAX_PLANES;
+             i++) {
+            device->stride[i] = format.fmt.pix_mp.plane_fmt[i].bytesperline;
 
-            printf("  plane %u: %u bytes per line, %u bytes\n", index,
-                   format.fmt.pix_mp.plane_fmt[index].bytesperline,
-                   format.fmt.pix_mp.plane_fmt[index].sizeimage);
+            printf("  plane %u: %u bytes per line, %u bytes\n", i,
+                   format.fmt.pix_mp.plane_fmt[i].bytesperline,
+                   format.fmt.pix_mp.plane_fmt[i].sizeimage);
         }
     } else {
         device->stride[0] = format.fmt.pix.bytesperline;
@@ -289,7 +287,7 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
                        unsigned int *count_out)
 {
     struct v4l2_requestbuffers request;
-    unsigned int index;
+    unsigned int i;
 
     memset(&request, 0, sizeof(request));
     request.count = BUFFER_COUNT;
@@ -309,7 +307,7 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
         return 1;
     }
 
-    for (index = 0; index < request.count; index++) {
+    for (i = 0; i < request.count; i++) {
         struct v4l2_plane planes[MAX_PLANES];
         struct v4l2_buffer buffer;
         unsigned int p;
@@ -318,7 +316,7 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
         memset(&buffer, 0, sizeof(buffer));
         buffer.type = device->type;
         buffer.memory = V4L2_MEMORY_MMAP;
-        buffer.index = index;
+        buffer.index = i;
 
         if (device->multiplanar) {
             buffer.m.planes = planes;
@@ -326,14 +324,14 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
         }
 
         if (ioctl_retry(device->fd, VIDIOC_QUERYBUF, &buffer) != 0) {
-            fprintf(stderr, "ml-v4l2grab: QUERYBUF %u: %s\n", index, strerror(errno));
+            fprintf(stderr, "ml-v4l2grab: QUERYBUF %u: %s\n", i, strerror(errno));
             return 1;
         }
 
         if (!device->multiplanar) {
-            buffers[index].planes = 1;
+            buffers[i].planes = 1;
 
-            if (map_plane(device->fd, &buffers[index].plane[0], buffer.length,
+            if (map_plane(device->fd, &buffers[i].plane[0], buffer.length,
                           (off_t)buffer.m.offset) != 0) {
                 return 1;
             }
@@ -347,10 +345,10 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
             return 1;
         }
 
-        buffers[index].planes = buffer.length;
+        buffers[i].planes = buffer.length;
 
         for (p = 0; p < buffer.length; p++) {
-            if (map_plane(device->fd, &buffers[index].plane[p], planes[p].length,
+            if (map_plane(device->fd, &buffers[i].plane[p], planes[p].length,
                           (off_t)planes[p].m.mem_offset) != 0) {
                 return 1;
             }
@@ -373,20 +371,20 @@ static void report_frame_content(const uint8_t *data, size_t length)
     size_t histogram[256];
     size_t distinct = 0;
     size_t nonzero = 0;
-    size_t index;
+    size_t i;
 
     memset(histogram, 0, sizeof(histogram));
 
-    for (index = 0; index < length; index++) {
-        histogram[data[index]]++;
+    for (i = 0; i < length; i++) {
+        histogram[data[i]]++;
 
-        if (data[index] != 0) {
+        if (data[i] != 0) {
             nonzero++;
         }
     }
 
-    for (index = 0; index < 256; index++) {
-        if (histogram[index] != 0) {
+    for (i = 0; i < 256; i++) {
+        if (histogram[i] != 0) {
             distinct++;
         }
     }
@@ -458,13 +456,13 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
                           unsigned int timeout, const char *path)
 {
     enum v4l2_buf_type type = device->type;
-    unsigned int index;
+    unsigned int i;
     unsigned int captured;
     double started;
     double elapsed;
     int result = 1;
 
-    for (index = 0; index < buffer_count; index++) {
+    for (i = 0; i < buffer_count; i++) {
         struct v4l2_plane planes[MAX_PLANES];
         struct v4l2_buffer buffer;
 
@@ -472,23 +470,23 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
         memset(&buffer, 0, sizeof(buffer));
         buffer.type = device->type;
         buffer.memory = V4L2_MEMORY_MMAP;
-        buffer.index = index;
+        buffer.index = i;
 
         if (device->multiplanar) {
             buffer.m.planes = planes;
-            buffer.length = buffers[index].planes;
+            buffer.length = buffers[i].planes;
         }
 
         if (device->mark) {
             unsigned int p;
 
-            for (p = 0; p < buffers[index].planes; p++) {
-                mark_plane(&buffers[index].plane[p]);
+            for (p = 0; p < buffers[i].planes; p++) {
+                mark_plane(&buffers[i].plane[p]);
             }
         }
 
         if (ioctl_retry(device->fd, VIDIOC_QBUF, &buffer) != 0) {
-            fprintf(stderr, "ml-v4l2grab: QBUF %u: %s\n", index, strerror(errno));
+            fprintf(stderr, "ml-v4l2grab: QBUF %u: %s\n", i, strerror(errno));
             return 1;
         }
     }

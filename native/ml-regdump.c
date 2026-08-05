@@ -82,7 +82,7 @@ static int dump_registers(int mem_fd, uint64_t physical_address, size_t word_cou
     void *mapping = NULL;
     size_t mapping_length = 0;
     volatile uint32_t *registers;
-    size_t index;
+    size_t i;
 
     registers = map_register_window(mem_fd, physical_address, word_count * sizeof(uint32_t), 0,
                                     &mapping, &mapping_length);
@@ -90,13 +90,13 @@ static int dump_registers(int mem_fd, uint64_t physical_address, size_t word_cou
         return 1;
     }
 
-    for (index = 0; index < word_count; index++) {
+    for (i = 0; i < word_count; i++) {
         /* Start a new line every 4 words, labelled with the offset from the base. */
-        if ((index % 4) == 0) {
-            printf("%s+0x%04zx:", (index == 0) ? "" : "\n", index * sizeof(uint32_t));
+        if ((i % 4) == 0) {
+            printf("%s+0x%04zx:", (i == 0) ? "" : "\n", i * sizeof(uint32_t));
         }
 
-        printf(" %08x", registers[index]);
+        printf(" %08x", registers[i]);
     }
 
     printf("\n");

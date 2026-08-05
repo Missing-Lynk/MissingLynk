@@ -40,12 +40,14 @@ if [ -z "$REAL" ]; then
 		[ -x "$d/ar_lowdelay" ] && REAL="$d/ar_lowdelay" && break
 	done
 fi
+
 if [ -z "$REAL" ] || [ ! -x "$REAL" ]; then
 	echo "ABORT: cannot locate real ar_lowdelay"
 	rm -f /usrdata/run_dbg.sh.tmpl
 	exit 1
 fi
 echo "real ar_lowdelay: $REAL"
+
 sed -e "s#__REAL__#$REAL#g" -e "s#__LO__#$LO#g" -e "s#__HI__#$HI#g" \
 	-e "s#__READS__#$READS#g" -e "s#__TIME__#$TIME#g" \
 	-e "s#__NOMEM__#$NOMEM#g" \
@@ -61,6 +63,7 @@ if grep -q "__REAL__\|__LO__\|__HI__\|__READS__\|__TIME__\|__NOMEM__\|__SKIP_LO_
 	rm -f /usrdata/run_dbg.sh
 	exit 1
 fi
+
 echo "--- shim LD_PRELOAD line (want mmiotrace.so + real path + window) ---"
 grep -n "LD_PRELOAD=/usrdata/mmiotrace.so" /usrdata/run_dbg.sh
 echo "--- self-remove + verbatim run.sh source present? (want both) ---"
@@ -73,9 +76,11 @@ grep -nE "rm -f /usrdata/run_dbg.sh|\. /usr/usrdata/run.sh" /usrdata/run_dbg.sh
 #    caches is not available, so cmp the two files after sync as the persistence
 #    check the boot gate itself will do.
 sync; sync
+
 if ! cmp -s /usr/usrdata/buildtime /usrdata/buildtime; then
 	echo "ABORT: buildtime mismatch AFTER sync - the gate would wipe the hook; not leaving it armed"
 	rm -f /usrdata/run_dbg.sh; sync; exit 1
 fi
+
 echo "synced; buildtime persisted and still matches"
 echo "--- staged ---"; ls -la /usrdata/run_dbg.sh /usrdata/buildtime /usrdata/mmiotrace.so

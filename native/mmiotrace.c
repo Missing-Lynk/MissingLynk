@@ -123,6 +123,7 @@ static void log_access(char kind, uint64_t phys, uint64_t val, int width, int de
     if (g_log_fd < 0) {
         return;
     }
+
     if (phys < g_lo || phys > g_hi) {
         return;
     }
@@ -182,21 +183,27 @@ static void resolve(void)
     if (!real_mmap) {
         real_mmap = dlsym(RTLD_NEXT, "mmap");
     }
+
     if (!real_open) {
         real_open = dlsym(RTLD_NEXT, "open");
     }
+
     if (!real_openat) {
         real_openat = dlsym(RTLD_NEXT, "openat");
     }
+
     if (!real_ioctl) {
         real_ioctl = dlsym(RTLD_NEXT, "ioctl");
     }
+
     if (!real_munmap) {
         real_munmap = dlsym(RTLD_NEXT, "munmap");
     }
+
     if (!real_sigaction) {
         real_sigaction = dlsym(RTLD_NEXT, "sigaction");
     }
+
     if (!real_signal) {
         real_signal = dlsym(RTLD_NEXT, "signal");
     }
@@ -204,10 +211,9 @@ static void resolve(void)
 
 static void find_map(uintptr_t addr, struct traced_map **out, size_t *off)
 {
-    int i;
-
     *out = NULL;
-    for (i = 0; i < g_map_count; i++) {
+
+    for (int i = 0; i < g_map_count; i++) {
         if (addr >= g_maps[i].ro_base &&
             addr < g_maps[i].ro_base + g_maps[i].len) {
             *out = &g_maps[i];
@@ -336,9 +342,11 @@ static int insn_is_load(uint32_t insn)
     if (family == 5) { /* pair */
         return (insn >> 22) & 1;
     }
+
     if (family == 7) { /* register */
         return ((insn >> 22) & 3) != 0;
     }
+
     return 0;
 }
 
@@ -368,15 +376,18 @@ static int load_serviceable(uint32_t insn)
         if (class == 1) { /* scaled unsigned offset */
             return 1;
         }
+
         if (class == 0 && !((insn >> 21) & 1) && !((insn >> 10) & 3)) {
             return 1;                           /* LDUR unscaled */
         }
+
         if (class == 0 && ((insn >> 21) & 1) && ((insn >> 10) & 3) == 2) {
             return 1;                           /* register offset: no writeback,
                                                  * and the fault already gives us
                                                  * the resolved address */
         }
     }
+
     return 0;
 }
 
@@ -450,6 +461,7 @@ static int decode_load(uint32_t insn, ucontext_t *uc, struct traced_map *m, size
         put_reg(uc, rt, v1, w, 1);
         put_reg(uc, rt2, v2, w, 1);
         uc->uc_mcontext.pc += 4;
+
         return 1;
     }
 
@@ -461,6 +473,7 @@ static int decode_load(uint32_t insn, ucontext_t *uc, struct traced_map *m, size
     log_access('r', m->phys + off, val, width, 1);
     put_reg(uc, rt, val, width, opc);
     uc->uc_mcontext.pc += 4;
+
     return 1;
 }
 
@@ -474,6 +487,7 @@ static void untrap_reads(struct traced_map *m, uint32_t insn)
     if (m->prot_len) {
         mprotect((void *)m->prot_va, m->prot_len, PROT_READ);
     }
+
     log_note("read tracing disabled: unsupported load form", insn);
 }
 
@@ -524,27 +538,35 @@ static void install(void)
     e = getenv("MMIOTRACE_OUT");
     g_log_fd = open(e ? e : "/tmp/mmio.log",
             O_WRONLY | O_CREAT | O_APPEND, 0644);
+
     if ((e = getenv("MMIOTRACE_LO"))) {
         g_lo = strtoull(e, NULL, 0);
     }
+
     if ((e = getenv("MMIOTRACE_HI"))) {
         g_hi = strtoull(e, NULL, 0);
     }
+
     if ((e = getenv("MMIOTRACE_NOMEM")) && *e && *e != '0') {
         g_nomem = 1;
     }
+
     if ((e = getenv("MMIOTRACE_READS")) && *e && *e != '0') {
         g_reads = 1;
     }
+
     if ((e = getenv("MMIOTRACE_TIME")) && *e && *e != '0') {
         g_time = 1;
     }
+
     if ((e = getenv("MMIOTRACE_IOCTL_CENSUS")) && *e && *e != '0') {
         g_ioctl_census = 1;
     }
+
     if ((e = getenv("MMIOTRACE_SKIP_LO"))) {
         g_skip_lo = strtoull(e, NULL, 0);
     }
+
     if ((e = getenv("MMIOTRACE_SKIP_HI"))) {
         g_skip_hi = strtoull(e, NULL, 0);
     }
@@ -576,12 +598,15 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
     if (signum != SIGSEGV || g_nomem) {
         return real_sigaction(signum, act, oldact);
     }
+
     if (oldact) {
         *oldact = g_old_segv;
     }
+
     if (act) {
         g_old_segv = *act;
     }
+
     return 0;
 }
 
@@ -597,6 +622,7 @@ void (*signal(int signum, void (*handler)(int)))(int)
 
     memset(&g_old_segv, 0, sizeof(g_old_segv));
     g_old_segv.sa_handler = handler;
+
     return prev;
 }
 
@@ -613,12 +639,15 @@ static int classify_dev(const char *path)
     if (!path) {
         return 0;
     }
+
     if (strcmp(path, "/dev/mem") == 0) {
         return 1;
     }
+
     if (strcmp(path, "/dev/ar_sys") == 0) {
         return 2;
     }
+
     return 0;
 }
 
@@ -634,10 +663,12 @@ int open(const char *path, int flags, ...)
         mode = va_arg(ap, int);
         va_end(ap);
     }
+
     fd = real_open(path, flags, mode);
     if (fd >= 0 && fd < (int)sizeof(g_devtype)) {
         g_devtype[fd] = classify_dev(path);
     }
+
     return fd;
 }
 
@@ -653,10 +684,12 @@ int openat(int dirfd, const char *path, int flags, ...)
         mode = va_arg(ap, int);
         va_end(ap);
     }
+
     fd = real_openat(dirfd, path, flags, mode);
     if (fd >= 0 && fd < (int)sizeof(g_devtype)) {
         g_devtype[fd] = classify_dev(path);
     }
+
     return fd;
 }
 
@@ -669,15 +702,18 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
     if (ret == MAP_FAILED) {
         return ret;
     }
+
     /* NOMEM: leave every mapping fully writable and untrapped - capture comes
      * solely from the /dev/ar_sys ioctl hook, which needs no page faults.
      */
     if (g_nomem) {
         return ret;
     }
+
     if (fd < 0 || fd >= (int)sizeof(g_devtype) || !g_devtype[fd]) {
         return ret;
     }
+
     if (!(prot & PROT_WRITE) || g_map_count >= MAX_MAPS) {
         return ret;
     }
@@ -730,6 +766,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
                 if (b > map_hi) {
                     b = map_hi;
                 }
+
                 uintptr_t va = (uintptr_t)ret + (a - map_lo);
                 /* PROT_NONE also faults loads, which is the only way to see
                  * the vendor's polls; PROT_READ traps stores alone.
@@ -753,6 +790,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
                     if (a < s_lo) {
                         mprotect((void *)va, (size_t)(s_lo - a), prot);
                     }
+
                     if (s_hi < b) {
                         mprotect((void *)((uintptr_t)ret + (s_hi - map_lo)),
                         (size_t)(b - s_hi), prot);
@@ -760,11 +798,13 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
                 } else {
                     mprotect((void *)va, (size_t)(b - a), prot);
                 }
+
                 g_maps[g_map_count - 1].prot_va = va;
                 g_maps[g_map_count - 1].prot_len = (size_t)(b - a);
             }
         }
     }
+
     return ret;
 }
 
@@ -838,6 +878,7 @@ int ioctl(int fd, unsigned long request, ...)
                 return real_ioctl(fd, request, arg);
             }
         }
+
         if (g_seen_count < MAX_SEEN) {
             g_seen[g_seen_count++] = request;
             log_note("ar_sys ioctl request", (uint32_t)request);

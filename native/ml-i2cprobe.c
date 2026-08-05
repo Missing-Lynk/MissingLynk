@@ -135,7 +135,7 @@ int main(int argc, char **argv)
 
     if (argc >= 6 && strcmp(argv[4], "-n") == 0) {
         unsigned long count = strtoul(argv[5], NULL, 0);
-        unsigned long index;
+        unsigned long i;
 
         if (count == 0 || count > MAX_READ_COUNT) {
             fprintf(stderr, "ml-i2cprobe: count must be 1..%d\n", MAX_READ_COUNT);
@@ -143,8 +143,8 @@ int main(int argc, char **argv)
             return 2;
         }
 
-        for (index = 0; index < count; index++) {
-            uint16_t current = (uint16_t)(register_address + index);
+        for (i = 0; i < count; i++) {
+            uint16_t current = (uint16_t)(register_address + i);
             uint8_t value = 0;
 
             if (read_register(bus_fd, chip_address, current, &value) != 0) {
