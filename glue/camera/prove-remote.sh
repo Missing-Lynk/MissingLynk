@@ -21,9 +21,10 @@ WATCH=${WATCH:-1}
 # Sweep captures are luma-only by default: /tmp is a 32 MB tmpfs and three planes cost 5.4 MB
 # per step, so a long sweep silently truncates its last capture. One plane costs 2.2 MB.
 ALL3='--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000'
-if [ -n "${SWEEP_COLOUR:-}" ]
-then PLANES=$ALL3
-else PLANES='--plane 0x28014000'
+if [ -n "${SWEEP_COLOUR:-}" ]; then
+	PLANES=$ALL3
+else
+	PLANES='--plane 0x28014000'
 fi
 
 fail() {
@@ -33,7 +34,9 @@ fail() {
 	# Leave nothing running and nothing loaded, so the next attempt starts clean.
 	for p in /proc/[0-9]*; do
 		c=$(cat "$p"/comm 2>/dev/null)
-		case "$c" in ml-v4l2grab|ml-isploop) kill -9 "${p#/proc/}" 2>/dev/null ;; esac
+		case "$c" in
+		ml-v4l2grab|ml-isploop) kill -9 "${p#/proc/}" 2>/dev/null ;;
+		esac
 	done
 	exit 1
 }
@@ -93,9 +96,10 @@ echo '  stage 1c ok: tuning pages captured for residency check'
 # kernel's capped memory, so it cannot corrupt anything the kernel owns. It happens before
 # insmod so nothing has fetched the table yet.
 if [ -f /tmp/gamma.bin ]; then
-	if /tmp/ml-lutfill 0x2b2ec600 4096 load:/tmp/gamma.bin >/dev/null 2>&1
-	then echo '  stage 1d ok: vendor gamma injected at 0x2b2ec600'
-	else echo '  stage 1d FAILED: gamma not injected'
+	if /tmp/ml-lutfill 0x2b2ec600 4096 load:/tmp/gamma.bin >/dev/null 2>&1; then
+		echo '  stage 1d ok: vendor gamma injected at 0x2b2ec600'
+	else
+		echo '  stage 1d FAILED: gamma not injected'
 	fi
 else
 	echo '  stage 1d skipped: no /tmp/gamma.bin, running on resident gamma'
@@ -108,9 +112,10 @@ if [ -f /tmp/nt99235-tuning-preview-fpv.bin ]; then
 	mkdir -p /tmp/fw/artosyn
 	mv /tmp/nt99235-tuning-preview-fpv.bin /tmp/fw/artosyn/
 	# shellcheck disable=SC3037  # busybox ash, the only shell this runs under, implements echo -n
-	if echo -n /tmp/fw > /sys/module/firmware_class/parameters/path 2>/dev/null
-	then echo '  stage 1e ok: tuning file on the firmware search path'
-	else echo '  stage 1e FAILED: no firmware_class path parameter, ar-isp will seed instead'
+	if echo -n /tmp/fw > /sys/module/firmware_class/parameters/path 2>/dev/null; then
+		echo '  stage 1e ok: tuning file on the firmware search path'
+	else
+		echo '  stage 1e FAILED: no firmware_class path parameter, ar-isp will seed instead'
 	fi
 else
 	echo '  stage 1e skipped: no tuning file, ar-isp will seed instead of generate'

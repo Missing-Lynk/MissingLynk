@@ -109,6 +109,7 @@ echo "=== staging ==="
 for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do
 	device_push "$KD/$m.ko" || exit 1
 done
+
 for t in ml-regdump ml-v4l2grab ml-isploop ml-lutfill ml-i2cprobe; do
 	device_push "$REPO/native/build/$t" || exit 1
 done
@@ -165,17 +166,21 @@ for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; 
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
 	fi
+
 	for p in 0 1 2; do
 		device_pull "/tmp/$name.$p" "$OUT/$name.$p" 2>/dev/null || true
 	done
+
 	ESWEEP_NAMES=""
 	for es in ${ESWEEP:-}; do
 		ESWEEP_NAMES="$ESWEEP_NAMES e${es%%:*}_g${es##*:}"
 	done
+
 	for sw in $ESWEEP_NAMES $SWEEP_NAMES; do
 		for p in 0 1 2; do
 			device_pull "/tmp/${name}_$sw.$p" "$OUT/${name}_$sw.$p" 2>/dev/null || true
 		done
+
 		# /tmp is a 32 MB tmpfs and each capture is about 5.4 MB, so a sweep of more than
 		# five steps fills it. The failure is silent and looks exactly like a capture that
 		# had no effect: the last plane comes back zero-length. Free each one once it is off
@@ -183,15 +188,18 @@ for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; 
 		sshg "rm -f /tmp/${name}_$sw.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_$sw" "$OUT/${name}_$sw" || true
 	done
+
 	for t in gamma compander drc; do
 		device_pull "/tmp/pre_$t.bin" "$OUT/pre_$t.bin" 2>/dev/null || true
 	done
+
 	# The LSC page as the vendor computed it for this scene. hdf-037 established it has no
 	# static source: it is built at runtime from stats, so this capture is the only form of
 	# it we can hold, and the open driver carries a captured page rather than generating one.
 	if [ "${LSCPOKE:-0}" = 1 ]; then
 		device_pull "/tmp/lsc_pre.bin" "$OUT/lsc_pre.bin" 2>/dev/null || true
 	fi
+
 	# Stage 7b's artifacts. Unconditional: that stage is passive and always runs, so gating
 	# these on a poke lever loses them silently, which is how the first run lost both.
 	device_pull "/tmp/rro_raw.bin" "$OUT/rro_raw.bin" 2>/dev/null || true
@@ -200,7 +208,9 @@ for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; 
 	if [ "${HDRPOKE:-0}" = 1 ]; then
 		device_pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
 	fi
+
 	device_pull "/tmp/oursensor.txt" "$REPO/out/au-snapshot/ours-sensor-full.txt" 2>/dev/null || true
+
 	# Mid-stream register windows, for the live-against-live diff. Small, so unlike the raw
 	# frame this pull is reliable over the RF link.
 	device_pull "/tmp/ourisp.txt" "$REPO/out/au-snapshot/ours-registers-live.txt" 2>/dev/null || true
@@ -208,15 +218,18 @@ for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; 
 		for p in 0 1 2; do
 			device_pull "/tmp/${name}_b3d.$p" "$OUT/${name}_b3d.$p" 2>/dev/null || true
 		done
+
 		sshg "rm -f /tmp/${name}_b3d.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_b3d" "$OUT/${name}_b3d" || true
 		device_pull "/tmp/ourisp_b3d.txt" "$REPO/out/au-snapshot/ours-registers-live-b3d.txt" 2>/dev/null || true
 	fi
+
 	if [ -s "$REPO/out/au-snapshot/ours-registers-live.txt" ]; then
 		echo "  pulled mid-stream registers: $(grep -c '^+0x' "$REPO/out/au-snapshot/ours-registers-live.txt") lines"
 	else
 		echo "  WARNING: mid-stream register pull came back EMPTY"
 	fi
+
 	# What the vendor left at its own addresses, which the driver may seed from.
 	#
 	# This used to score each page by zero fraction and monotonicity and call all three
@@ -227,39 +240,7 @@ for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; 
 	# scores measured the packing rather than the content.
 	#
 	# It now decodes instead of guessing. Absent a decode it says so rather than judging.
-	python3 - "$OUT" "$HERE/../isp" <<'PYE'
-import importlib.util, os, struct, sys
-out, isp = sys.argv[1], sys.argv[2]
-
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, os.path.join(isp, name + "-codec.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-print("  tuning pages the vendor left resident, before this bring-up:")
-for nm, size in (("gamma", 0x4000), ("compander", 0x7800), ("drc", 0x2000)):
-    f = os.path.join(out, "pre_" + nm + ".bin")
-    if not os.path.exists(f) or os.path.getsize(f) < size:
-        print(f"    {nm:<10} missing")
-        continue
-    data = open(f, "rb").read()[:size]
-    if nm == "gamma":
-        curves = load("gamma").curves(data)
-        mono = [all(c[i] >= c[i - 1] for i in range(1, len(c))) for c in curves]
-        print(f"    {nm:<10} page 0 max {max(curves[0]):4d} monotonic {mono[0]}, "
-              f"page 1 max {max(curves[1]):4d} monotonic {mono[1]}")
-    elif nm == "drc":
-        try:
-            banks = [load("drc").decode_source_bank(data, b) for b in (0, 0x800)]
-            print(f"    {nm:<10} two {len(banks[0])}-sample curves, overlap fields valid")
-        except ValueError as err:
-            print(f"    {nm:<10} does NOT decode as a DRC page: {err}")
-    else:
-        words = struct.unpack(f"<{size // 4}I", data)
-        print(f"    {nm:<10} {size} bytes, {words.count(0)} zero words "
-              f"(no decoder: the generator is not recovered)")
-PYE
+	python3 "$HERE/tuning-residency.py" "$OUT"
 	python3 "$HERE/planes2png.py" "$OUT/$name" "$OUT/$name" || true
 
 	# The capture taken through the CVISP video node, if V4L2CAP asked for one.
@@ -270,6 +251,7 @@ PYE
 		for p in 0 1 2; do
 			device_pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
 		done
+
 		sshg "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_v4l2" "$OUT/${name}_v4l2" || true
 		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_v4l2.0" ]; then
@@ -306,13 +288,7 @@ if [ -s "$OUT/live.0" ] && [ -s "$OUT/live2.0" ]; then
 	if cmp -s "$OUT/live.0" "$OUT/live2.0"; then
 		echo "  IDENTICAL -> frames are NOT updating"
 	else
-		python3 - "$OUT/live.0" "$OUT/live2.0" <<'PYE'
-import sys
-a=open(sys.argv[1],'rb').read(); b=open(sys.argv[2],'rb').read()
-n=min(len(a),len(b))
-diff=sum(1 for i in range(0,n,997) if a[i]!=b[i])
-print(f"  DIFFER -> frames are updating ({100.0*diff/(n//997+1):.1f}% of sampled bytes changed)")
-PYE
+		python3 "$HERE/frame-movement.py" "$OUT/live.0" "$OUT/live2.0"
 	fi
 else
 	echo "  one of the live captures is missing"

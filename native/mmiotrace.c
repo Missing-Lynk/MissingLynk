@@ -284,18 +284,21 @@ static void decode_store(uint32_t insn, ucontext_t *uc, uintptr_t fault,
     log_write(m->phys + off, val, width, decoded);
 
     switch (width) {
-    case 1:
+    case 1: {
         *(volatile uint8_t *)dst = (uint8_t)val;
-        break;
-    case 2:
+    } break;
+
+    case 2: {
         *(volatile uint16_t *)dst = (uint16_t)val;
-        break;
-    case 8:
+    } break;
+
+    case 8: {
         *(volatile uint64_t *)dst = val;
-        break;
-    default:
+    } break;
+
+    default: {
         *(volatile uint32_t *)dst = (uint32_t)val;
-        break;
+    } break;
     }
     (void)fault;
     uc->uc_mcontext.pc += 4;
@@ -376,14 +379,21 @@ static void put_reg(ucontext_t *uc, unsigned rt, uint64_t val, int width, unsign
 static uint64_t alias_read(volatile uint8_t *src, int width)
 {
     switch (width) {
-    case 1:
+    case 1: {
         return *(volatile uint8_t *)src;
-    case 2:
+    } break;
+
+    case 2: {
         return *(volatile uint16_t *)src;
-    case 8:
+    } break;
+
+    case 8: {
         return *(volatile uint64_t *)src;
-    default:
+    } break;
+
+    default: {
         return *(volatile uint32_t *)src;
+    } break;
     }
 }
 

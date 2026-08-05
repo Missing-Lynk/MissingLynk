@@ -54,7 +54,8 @@ def decode_page(data: bytes, base: int) -> list[int]:
 
 
 def encode_page(samples: Sequence[int], tail: int = 0) -> bytes:
-    """Pack 512 samples. `tail` is the last record's forward field, the sample AFTER the page.
+    """
+    Pack 512 samples. `tail` is the last record's forward field, the sample AFTER the page.
 
     That field is not cosmetic: the hardware interpolates the curve's top segment towards it,
     so leaving it zero maps the brightest inputs to black. A bring-up with it zeroed wrapped

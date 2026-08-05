@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Emit ISP register writes for au-prove-camera.sh stage 5d.
+"""
+Emit ISP register writes for au-prove-camera.sh stage 5d.
 
     gen-block3d.py vendor [LO-HI]   the vendor's live values over a range
     gen-block3d.py table  [LO-HI]   what raising configure_upto to 2082 would write
@@ -50,24 +51,29 @@ def parse_dump(path):
             if h:
                 block, base = h.group(1), int(h.group(2), 16)
                 continue
+
             m = LINE.match(raw)
             if not m or block != "isp":
                 continue
+
             addr = base + int(m.group(1), 16)
             for i, w in enumerate(m.group(2).split()):
                 out[addr + i * 4] = int(w, 16)
+
     return out
 
 
 def parse_defaults(path):
     with open(path) as handle:
         src = handle.read()
+
     arrays = {}
     for mm in re.finditer(r"(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\n\};", src, re.S):
         arrays[mm.group(1)] = [
             (int(a, 16), int(v, 16))
             for a, v in re.findall(r"\{\s*0x([0-9a-fA-F]+)\s*,\s*0x([0-9a-fA-F]+)", mm.group(2))
         ]
+
     return arrays
 
 
@@ -92,6 +98,7 @@ def main():
         if len(sys.argv) < 3:
             sys.stderr.write("set mode needs ADDR=VAL[,ADDR=VAL...]\n")
             return 2
+
         n = 0
         for pair in sys.argv[2].split(","):
             a, v = pair.split("=", 1)
@@ -100,8 +107,10 @@ def main():
             if excluded(off):
                 sys.stderr.write(f"refusing excluded register 0x{off:04x}\n")
                 return 1
+
             print(f"0x{ISP_BASE + off:08x} 0x{val:08x}")
             n += 1
+
         sys.stderr.write(f"set mode: {n} writes\n")
         return 0
 
@@ -124,9 +133,11 @@ def main():
         for off in sorted(set(ven) & set(ours)):
             if ven[off] == ours[off] or excluded(off) or not (lo <= off <= hi):
                 continue
+
             print(f"GROUP 0x{off:04x}")
             print(f"0x{ISP_BASE + off:08x} 0x{ven[off]:08x}")
             n += 1
+
         sys.stderr.write(f"sweepreg mode: {n} single-register groups in 0x{lo:04x}-0x{hi:04x}\n")
         return 0 if n else 1
 
@@ -139,18 +150,23 @@ def main():
         if not os.path.exists(ours_path):
             sys.stderr.write(f"missing our live dump: {ours_path}\n")
             return 1
+
         ven, ours = parse_dump(snap), parse_dump(ours_path)
         pages = {}
         for off in sorted(set(ven) & set(ours)):
             if ven[off] == ours[off] or excluded(off):
                 continue
+
             pages.setdefault(off & ~0xFF, []).append(off)
+
         for page in sorted(pages):
             print(f"GROUP 0x{page:04x}")
             for off in pages[page]:
                 print(f"0x{ISP_BASE + off:08x} 0x{ven[off]:08x}")
+
         sys.stderr.write(
             f"sweep mode: {sum(len(x) for x in pages.values())} writes in {len(pages)} page groups\n")
+
         return 0
 
     if sys.argv[1] == "diff":
@@ -158,15 +174,19 @@ def main():
         if not os.path.exists(ours_path):
             sys.stderr.write(f"missing our live dump: {ours_path}\n")
             return 1
+
         ven, ours = parse_dump(snap), parse_dump(ours_path)
         vals, skipped = {}, 0
         for off in sorted(set(ven) & set(ours)):
             if ven[off] == ours[off]:
                 continue
+
             if excluded(off):
                 skipped += 1
                 continue
+
             vals[off] = ven[off]
+
         sys.stderr.write(f"diff mode: {len(vals)} writes, {skipped} excluded as unsafe/runtime\n")
     elif sys.argv[1] == "vendor":
         regs = parse_dump(snap)
@@ -176,10 +196,13 @@ def main():
         hdr = os.path.join(REPO, "kernel/overlay/drivers/media/artosyn/ar-isp-defaults.h")
         arrays = parse_defaults(hdr)
         full = {}
+
         for a, v in arrays["ar_isp_recovered"]:
             full[a] = v
+
         for a, v in arrays["ar_isp_setup_1080p60"]:
             full[a] = v
+
         vals = {off: full[off] for off in range(lo, hi + 4, 4)
                 if off in full and not excluded(off)}
 
@@ -189,6 +212,7 @@ def main():
 
     for off in sorted(vals):
         print(f"0x{ISP_BASE + off:08x} 0x{vals[off]:08x}")
+
     return 0
 
 

@@ -138,8 +138,7 @@ int main(int argc, char **argv)
             perror("fopen");
             munmap((void *)map, count * 4 + slack);
             close(fd);
-
-      return 1;
+            return 1;
         }
 
         for (i = 0; i < count; i++) {

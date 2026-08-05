@@ -43,11 +43,25 @@
 static const char *power_mw(int v)
 {
     switch (v) {
-        case 0x05: return "3 mW";
-        case 0x0e: return "25 mW";
-        case 0x14: return "100 mW";
-        case 0x17: return "200 mW";
-        default:   return "(unmapped)";
+    case 0x05: {
+        return "3 mW";
+    } break;
+
+    case 0x0e: {
+        return "25 mW";
+    } break;
+
+    case 0x14: {
+        return "100 mW";
+    } break;
+
+    case 0x17: {
+        return "200 mW";
+    } break;
+
+    default: {
+        return "(unmapped)";
+    } break;
     }
 }
 

@@ -78,30 +78,7 @@ sshg '/tmp/ml-i2cprobe 0 0x1a 0x0200 -n 12 2>/dev/null; /tmp/ml-i2cprobe 0 0x1a 
 # know their register offsets in advance.
 echo
 echo "=== discovering table pointers ==="
-python3 - "$OUT" <<'PYE' > "$OUT/pointers.txt"
-import re, sys, os
-out = sys.argv[1]
-txt = open(os.path.join(out, "registers.txt")).read()
-block, base = None, 0
-seen = {}
-for line in txt.splitlines():
-    m = re.match(r"--- (\w+) \+(0x[0-9a-f]+)", line)
-    if m:
-        block, base = m.group(1), int(m.group(2), 16)
-        continue
-    m = re.match(r"\+0x([0-9a-f]+):((?: [0-9a-f]{8})+)", line)
-    if not m or block is None:
-        continue
-    off = base + int(m.group(1), 16)
-    for i, w in enumerate(m.group(2).split()):
-        v = int(w, 16)
-        # The vendor's media carveout sits above the kernel's capped memory.
-        if 0x28000000 <= v < 0x40000000:
-            seen[(block, off + 4 * i)] = v
-for (blk, off), v in sorted(seen.items()):
-    print("%-6s +0x%04x  ->  0x%08x" % (blk, off, v))
-print("\n%d candidate table pointers" % len(seen))
-PYE
+python3 "$HERE/find-table-pointers.py" "$OUT" > "$OUT/pointers.txt"
 cat "$OUT/pointers.txt"
 
 echo

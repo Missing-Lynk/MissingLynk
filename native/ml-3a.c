@@ -143,11 +143,9 @@ static uint32_t rro_sum(const uint8_t *rro, unsigned int col, unsigned int row,
 static float zone_luma(const uint8_t *rro, unsigned int col, unsigned int row)
 {
     uint32_t mean[4];
-    unsigned int ch;
 
-    for (ch = 0; ch < 4; ch++) {
+    for (unsigned int ch = 0; ch < 4; ch++) {
         uint32_t count = rro_count(rro, col, row, ch);
-
         mean[ch] = rro_sum(rro, col, row, ch) / (count + 1);
     }
 
@@ -166,10 +164,9 @@ static float zone_luma(const uint8_t *rro, unsigned int col, unsigned int row)
 static float metered_luma(const uint8_t *rro)
 {
     float total = 0.0f;
-    unsigned int bc, br;
 
-    for (br = 0; br < BIN_ROWS; br++) {
-        for (bc = 0; bc < BIN_COLS; bc++) {
+    for (unsigned int br = 0; br < BIN_ROWS; br++) {
+        for (unsigned int bc = 0; bc < BIN_COLS; bc++) {
             total += zone_luma(rro, bc * 4, br * 2);
         }
     }
@@ -193,7 +190,7 @@ static int luma_target_for(int exp_index)
         return ae_target_curve[AE_TARGET_KNOTS - 1].target;
     }
 
-  for (int i = 1; i < AE_TARGET_KNOTS; i++) {
+    for (int i = 1; i < AE_TARGET_KNOTS; i++) {
         if (exp_index < ae_target_curve[i].index) {
             int x0 = ae_target_curve[i - 1].index;
             int y0 = ae_target_curve[i - 1].target;
@@ -264,9 +261,9 @@ static int ae_decide(struct ae_state *st, float current_luma)
  */
 static unsigned int sensor_gain_code(uint32_t gain_q8)
 {
-    unsigned int code, best = 0;
+    unsigned int best = 0;
 
-    for (code = 0; code <= 0x5f; code++) {
+    for (unsigned int code = 0; code <= 0x5f; code++) {
         uint32_t q8 = (256u << (code >> 4)) * (16 + (code & 0xf)) / 16;
 
         if (q8 <= gain_q8) {
@@ -292,7 +289,7 @@ static int write_int(const char *path, int value)
         ret = -errno;
     }
 
-  close(fd);
+    close(fd);
     return ret;
 }
 
@@ -364,6 +361,7 @@ static int read_stats(uint8_t *buf)
             if (n <= 0) {
                 break;
             }
+
             got += n;
         }
 
@@ -656,43 +654,46 @@ int main(int argc, char **argv)
 
     while ((c = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
         switch (c) {
-        case 't':
+        case 't': {
             return selftest();
-        case 's':
+        } break;
+
+        case 's': {
             opts.start_index = atoi(optarg);
-            break;
+        } break;
 
-        case 'm':
+        case 'm': {
             opts.max_step = atoi(optarg);
-            break;
+        } break;
 
-        case 'f':
+        case 'f': {
             opts.floor_index = atoi(optarg);
-            break;
+        } break;
 
-        case 'c':
+        case 'c': {
             opts.ceil_index = atoi(optarg);
-            break;
+        } break;
 
-        case 'n':
+        case 'n': {
             opts.decisions = atoi(optarg);
-            break;
+        } break;
 
-        case 'd':
+        case 'd': {
             opts.dry_run = 1;
-            break;
+        } break;
 
-        case 'L':
+        case 'L': {
             opts.no_ladders = 1;
-            break;
+        } break;
 
-        case 'v':
+        case 'v': {
             opts.verbose = 1;
-            break;
+        } break;
 
-        default:
+        default: {
             usage();
             return 1;
+        } break;
         }
     }
 

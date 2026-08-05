@@ -442,7 +442,7 @@ int main(int argc, char **argv)
         printf("plane %d 0x%08x: %u/%u markers overwritten%s", i, planes[i], hit, marks,
                hit ? "" : "\n");
 
-           if (hit) {
+        if (hit) {
             printf(", first differing word 0x%08x\n", first);
         }
     }

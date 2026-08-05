@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Emit native/ml-3a-exptable.h from the vendor AE exposure table.
+"""
+Emit native/ml-3a-exptable.h from the vendor AE exposure table.
 
 Source: out/au-vendor-session/heap-live.bin, the AE state block's generated
 exposure table at heap offset 0x9c4808 (state 0x9c47a0 + 0x68), 366 entries of
@@ -39,6 +40,7 @@ def check(tbl: list[tuple[int, int]]) -> None:
     assert tbl[283] == (1432, 1125), tbl[283]
     for i in range(1, COUNT):
         assert tbl[i][1] >= tbl[i - 1][1], f"line_count dips at {i}"
+
     assert all(lc == 1125 for _, lc in tbl[227:]), "pin broken"
     for i in range(1, COUNT):
         if tbl[i][1] == tbl[i - 1][1]:
@@ -51,6 +53,7 @@ def emit(tbl: list[tuple[int, int]]) -> str:
     for i in range(0, COUNT, 4):
         cells = ", ".join(f"{{{v}, {lc}}}" for v, lc in tbl[i : i + 4])
         rows.append(f"    {cells},")
+
     body = "\n".join(rows)
     return f"""\
 /*
@@ -87,6 +90,7 @@ def main() -> int:
     check(tbl)
     OUT.write_text(emit(tbl))
     print(f"wrote {OUT} ({COUNT} entries, all checks passed)")
+
     return 0
 
 

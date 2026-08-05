@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Diff two au-chain-capture.sh captures, section by section.
+"""
+Diff two au-chain-capture.sh captures, section by section.
 
 Usage: glue/camera/au-chain-diff.py out/au-chain/slotA.txt out/au-chain/slotB.txt
 

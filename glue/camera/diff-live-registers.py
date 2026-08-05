@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Diff two register-window dumps produced by ml-regdump.
+"""
+Diff two register-window dumps produced by ml-regdump.
 
 Both sides must have been captured with the same window list, which is why
 au-prove-camera.sh stage 4c copies au-snapshot-vendor.sh's list verbatim.
@@ -28,15 +29,18 @@ RUNTIME = {
     # ISP statistics and DMA pointers, republished every frame.
     ("isp", 0x0030), ("isp", 0x0040), ("isp", 0x0050), ("isp", 0x0060),
     ("isp", 0x0014), ("isp", 0x0018), ("isp", 0x001c),
+
     # VIF frame counters and W1C status.
     ("vif", 0x017c), ("vif", 0x0184), ("vif", 0x01b0), ("vif", 0x0020),
+
     # CVISP ring pointers.
     ("cvisp", 0x8010), ("cvisp", 0x8014), ("cvisp", 0x8018),
 }
 
 
 def parse(path):
-    """Return {(block, addr): value} for every word in the dump.
+    """
+    Return {(block, addr): value} for every word in the dump.
 
     ml-regdump prints offsets relative to the address it was given, so every
     window restarts at +0x0000. The window's own base has to be added back or
@@ -52,13 +56,16 @@ def parse(path):
                 block = h.group(1)
                 base = int(h.group(2), 16)
                 continue
+
             m = LINE.match(raw)
             if not m or block is None:
                 continue
+
             addr = base + int(m.group(1), 16)
             for i, word in enumerate(m.group(2).split()):
                 with contextlib.suppress(ValueError):
                     out[(block, addr + i * 4)] = int(word, 16)
+
     return out
 
 
@@ -82,9 +89,11 @@ def main():
     for key in common:
         if vendor[key] == ours[key]:
             continue
+
         if key in RUNTIME:
             runtime += 1
             continue
+
         diffs.append(key)
 
     zeros = sum(1 for k in diffs if ours[k] == 0)
@@ -99,6 +108,7 @@ def main():
     pages = defaultdict(int)
     for blk, addr in diffs:
         pages[(blk, addr & ~0xFF)] += 1
+
     print("\nby page:")
     for (blk, page), n in sorted(pages.items(), key=lambda kv: -kv[1])[:16]:
         print(f"  {blk} 0x{page:04x}: {n}")
@@ -120,7 +130,9 @@ def main():
         if not contiguous:
             if start is not None and i - start >= 3:
                 runs.append((diffs[start], i - start, ours[diffs[start]], vendor[diffs[start]]))
+
             start = i
+
     if start is not None and len(diffs) - start >= 3:
         runs.append((diffs[start], len(diffs) - start, ours[diffs[start]], vendor[diffs[start]]))
 

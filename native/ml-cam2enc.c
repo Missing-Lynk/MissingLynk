@@ -1653,79 +1653,101 @@ int main(int argc, char **argv)
 
     while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:R:")) != -1) {
         switch (c) {
-        case 'x':
+        case 'x': {
             mode = 1;
-            break;
-        case 'e':
+        } break;
+
+        case 'e': {
             mode = 2;
-            break;
-        case 's':
+        } break;
+
+        case 's': {
             opt_static = 1;
-            break;
-        case 'k':
+        } break;
+
+        case 'k': {
             opt_hold = 1;
-            break;
-        case 'v':
+        } break;
+
+        case 'v': {
             opt_verify = 1;
-            break;
-        case 'V':
+        } break;
+
+        case 'V': {
             mode = 3;
             opt_verify = 1;
-            break;
-        case 'M':
+        } break;
+
+        case 'M': {
             mode = 4;
-            break;
-        case 'D':
+        } break;
+
+        case 'D': {
             opt_dump = optarg;
             mode = 3;
-            break;
-        case 'N':
+        } break;
+
+        case 'N': {
             opt_dump_count = atoi(optarg);
-            break;
-        case 'w':
+        } break;
+
+        case 'w': {
             opt_settle_us = (unsigned int)atoi(optarg) * 1000u;
-            break;
-        case 'g':
+        } break;
+
+        case 'g': {
             if (sscanf(optarg, "%ux%u", &opt_width, &opt_height) != 2) {
                 fprintf(stderr, "-g wants WIDTHxHEIGHT\n");
                 return 2;
             }
-            break;
-        case 'n':
+        } break;
+
+        case 'n': {
             opt_frames = atoi(optarg);
-            break;
-        case 'b':
+        } break;
+
+        case 'b': {
             opt_bufs = atoi(optarg);
-            break;
-        case 'o':
+        } break;
+
+        case 'o': {
             opt_out = optarg;
-            break;
-        case 'c':
+        } break;
+
+        case 'c': {
             opt_codec = strcmp(optarg, "h264") == 0 ? V4L2_PIX_FMT_H264 : V4L2_PIX_FMT_HEVC;
-            break;
-        case 'H':
+        } break;
+
+        case 'H': {
             opt_heap = optarg;
-            break;
-        case 'p':
+        } break;
+
+        case 'p': {
             opt_probe = 1;
-            break;
-        case 'S':
+        } break;
+
+        case 'S': {
             opt_no_streamoff = 1;
-            break;
-        case 'G':
+        } break;
+
+        case 'G': {
             opt_gop = atoi(optarg);
-            break;
-        case 'm':
+        } break;
+
+        case 'm': {
             opt_max_bytes = (unsigned long)atoi(optarg) << 20;
-            break;
-        case 'R':
+        } break;
+
+        case 'R': {
             opt_bitrate = atoi(optarg);
-            break;
-        default:
+        } break;
+
+        default: {
             fprintf(stderr, "usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames (0=until signal)] "
                             "[-b bufs] [-o file] [-c h264|hevc] [-H heap] [-G gop] [-m MB] "
                             "[-R bps (CBR; default constant-QP)] [-p] [-S]\n");
             return 2;
+        } break;
         }
     }
 
