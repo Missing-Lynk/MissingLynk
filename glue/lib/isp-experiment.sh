@@ -70,8 +70,7 @@ stage_isp_experiments() {
 	SWEEP_NAMES=""
 	if [ -n "${SWEEP:-}" ]; then
 		i=0
-		for f in $SWEEP
-		do
+		for f in $SWEEP; do
 			[ -s "$f" ] || { echo "SWEEP entry $f is missing or empty"; exit 1; }
 			i=$((i + 1))
 			tag="$(printf '%02d_%s' "$i" "$(basename "$f" .bin)")"

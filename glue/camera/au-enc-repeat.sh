@@ -27,8 +27,7 @@ device_push "$REPO/native/build/ml-cam2enc" || exit 1
 sshg 'dmesg -c >/dev/null' </dev/null
 
 i=0
-while [ "$i" -lt "$RUNS" ]
-do
+while [ "$i" -lt "$RUNS" ]; do
 	line="$(sshg "/tmp/ml-cam2enc -e -n $FRAMES $EXTRA" </dev/null | grep '^STREAM:')"
 	echo "run $i: ${line:-NO STREAM LINE}"
 	sshg 'dmesg -c | grep -i "wave5\|vpu" | head -6' </dev/null | sed 's/^/    /'

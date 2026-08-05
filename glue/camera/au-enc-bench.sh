@@ -181,8 +181,7 @@ if [ -n "${DUMP:-}" ]; then
 	echo "=== dumps ==="
 	sshg "ls -la $DUMPDIR/bench_tile*.h265; df -h $DUMPDIR | tail -1"
 	mkdir -p "$REPO/out/au-bench"
-	for f in 0 1
-	do
+	for f in 0 1; do
 		device_pull "$DUMPDIR/bench_tile$f.h265" "$REPO/out/au-bench/bench_tile$f.h265" 2>/dev/null
 	done
 	sshg "rm -f $DUMPDIR/bench_tile*.h265"

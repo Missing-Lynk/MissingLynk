@@ -196,8 +196,7 @@ if [ -n "${DUMP:-}" ]; then
 	# Deleted only after a pull that worked. A run that produced nothing usable is exactly the
 	# run whose bitstream is worth keeping, and the device side survives until the next boot.
 	pulled=1
-	for f in 0 1
-	do
+	for f in 0 1; do
 		if ! device_pull "$DUMPDIR/cam_tile$f.h265" "$REPO/out/au-cam-tx/cam_tile$f.h265"; then
 			echo "  tile $f did not come back; leaving $DUMPDIR/cam_tile$f.h265 on the device" >&2
 			pulled=0

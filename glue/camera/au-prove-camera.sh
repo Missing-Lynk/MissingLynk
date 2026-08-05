@@ -106,12 +106,10 @@ OUT="$REPO/out/au-prove"
 mkdir -p "$OUT"
 
 echo "=== staging ==="
-for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp
-do
+for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do
 	device_push "$KD/$m.ko" || exit 1
 done
-for t in ml-regdump ml-v4l2grab ml-isploop ml-lutfill ml-i2cprobe
-do
+for t in ml-regdump ml-v4l2grab ml-isploop ml-lutfill ml-i2cprobe; do
 	device_push "$REPO/native/build/$t" || exit 1
 done
 
@@ -160,8 +158,7 @@ fail() {
 	echo '--- kernel log ---'
 	dmesg | grep -i -E 'nt99235|ar.isp|ar.vif|ar.csi2|cvisp' | tail -25
 	# Leave nothing running and nothing loaded, so the next attempt starts clean.
-	for p in /proc/[0-9]*
-	do
+	for p in /proc/[0-9]*; do
 		c=\$(cat \$p/comm 2>/dev/null)
 		case \"\$c\" in ml-v4l2grab|ml-isploop) kill -9 \${p#/proc/} 2>/dev/null ;; esac
 	done
@@ -170,20 +167,17 @@ fail() {
 
 # Stage 1: start from nothing. Kill by /proc comm, because busybox pkill -x is unreliable and
 # -f matches this script itself.
-for p in /proc/[0-9]*
-do
+for p in /proc/[0-9]*; do
 	c=\$(cat \$p/comm 2>/dev/null)
 	case \"\$c\" in
 	ml-v4l2grab|ml-isploop) echo \"  killing stale \$c\"; kill -9 \${p#/proc/} 2>/dev/null ;;
 	esac
 done
 sleep 1
-for m in ar_cvisp ar_isp ar_vif ar_csi2 nt99235
-do
+for m in ar_cvisp ar_isp ar_vif ar_csi2 nt99235; do
 	rmmod \$m 2>/dev/null
 done
-for m in ar_cvisp ar_isp ar_vif ar_csi2 nt99235
-do
+for m in ar_cvisp ar_isp ar_vif ar_csi2 nt99235; do
 	lsmod | grep -q \"^\$m \" && fail \"\$m would not unload, something still holds it\"
 done
 echo '  stage 1 ok: nothing loaded'
@@ -209,8 +203,7 @@ echo '  stage 1b ok: camera clocks programmed'
 # camera ran in slot A before we booted, its real tuning tables are still resident and the ISP
 # inherits working ones. If it did not, the ISP fetches whatever is in those pages. This records
 # which case we are in, so picture quality can be correlated with it instead of guessed at.
-for spec in gamma:0x2b2ec600:4096 compander:0x2b2e0c00:7680 drc:0x2b2e9200:2048
-do
+for spec in gamma:0x2b2ec600:4096 compander:0x2b2e0c00:7680 drc:0x2b2e9200:2048; do
 	nm=\$(echo \$spec | cut -d: -f1)
 	ad=\$(echo \$spec | cut -d: -f2)
 	ct=\$(echo \$spec | cut -d: -f3)
@@ -271,8 +264,7 @@ echo '  stage 2 ok: modules loaded'
 # it lands on. No node means the media graph did not bind and every later stage would be
 # operating on a dead pipeline.
 NODE=''
-for d in /sys/class/video4linux/video*
-do
+for d in /sys/class/video4linux/video*; do
 	[ -r \"\$d/name\" ] || continue
 	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 		NODE=/dev/\$(basename \$d)
@@ -308,16 +300,14 @@ fi
 if [ -x /tmp/ml-i2cprobe ]; then
 	: > /tmp/oursensor.txt
 	for pg in 0x0000 0x0100 0x0200 0x0300 0x0400 0x0500 0x0600 0x0800 0x0c00 0x3000 0x3100 0x3200 0x3300 \
-	          0x3500 0x3600 0x3a00 0x8000 0x8200 0x8300 0x8500 0x8700 0x9000
-	do
+	          0x3500 0x3600 0x3a00 0x8000 0x8200 0x8300 0x8500 0x8700 0x9000; do
 		/tmp/ml-i2cprobe 0 0x1a \$pg -n 256 >> /tmp/oursensor.txt 2>/dev/null
 	done
 	echo \"  stage 4b ok: \$(grep -c '= 0x' /tmp/oursensor.txt) sensor registers read\"
 fi
 
 dump_windows() {
-	for spec in $ISP_WINDOWS
-	do
+	for spec in $ISP_WINDOWS; do
 		blk=\${spec%%:*}
 		rest=\${spec#*:}
 		base=\${rest%%:*}
@@ -422,8 +412,7 @@ fi
 # this stage fails, nothing before it has been disturbed.
 if [ -n \"\${V4L2CAP:-}\" ]; then
 	NODE=''
-	for d in /sys/class/video4linux/video*
-	do
+	for d in /sys/class/video4linux/video*; do
 		[ -r \"\$d/name\" ] || continue
 		if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 			NODE=/dev/\$(basename \$d)
@@ -460,8 +449,7 @@ if [ -n \"\${V4L2CAP:-}\" ]; then
 		# the dmabuf into the encoder does, and separates the two.
 		if /tmp/ml-v4l2grab -d \$NODE -q -n 200 -t 5 >/tmp/g5.out 2>&1; then
 			grep -E 'delivered' /tmp/g5.out | sed 's/^/    rate pass: /'
-			for c in rotations completions drops
-			do
+			for c in rotations completions drops; do
 				[ -r /sys/kernel/debug/ar-cvisp/\$c ] && \\
 					echo \"    rate pass cvisp \$c: \$(cat /sys/kernel/debug/ar-cvisp/\$c)\"
 			done
@@ -473,8 +461,7 @@ if [ -n \"\${V4L2CAP:-}\" ]; then
 		# handed back, and drops the ticks that found nothing queued. completions well
 		# below rotations means userspace is not requeueing fast enough, which is a
 		# throughput problem and not a broken queue.
-		for c in rotations completions drops
-		do
+		for c in rotations completions drops; do
 			[ -r /sys/kernel/debug/ar-cvisp/\$c ] && \\
 				echo \"    cvisp \$c: \$(cat /sys/kernel/debug/ar-cvisp/\$c)\"
 		done
@@ -538,8 +525,7 @@ fi
 # experiment that needs a comparison has to carry its own control.
 if [ -f /tmp/block3d.txt ] && ! grep -q '^GROUP' /tmp/block3d.txt; then
 	n=0
-	while read -r addr val
-	do
+	while read -r addr val; do
 		[ -n \"\$addr\" ] || continue
 		/tmp/ml-regdump -w \"\$addr\" \"\$val\" >/dev/null 2>&1 && n=\$(( n + 1 ))
 	done < /tmp/block3d.txt
@@ -594,8 +580,7 @@ if grep -q '^GROUP' /tmp/block3d.txt 2>/dev/null; then
 
 	measure baseline
 	grp=
-	while read -r a b
-	do
+	while read -r a b; do
 		if [ \"\$a\" = GROUP ]; then
 			[ -n \"\$grp\" ] && measure \"\$grp\"
 			grp=\$b
@@ -614,8 +599,7 @@ fi
 # frame that is still 90% black through a curve like that points at the signal reaching the
 # ISP, not at the curve. exposure and gain are 0644 module params with an apply callback, so
 # they can be swept live. Sensor I2C only, no VIF or ISP register is touched.
-for es in \$ESWEEP
-do
+for es in \$ESWEEP; do
 	ex=\$(echo \$es | cut -d: -f1)
 	gn=\$(echo \$es | cut -d: -f2)
 	echo \$ex > /sys/module/nt99235/parameters/exposure 2>/dev/null || { echo \"  expo \$es: write failed\"; continue; }
@@ -646,8 +630,7 @@ done
 # addresses every frame, so a table changed in memory should be picked up without a fetch
 # pulse. If every sweep step comes back identical, that assumption is wrong and the next boot
 # should add a pulse of ISP 0x0014 bits 1-3 after each write.
-for f in /tmp/sw_*.bin
-do
+for f in /tmp/sw_*.bin; do
 	[ -e \"\$f\" ] || continue
 	sw=\$(basename \$f .bin)
 	if ! kill -0 \$GP 2>/dev/null; then
@@ -831,8 +814,7 @@ fi
 # No grabber is left running: stage 4 streams briefly and exits, and every later capture opens
 # the node for as long as it needs. The orphan that used to be left here is what blocked rmmod
 # and silently invalidated everything after it, so check for one anyway rather than assume.
-for pp in /proc/[0-9]*
-do
+for pp in /proc/[0-9]*; do
 	[ -r \"\$pp/comm\" ] || continue
 	case \"\$(cat \$pp/comm 2>/dev/null)\" in
 	ml-v4l2grab|ml-isploop)
@@ -848,8 +830,7 @@ printf '%s\n' "$PROVE" | sshg 'cat > /tmp/prove.sh; chmod +x /tmp/prove.sh' || e
 # first one left. So a boot buys exactly one trustworthy capture, and RUNS selects which.
 #   RUNS="0:live:nocycle"        one live frame
 #   RUNS="2:testpattern:nocycle" one pattern frame
-for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}
-do
+for run in ${RUNS:-"2:testpattern:nocycle" "0:live:nocycle" "0:live2:nocycle"}; do
 	tp="${run%%:*}"
 	rest="${run#*:}"
 	name="${rest%%:*}"
@@ -860,19 +841,15 @@ do
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
 	fi
-	for p in 0 1 2
-	do
+	for p in 0 1 2; do
 		device_pull "/tmp/$name.$p" "$OUT/$name.$p" 2>/dev/null || true
 	done
 	ESWEEP_NAMES=""
-	for es in ${ESWEEP:-}
-	do
+	for es in ${ESWEEP:-}; do
 		ESWEEP_NAMES="$ESWEEP_NAMES e${es%%:*}_g${es##*:}"
 	done
-	for sw in $ESWEEP_NAMES $SWEEP_NAMES
-	do
-		for p in 0 1 2
-		do
+	for sw in $ESWEEP_NAMES $SWEEP_NAMES; do
+		for p in 0 1 2; do
 			device_pull "/tmp/${name}_$sw.$p" "$OUT/${name}_$sw.$p" 2>/dev/null || true
 		done
 		# /tmp is a 32 MB tmpfs and each capture is about 5.4 MB, so a sweep of more than
@@ -882,8 +859,7 @@ do
 		sshg "rm -f /tmp/${name}_$sw.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_$sw" "$OUT/${name}_$sw" || true
 	done
-	for t in gamma compander drc
-	do
+	for t in gamma compander drc; do
 		device_pull "/tmp/pre_$t.bin" "$OUT/pre_$t.bin" 2>/dev/null || true
 	done
 	# The LSC page as the vendor computed it for this scene. hdf-037 established it has no
@@ -905,8 +881,7 @@ do
 	# frame this pull is reliable over the RF link.
 	device_pull "/tmp/ourisp.txt" "$REPO/out/au-snapshot/ours-registers-live.txt" 2>/dev/null || true
 	if [ -n "${BLOCK3D:-}" ]; then
-		for p in 0 1 2
-		do
+		for p in 0 1 2; do
 			device_pull "/tmp/${name}_b3d.$p" "$OUT/${name}_b3d.$p" 2>/dev/null || true
 		done
 		sshg "rm -f /tmp/${name}_b3d.[012]" </dev/null 2>/dev/null || true
@@ -968,8 +943,7 @@ PYE
 	# sizes carry the vendor's slot tails, which are longer than stride x height,
 	# and planes2png.py crops rather than assuming an exact length.
 	if [ -n "${V4L2CAP:-}" ]; then
-		for p in 0 1 2
-		do
+		for p in 0 1 2; do
 			device_pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
 		done
 		sshg "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
@@ -987,8 +961,7 @@ PYE
 	# so this pair is directly comparable: same optics, same ISP state, only the
 	# sensor's pattern generator changed between them.
 	if [ -n "${SWITCH_TP:-}" ]; then
-		for p in 0 1 2
-		do
+		for p in 0 1 2; do
 			device_pull "/tmp/${name}_sw.$p" "$OUT/${name}_sw.$p" 2>/dev/null || true
 		done
 		sshg "rm -f /tmp/${name}_sw.[012]" </dev/null 2>/dev/null || true

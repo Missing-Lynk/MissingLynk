@@ -34,30 +34,37 @@ def load(path):
         if m:
             gates[m.group(1)] = m.group(2)
             continue
+
         m = re.match(r'SECTION (\S+)', line)
         if m:
             section = m.group(1)
             out[section] = {}
             continue
+
         if section is None:
             continue
+
         m = re.match(r'\+0x([0-9a-f]{4}): (.*)', line)
         if m:
             off = int(m.group(1), 16)
             for i, w in enumerate(m.group(2).split()):
                 if re.fullmatch(r'[0-9a-f]{8}', w):
                     out[section][off + 4 * i] = w
+
             continue
+
         # sensor lines look like "0x3611 0x3611 = 0x30": the tool echoes the address.
         m = re.match(r'(0x[0-9a-f]{4})\s+0x[0-9a-f]{4}\s*=\s*(0x[0-9a-f]+)', line)
         if m and section == 'sensor':
             out[section][int(m.group(1), 16)] = m.group(2)
+
     # The gate line was empty in captures taken before the quoting fix. VIF 0x1f0 is inside
     # the vif section anyway, so derive it rather than trust the line: a missing gate must not
     # be reported as a dead link.
     if not gates.get('BEFORE') and 0x1f0 in out.get('vif', {}):
         gates['BEFORE'] = out['vif'][0x1f0]
         gates.setdefault('AFTER', out['vif'][0x1f0])
+
     return out, gates
 
 
@@ -78,6 +85,7 @@ def main():
     for sec in a:
         if sec not in b:
             continue
+
         common = sorted(set(a[sec]) & set(b[sec]))
         diff = [k for k in common if a[sec][k] != b[sec][k]]
         if sec == 'sensor':
@@ -87,18 +95,22 @@ def main():
             print(f"{sec:16} compared {len(common):4d}  differ {len(real):4d}"
                   f"  (+{len(drift)} expected runtime drift){flag}")
             continue
+
         flag = "" if not diff else "   <-- differs"
         print(f"{sec:16} compared {len(common):4d}  differ {len(diff):4d}{flag}")
 
     for sec in a:
         if sec not in b:
             continue
+
         common = sorted(set(a[sec]) & set(b[sec]))
         diff = [k for k in common if a[sec][k] != b[sec][k]]
         if sec == 'sensor':
             diff = [k for k in diff if not sensor_runtime(k)]
+
         if not diff:
             continue
+
         print(f"\n=== {sec} ===")
         print(f"{'reg':10} {'slotA':>10} {'slotB':>10}")
         for k in diff:

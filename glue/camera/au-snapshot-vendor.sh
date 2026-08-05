@@ -46,8 +46,7 @@ sshg 'ps | grep -v grep | grep -q ar_lowdelay' || {
 }
 echo "  ar_lowdelay running: pipeline is live"
 
-for t in ml-regdump ml-lutfill ml-i2cprobe
-do
+for t in ml-regdump ml-lutfill ml-i2cprobe; do
 	device_push "$REPO/native/build/$t" 2>/dev/null || echo "  (optional tool $t not staged)"
 done
 
@@ -58,8 +57,7 @@ ISP_WINDOWS="$(grep -v '^#' "$HERE/isp-windows.list" | tr '\n' ' ')"
 echo
 echo "=== register windows ==="
 {
-	for spec in $ISP_WINDOWS
-	do
+	for spec in $ISP_WINDOWS; do
 		blk=${spec%%:*}; rest=${spec#*:}
 		base=${rest%%:*}; rest=${rest#*:}
 		off=${rest%%:*}; cnt=${rest##*:}
@@ -113,8 +111,7 @@ echo "=== dumping the pointed-to buffers ==="
 # Read the list up front. Every ssh in the loop body reads stdin, so a `while read ... done <
 # file` loop loses its input to the first ssh and silently processes one entry.
 mapfile -t PTRS < <(awk '$3 == "->" { print $1, $2, $4 }' "$OUT/pointers.txt")
-for line in "${PTRS[@]}"
-do
+for line in "${PTRS[@]}"; do
 	# shellcheck disable=SC2086  # word splitting is the point: one dump line into three fields.
 	set -- $line
 	blk="$1"; off="$2"; addr="$3"

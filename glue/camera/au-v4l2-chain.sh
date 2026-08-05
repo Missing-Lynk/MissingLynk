@@ -41,8 +41,7 @@ OUT="$REPO/out/au-prove"
 mkdir -p "$OUT"
 
 echo "=== staging ==="
-for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp
-do
+for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do
 	device_push "$KD/$m.ko" || exit 1
 done
 device_push "$REPO/native/build/ml-v4l2grab" || exit 1
@@ -62,8 +61,7 @@ set -u
 fail() { echo \"FAILED: \$1\"; exit 1; }
 
 # Same load order the proven harness uses: it is the order the media graph was shown to bind in.
-for m in ar-cvisp ar-isp ar-vif ar-csi2 nt99235
-do
+for m in ar-cvisp ar-isp ar-vif ar-csi2 nt99235; do
 	rmmod \$m 2>/dev/null
 done
 
@@ -100,8 +98,7 @@ esac
 # installed the vendor pairs at probe. Under CGU_MODE=none the six leaves should already read
 # the vendor's sel and divider with their gates still off, the consumers having gated their own.
 echo '  cgu leaves before this script writes:'
-for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044
-do
+for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044; do
 	echo \"    \$a \$(/tmp/ml-regdump \$a 1 | awk '/^\\+/{print \$2}')\"
 done
 
@@ -132,8 +129,7 @@ else
 fi
 
 echo \"  camera clocks programmed (\$CGU_MODE):\"
-for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044
-do
+for a in 0x0a10400c 0x0a104010 0x0a10401c 0x0a104020 0x0a104044; do
 	echo \"    \$a \$(/tmp/ml-regdump \$a 1 | awk '/^\\+/{print \$2}')\"
 done
 
@@ -152,8 +148,7 @@ echo '  modules loaded'
 
 # Nothing below writes debugfs. If the chain does not come up, it is the driver's doing.
 NODE=''
-for d in /sys/class/video4linux/video*
-do
+for d in /sys/class/video4linux/video*; do
 	[ -r \"\$d/name\" ] || continue
 	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 		NODE=/dev/\$(basename \$d)
@@ -183,8 +178,7 @@ else
 	cat /tmp/c2.out
 fi
 
-for c in rotations completions drops
-do
+for c in rotations completions drops; do
 	[ -r /sys/kernel/debug/ar-cvisp/\$c ] && echo \"    cvisp \$c: \$(cat /sys/kernel/debug/ar-cvisp/\$c)\"
 done
 [ -r /sys/kernel/debug/ar-vif/irq_events ] && \\
@@ -204,8 +198,7 @@ sshg '/tmp/chain.sh'
 
 echo
 echo "=== rendering ==="
-for p in 0 1 2
-do
+for p in 0 1 2; do
 	device_pull "/tmp/chain.$p" "$OUT/chain.$p" || echo "  no plane $p"
 done
 sshg 'rm -f /tmp/chain.0 /tmp/chain.1 /tmp/chain.2' </dev/null 2>/dev/null || true

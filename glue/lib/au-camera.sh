@@ -103,8 +103,7 @@ au_require_cvisp() {
 # on the slim rootfs, and the driver's own vdev name is what identifies the node.
 au_find_cvisp_node() {
     # shellcheck disable=SC2016  # runs on the device, must not expand here
-    sshg 'for p in /sys/class/video4linux/video*
-do
+    sshg 'for p in /sys/class/video4linux/video*; do
 	[ "$(cat "$p/name" 2>/dev/null)" = ar-cvisp ] || continue
 	echo "/dev/${p##*/}"
 	break

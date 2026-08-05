@@ -37,8 +37,7 @@ sshg "rm -f /tmp/s.*; /tmp/ml-cam2enc -D /tmp/s -N $COUNT -n $FRAMES" </dev/null
 
 echo "=== pulling ==="
 i=0
-while [ "$i" -lt "$COUNT" ]
-do
+while [ "$i" -lt "$COUNT" ]; do
 	tag="$(printf '%02d' "$i")"
 	if device_pull "/tmp/s.$tag.0" "$OUT/frame-$tag.raw"; then
 		# Raw luma at the block's 2048-byte stride, cropped to the 1920 the block writes.

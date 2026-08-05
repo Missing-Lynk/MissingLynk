@@ -51,8 +51,7 @@ case "$KREL" in
 *)     echo "  kernel $KREL is not the stock vendor kernel; this must run on slot A"; exit 1 ;;
 esac
 
-for t in ml-regdump ml-i2cprobe
-do
+for t in ml-regdump ml-i2cprobe; do
 	device_push "$REPO/native/build/$t" || { echo "  cannot stage $t"; exit 1; }
 done
 
@@ -165,8 +164,7 @@ case "$1" in
 		# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
 	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
 		i=0
-		while [ $i -lt 180 ]
-		do
+		while [ $i -lt 180 ]; do
 			if [ $i -eq 40 ]; then echo "MARK uncover"; fi
 			echo "t=$(cut -d" " -f1 /proc/uptime)"
 			$I 0 0x1a 0x0202 -n 2
@@ -194,8 +192,7 @@ esac
 echo
 }
 
-for s in $STAGES
-do
+for s in $STAGES; do
 	run_stage "$s"
 done
 
