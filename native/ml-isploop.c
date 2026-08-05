@@ -243,9 +243,11 @@ int main(int argc, char **argv)
             planes[given++] = strtoul(argv[++i], NULL, 0);
         }
     }
+
     if (given) {
         nplanes = given;
     }
+
     /* Resolved after the loop so --isp-cycle works regardless of where it sits. */
     if (force_cycle) {
         drive = 1;
@@ -260,6 +262,7 @@ int main(int argc, char **argv)
     for (i = 0; i < (int)nplanes; i++) {
         mark_plane(fd, planes[i], marks);
     }
+
     printf("marked %u words on each of %u output planes\n", marks, nplanes);
 
     {
@@ -306,6 +309,7 @@ int main(int argc, char **argv)
                 "Refusing to poll VIF, which would hang the SoC. Start the "
                 "capture chain first.\n", GRACE_S);
             close(fd);
+
             return 2;
         }
     }
@@ -318,6 +322,7 @@ int main(int argc, char **argv)
         if (!(st & FRAME_START)) {
             continue;
         }
+
         starts++;
 
         /* Sample the status registers while a frame start is in hand, so the
@@ -347,10 +352,13 @@ int main(int argc, char **argv)
                 for (i = 0; i < 8; i++) {
                     *(volatile uint32_t *)(cvb + cvisp_tick[i]) = 0x100;
                 }
+
                 wraps++;
             }
+
             cycles++;
         }
+
         if (!drive) {
             /* Still acknowledge, or the bit stays latched and every later poll
              * counts the same event again.
@@ -358,11 +366,13 @@ int main(int argc, char **argv)
             *(volatile uint32_t *)(vif + VIF_BP_STATUS) = FRAME_START;
             continue;
         }
+
         for (i = 0; i < (int)(sizeof cycle / sizeof cycle[0]); i++) {
             volatile uint8_t *b = (cycle[i].base == VIF_BASE) ? vif : isp;
 
             *(volatile uint32_t *)(b + cycle[i].off) = cycle[i].val;
         }
+
         cycles++;
     }
     t = now_s() - t0;
@@ -426,6 +436,7 @@ int main(int argc, char **argv)
                     fwrite((const void *)(m + off), 1,
                            (len - off < 4096) ? len - off : 4096, f);
                 }
+
                 fclose(f);
                 printf("dumped %u bytes of 0x%08x to %s\n", len,
                        planes[i], path);

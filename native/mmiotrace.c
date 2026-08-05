@@ -96,9 +96,8 @@ static char g_devtype[4096];
 static void put_hex(char *buf, int *pos, uint64_t n, int digits)
 {
     static const char h[] = "0123456789abcdef";
-    int i;
 
-    for (i = digits - 1; i >= 0; i--) {
+    for (int i = digits - 1; i >= 0; i--) {
         buf[(*pos)++] = h[(n >> (i * 4)) & 0xf];
     }
 }
@@ -884,5 +883,6 @@ int ioctl(int fd, unsigned long request, ...)
             log_note("ar_sys ioctl request", (uint32_t)request);
         }
     }
+
     return real_ioctl(fd, request, arg);
 }
