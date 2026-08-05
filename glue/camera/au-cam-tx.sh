@@ -57,18 +57,9 @@ MINQP="${MINQP:-0}"
 MAXQP="${MAXQP:-51}"
 IQP="${IQP:-30}"
 
-# One access unit goes in one UDP datagram, so the per-frame ceiling is a hard protocol limit and
-# VBV is the lever that sets it: a window in milliseconds permits vbv_ms * bitrate / 8000 bytes.
-# Derived from BITRATE rather than fixed, because a value that is safe at one bitrate is not at
-# another. 3/4 of the exact ceiling leaves room for the header overhead the window does not model.
-UDP_PAYLOAD_MAX=65507
-VPH_HEADER=36
-VPH_TAIL=4
-AU_LIMIT=$(( UDP_PAYLOAD_MAX - VPH_HEADER - VPH_TAIL ))
-VBV_MAX=$(( AU_LIMIT * 8000 * 3 / 4 / BITRATE ))
-[ "$VBV_MAX" -lt 10 ] && VBV_MAX=10
-[ "$VBV_MAX" -gt 3000 ] && VBV_MAX=3000
-VBV="${VBV:-$VBV_MAX}"
+# Sets AU_LIMIT and VBV: one access unit goes in one UDP datagram, and VBV is the lever that
+# holds a frame under that ceiling.
+au_derive_vbv "$BITRATE"
 
 BIN="$REPO/userspace/gstreamer/build/static/ml-air-video"
 DBG=/sys/kernel/debug/ar-cvisp
@@ -80,18 +71,7 @@ DBG=/sys/kernel/debug/ar-cvisp
 
 echo "=== preconditions ==="
 
-if ! sshg 'lsmod | grep -q "^ar_cvisp "' </dev/null
-then
-	echo "ar_cvisp is not loaded: run CVDEPTH=3 glue/camera/au-v4l2-chain.sh first" >&2
-	exit 1
-fi
-
-DEPTH=$(sshg 'cat /sys/module/ar_cvisp/parameters/depth' </dev/null | tr -d '\r\n')
-if [ "${DEPTH:-0}" -lt 3 ]
-then
-	echo "cvisp depth is ${DEPTH:-unknown}, this needs 3: run CVDEPTH=3 glue/camera/au-v4l2-chain.sh" >&2
-	exit 1
-fi
+au_require_cvisp 3
 
 # The modules being loaded proves nothing: the rootfs auto-loads them at boot, so `lsmod` passes on
 # a unit whose chain was never brought up. What au-v4l2-chain.sh actually adds is the vendor tuning
@@ -111,26 +91,10 @@ then
 	exit 1
 fi
 
-# A live instance means this boot's usable encoder pair is already spent. pgrep/pkill -f match
-# their own command line on this busybox, so ask killall what it would find instead.
-if sshg "killall -0 ml-air-video 2>/dev/null" </dev/null
-then
-	echo >&2
-	echo "ml-air-video is already running on the air unit." >&2
-	echo "  Its encoder instance pair is this boot's only usable one, so starting a second" >&2
-	echo "  encodes garbage or watchdogs the firmware. Reboot and re-run." >&2
-	exit 1
-fi
+# A live instance means this boot's usable encoder pair is already spent.
+au_refuse_air_video_running
 
-# The node index depends on probe order, so it is read rather than assumed. v4l2-ctl is not on
-# the slim rootfs; the driver's own vdev name is in sysfs and is what identifies the node.
-# shellcheck disable=SC2016  # runs on the device, must not expand here
-NODE="${NODE:-$(sshg 'for p in /sys/class/video4linux/video*
-do
-	[ "$(cat "$p/name" 2>/dev/null)" = ar-cvisp ] || continue
-	echo "/dev/${p##*/}"
-	break
-done' </dev/null | tr -d '\r\n')}"
+NODE="${NODE:-$(au_find_cvisp_node)}"
 
 if [ -z "$NODE" ]
 then
@@ -138,34 +102,10 @@ then
 	exit 1
 fi
 
-echo "  node $NODE, cvisp depth $DEPTH"
+echo "  node $NODE, cvisp depth $AU_CVISP_DEPTH"
 sshg "grep MemTotal /proc/meminfo; cat /sys/kernel/debug/dma_coherent/* 2>/dev/null | grep -E 'base|pages|free'" </dev/null
 
-# wave5 cannot be hot-swapped: probing loads firmware into the VPU, and a second probe without a
-# hardware reset returns -16 and leaves the codec unbound for the rest of the boot. The module
-# must already be in the booted rootfs, so this only verifies and refuses to produce a number
-# against the wrong binary.
-KO="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel/wave5.ko"
-DEV_KO=/lib/modules/6.18.36/kernel/wave5.ko
-
-if [ -f "$KO" ]
-then
-	WANT=$(md5sum "$KO" | cut -d' ' -f1)
-	HAVE=$(sshg "md5sum $DEV_KO 2>/dev/null | cut -d' ' -f1" </dev/null | tr -d '\r\n')
-
-	if [ "$WANT" != "$HAVE" ]
-	then
-		echo "$DEV_KO is not the build under test; installing it"
-		echo "  device $HAVE"
-		echo "  build  $WANT"
-		device_push "$KO" || exit 1
-		sshg "cp /tmp/wave5.ko $DEV_KO && sync && md5sum $DEV_KO"
-		echo
-		echo "installed into the rootfs. REBOOT and re-run: the running kernel still has the old"
-		echo "module and wave5 cannot be reloaded warm."
-		exit 2
-	fi
-fi
+au_ensure_wave5
 
 echo
 echo "=== staging ==="
@@ -196,13 +136,7 @@ if [ -n "${COPY:-}" ]
 then
 	ENV_ARGS="$ENV_ARGS ML_AIR_COPY=$COPY"
 fi
-ENV_ARGS="$ENV_ARGS ML_AIR_ENC=\"v4l2h265enc output-io-mode=dmabuf-import"
-ENV_ARGS="$ENV_ARGS extra-controls=\\\"controls,video_gop_size=$GOP,frame_level_rate_control_enable=1"
-ENV_ARGS="$ENV_ARGS,video_bitrate=$BITRATE,video_bitrate_mode=1"
-ENV_ARGS="$ENV_ARGS,hevc_minimum_qp_value=$MINQP,hevc_maximum_qp_value=$MAXQP"
-ENV_ARGS="$ENV_ARGS,hevc_i_frame_qp_value=$IQP"
-ENV_ARGS="$ENV_ARGS,h264_mb_level_rate_control=$MBRC"
-ENV_ARGS="$ENV_ARGS,vbv_buffer_size=$VBV\\\"\""
+au_enc_controls_env
 
 DUMPDIR="${DUMPDIR:-/dev/shm}"
 if [ -n "${DUMP:-}" ]
@@ -228,23 +162,12 @@ sshg "cd /tmp && setsid env $ENV_ARGS ./ml-air-video >/tmp/cam-tx.log 2>&1 </dev
 	sleep 6
 	echo launched" </dev/null
 
-# A dropped ssh returns an empty sample, and shell arithmetic reads empty as 0, which would
-# present the whole lifetime counter as one window's traffic. Every sample is checked.
-require_num() {
-	case "$2" in
-	'' | *[!0-9]*)
-		echo "$1 came back as '$2': the counter read failed" >&2
-		exit 1
-		;;
-	esac
-}
-
 cvisp_sample() {
 	CV=$(sshg "cat $DBG/completions; cat $DBG/drops" </dev/null | tr -d '\r')
 	CV_DONE=$(echo "$CV" | sed -n 1p)
 	CV_DROP=$(echo "$CV" | sed -n 2p)
-	require_num "cvisp completions" "$CV_DONE"
-	require_num "cvisp drops" "$CV_DROP"
+	au_require_num "cvisp completions" "$CV_DONE"
+	au_require_num "cvisp drops" "$CV_DROP"
 }
 
 echo
@@ -268,9 +191,7 @@ echo
 echo "=== cam-tx.log ==="
 sshg "tail -20 /tmp/cam-tx.log" </dev/null
 
-echo
-echo "=== encoder health ==="
-sshg "dmesg | grep -iE 'watchdog|syserr|enc instance|PIC_RUN|vdi pool|cvisp' | tail -15" </dev/null
+au_encoder_health
 
 if [ -n "${DUMP:-}" ]
 then

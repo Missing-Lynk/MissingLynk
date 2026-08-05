@@ -1,0 +1,25 @@
+# Register windows dumped by BOTH au-snapshot-vendor.sh (vendor, slot A) and au-prove-camera.sh
+# stage 5c (ours, mid-stream). One list so the two dumps stay diffable word for word; format is
+# block:base:offset:word-count. The ISP spans are exactly what the replay writes, derived from
+# ar-isp-defaults.h, so every address is known-mapped.
+isp:0x08c00000:0x0000:64
+isp:0x08c00000:0x0800:322
+isp:0x08c00000:0x1800:512
+isp:0x08c00000:0x2400:16
+isp:0x08c00000:0x4000:64
+isp:0x08c00000:0x2800:64
+isp:0x08c00000:0x2e00:1032
+isp:0x08c00000:0x4800:576
+isp:0x08c00000:0x5800:28
+isp:0x08c00000:0x6000:384
+isp:0x08c00000:0x6c00:704
+cvisp:0x08e00000:0x8000:64
+cvisp:0x08e00000:0x4600:16
+cvisp:0x08e00000:0x4000:256
+cvisp:0x08e00000:0x4400:64
+cvisp:0x08e00000:0x4700:16
+vif:0x08870000:0x0000:256
+vif:0x08870000:0x0300:64
+csi2:0x08880000:0x0400:64
+csi2:0x08880000:0x0800:64
+cgu:0x0a104000:0x0000:32

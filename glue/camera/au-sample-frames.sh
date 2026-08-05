@@ -30,11 +30,7 @@ rm -f "$OUT"/frame-*.png
 echo "=== staging ==="
 device_push "$REPO/native/build/ml-cam2enc" || exit 1
 
-if ! sshg 'lsmod | grep -q "^ar_cvisp "' </dev/null
-then
-	echo "ar_cvisp is not loaded: run glue/camera/au-v4l2-chain.sh first" >&2
-	exit 1
-fi
+au_require_cvisp
 
 echo "=== sampling $COUNT frames over ${SECONDS_RUN}s ==="
 sshg "rm -f /tmp/s.*; /tmp/ml-cam2enc -D /tmp/s -N $COUNT -n $FRAMES" </dev/null

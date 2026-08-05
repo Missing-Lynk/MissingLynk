@@ -54,17 +54,11 @@ sshg "ping -c 2 -W 2 $AU_RF_PEER | tail -2" </dev/null || exit 1
 
 # A live instance means this boot's usable encoder pair is already spent. pgrep/pkill -f match
 # their own command line on this busybox, so ask killall what it would find instead.
-if sshg "killall -0 ml-air-video 2>/dev/null" </dev/null
+if [ -z "${FORCE:-}" ]
 then
-	if [ -z "${FORCE:-}" ]
-	then
-		echo >&2
-		echo "ml-air-video is already running on the air unit." >&2
-		echo "  Its encoder instance pair is this boot's only usable one, so starting a second" >&2
-		echo "  encodes garbage or watchdogs the firmware. Re-boot, or STOP=1 then re-boot." >&2
-		exit 1
-	fi
-
+	au_refuse_air_video_running
+elif au_air_video_running
+then
 	echo "FORCE: stopping the running instance (its encoder pair is already spent)"
 	sshg "killall ml-air-video; sleep 2"
 fi
@@ -76,18 +70,6 @@ echo
 echo "=== goggle ==="
 goggle "hostname; rc-service ml-video status 2>&1 | head -1; ip -br addr show sdio0" </dev/null || exit 1
 
-# A dropped ssh returns an empty sample, and bash arithmetic reads empty as 0. The delta would
-# then be the whole lifetime counter presented as one window's traffic, which reads as a
-# spectacular result. Every sample is checked to be a number.
-require_num() {
-	case "$2" in
-	'' | *[!0-9]*)
-		echo "$1 came back as '$2': the counter read failed" >&2
-		exit 1
-		;;
-	esac
-}
-
 # sample - read both ends into AU_TX, GG_RX and GG_UDP.
 sample() {
 	AU_TX=$(sshg "cat /sys/class/net/sdio0/statistics/tx_bytes" </dev/null | tr -d '\r')
@@ -96,9 +78,9 @@ sample() {
 	GG_RX=$(echo "$GG" | sed -n 1p)
 	GG_UDP=$(echo "$GG" | sed -n 2p)
 
-	require_num "AU sdio0 tx_bytes" "$AU_TX"
-	require_num "goggle sdio0 rx_bytes" "$GG_RX"
-	require_num "goggle UDP InDatagrams" "$GG_UDP"
+	au_require_num "AU sdio0 tx_bytes" "$AU_TX"
+	au_require_num "goggle sdio0 rx_bytes" "$GG_RX"
+	au_require_num "goggle UDP InDatagrams" "$GG_UDP"
 }
 
 # Baseline both ends before the transmitter starts, so every figure below is a delta over a known

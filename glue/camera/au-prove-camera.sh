@@ -134,6 +134,10 @@ fi
 # is not, so a leftover cannot join the next bring-up. Sets SWEEP_NAMES.
 stage_isp_experiments "$HERE" "$OUT"
 
+# The register windows stage 5c dumps, shared with au-snapshot-vendor.sh so the two dumps stay
+# diffable. Interpolated into the device script at push time like the other host variables.
+ISP_WINDOWS="$(grep -v '^#' "$HERE/isp-windows.list" | tr '\n' ' ')"
+
 # The device script goes over stdin, not as an ssh argument. It outgrew the command-line
 # limit once the sweep stages were added, and the failure mode was a broken pipe during
 # staging followed by "prove.sh: not found", which reads like a device fault and is not.
@@ -318,19 +322,7 @@ then
 fi
 
 dump_windows() {
-	for spec in \\
-		isp:0x08c00000:0x0000:64    isp:0x08c00000:0x0800:322 \\
-		isp:0x08c00000:0x1800:512   isp:0x08c00000:0x2400:16 \\
-		isp:0x08c00000:0x4000:64 \\
-		isp:0x08c00000:0x2800:64    isp:0x08c00000:0x2e00:1032 \\
-		isp:0x08c00000:0x4800:576   isp:0x08c00000:0x5800:28 \\
-		isp:0x08c00000:0x6000:384   isp:0x08c00000:0x6c00:704 \\
-		cvisp:0x08e00000:0x8000:64  cvisp:0x08e00000:0x4600:16 \\
-		cvisp:0x08e00000:0x4000:256 cvisp:0x08e00000:0x4400:64 \\
-		cvisp:0x08e00000:0x4700:16 \\
-		vif:0x08870000:0x0000:256   vif:0x08870000:0x0300:64 \\
-		csi2:0x08880000:0x0400:64   csi2:0x08880000:0x0800:64 \\
-		cgu:0x0a104000:0x0000:32
+	for spec in $ISP_WINDOWS
 	do
 		blk=\${spec%%:*}
 		rest=\${spec#*:}
@@ -534,8 +526,8 @@ fi
 # ISP we have not configured yet, and 601 registers read zero that our replay is about to fill.
 # The resulting diff then looks catastrophic and means nothing.
 #
-# The window list is byte-for-byte the one au-snapshot-vendor.sh uses against slot A. It must
-# stay identical or the two dumps cannot be diffed.
+# The window list is glue/camera/isp-windows.list, the same file au-snapshot-vendor.sh reads
+# against slot A, which is what keeps the two dumps diffable.
 dump_windows > /tmp/ourisp.txt 2>/dev/null
 echo \"  stage 5c ok: \$(grep -c '^+0x' /tmp/ourisp.txt) register lines read mid-stream, post-arm\"
 

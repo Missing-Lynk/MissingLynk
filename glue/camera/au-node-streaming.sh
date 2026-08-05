@@ -35,11 +35,7 @@ LOAD_FRAMES=$((LOAD_SECONDS * 60))
 echo "=== staging ==="
 device_push "$REPO/native/build/ml-cam2enc" || exit 1
 
-if ! sshg 'lsmod | grep -q "^ar_cvisp "' </dev/null
-then
-	echo "ar_cvisp is not loaded: run glue/camera/au-v4l2-chain.sh first" >&2
-	exit 1
-fi
+au_require_cvisp
 
 # The whole STREAM line, so a differing hash can be read against the frame count and byte total
 # that produced it: two runs that coded a different number of frames are not comparable at all.

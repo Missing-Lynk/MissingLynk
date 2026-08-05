@@ -45,7 +45,8 @@
 #
 # Usage: glue/camera/au-enc-bench.sh
 # Env: MODE (sustain), TIERS (static,bars,noise), SECS (10), FPS (60), RING (8), TX (unset),
-#      BITRATE (5000000 per tile), GOP (0), MINQP (25), IQP (32), MBRC (1), VBV (derived),
+#      BITRATE (5000000 per tile), GOP (0), MINQP (0), MAXQP (51), IQP (30), MBRC (1),
+#      VBV (derived),
 #      ONLY, DUMP.
 #      Target: the active device profile.
 set -uo pipefail
@@ -80,31 +81,35 @@ BITRATE="${BITRATE:-5000000}"
 GOP="${GOP:-0}"
 # CU-level rate control. Off by default in the driver, and one control enables mb_level_rc,
 # cu_level_rc and hvs_qp together: per-CTU QP adaptation inside a frame. This is what holds a
-# frame to its byte budget when part of it is hard, and is the leading explanation for the
-# vendor's peak-to-mean of 1.7x against our 34x on hard content.
+# frame to its byte budget when part of it is hard.
+#
+# Vendor parity, established: AR_MPI_VENC_GetRcParam returns s32CuOrMbLevelRcEnable = 1 and
+# s32HvsQPEnable = 1 as the H.265 CBR defaults, and ar_lowdelay overwrites neither. The aggregate
+# control is coarser than the vendor's three fields, but every field it sets matches.
 MBRC="${MBRC:-1}"
 # Per-frame size levers, because one access unit must fit one UDP datagram. Over the limit,
 # vph_build refuses and ml-air-video discards the frame (counted as `oversize`).
 #
-# VBV is the lever that actually sets the ceiling. It is a window in milliseconds, so the bytes it
-# permits are vbv_ms * bitrate / 8000. The driver's 1000 ms default at 1 Mbit/s allows 125000 B,
-# which is exactly the 125985 and 127413 maxima measured on hardware. Derive it from the bitrate
-# rather than hardcode: a fixed value that is safe at one bitrate silently is not at another.
+# VBV is the lever that actually sets the ceiling. The driver's 1000 ms default at 1 Mbit/s
+# allows 125000 B, which is exactly the 125985 and 127413 maxima measured on hardware. Sets
+# AU_LIMIT and VBV.
+au_derive_vbv "$BITRATE"
+# QP clamps. The vendor's are u32MinIQp/u32MinPQp/u32MinBQp = 0 and u32MaxIQp/u32MaxPQp/u32MaxBQp
+# = 51, all eight offsets read out of the SetRcParam call. Mainline expresses them only as the
+# aggregate HEVC_MIN_QP/HEVC_MAX_QP pair, which works here because the vendor uses the same value
+# for I, P and B on each side. MAXQP already matches the driver default; MINQP does not, and the
+# driver's 8 is what let rate control pin flat content at the floor and overshoot the target 1.6x
+# on `bars`.
 #
-# 3/4 of the exact ceiling leaves room for the header overhead the window does not model.
-UDP_PAYLOAD_MAX=65507
-VPH_HEADER=36
-VPH_TAIL=4
-AU_LIMIT=$(( UDP_PAYLOAD_MAX - VPH_HEADER - VPH_TAIL ))
-VBV_MAX=$(( AU_LIMIT * 8000 * 3 / 4 / BITRATE ))
-[ "$VBV_MAX" -lt 10 ] && VBV_MAX=10
-[ "$VBV_MAX" -gt 3000 ] && VBV_MAX=3000
-VBV="${VBV:-$VBV_MAX}"
-# Floor QP so rate control cannot spend the whole window on easy content. The driver default of 8
-# lets RC drive QP to the floor on flat bars, which is also why `bars` overshot its target 1.6x
-# while `detail` hit it exactly. IQP bounds the IDR, the one frame a long GOP never repeats.
-MINQP="${MINQP:-25}"
-IQP="${IQP:-32}"
+# Raising MINQP shapes the stream better than the vendor does, so it is not the default: this is a
+# parity harness, and a deviation that measures well is still a deviation. plans/beyond-vendor-
+# backlog.md holds the case for a floor above 0.
+#
+# IQP defaults to the driver's own 30 and is a knob, not a setting. It maps to wave_param.intra_qp,
+# which CBR overrides with initial_rc_qp = -1; the vendor's s32FirstFrameStartQp is -1 too.
+MINQP="${MINQP:-0}"
+MAXQP="${MAXQP:-51}"
+IQP="${IQP:-30}"
 BIN="$REPO/userspace/gstreamer/build/static/ml-air-video"
 
 [ -x "$BIN" ] || { echo "missing $BIN (run userspace/gstreamer/scripts/build-static.sh)" >&2; exit 1; }
@@ -114,43 +119,12 @@ sshg "rm -f /tmp/ml-air-video; lsmod | grep -q '^wave5' || echo 'WARNING: wave5 
 device_push "$BIN" || exit 1
 sshg "chmod +x /tmp/ml-air-video"
 
-# wave5 cannot be hot-swapped. It is not the first instance open that blocks a reload, it is the
-# probe: probing loads firmware into the VPU, and a second probe without a hardware reset returns
-# -16 from vpu_init_with_bitcode, leaving the codec unbound for the rest of the boot. Measured the
-# hard way. The driver must therefore already be in the rootfs when the kernel boots, so this only
-# verifies and refuses to produce a number against the wrong binary.
-KO="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel/wave5.ko"
-DEV_KO=/lib/modules/6.18.36/kernel/wave5.ko
-
-if [ -f "$KO" ]
-then
-	WANT=$(md5sum "$KO" | cut -d' ' -f1)
-	HAVE=$(sshg "md5sum $DEV_KO 2>/dev/null | cut -d' ' -f1" </dev/null | tr -d '\r\n')
-
-	if [ "$WANT" != "$HAVE" ]
-	then
-		echo "$DEV_KO is not the build under test; installing it"
-		echo "  device $HAVE"
-		echo "  build  $WANT"
-		device_push "$KO" || exit 1
-		sshg "cp /tmp/wave5.ko $DEV_KO && sync && md5sum $DEV_KO"
-		echo
-		echo "installed into the rootfs. REBOOT and re-run: the running kernel still has the old"
-		echo "module and wave5 cannot be reloaded warm (probe loads firmware; a second probe"
-		echo "returns -16 and unbinds the codec for the rest of the boot)."
-		exit 2
-	fi
-fi
+au_ensure_wave5
 
 sshg "grep -q 'vdec' /proc/modules 2>/dev/null; ls /dev/video* 2>&1 | head -3"
 
 ENV_ARGS="ML_AIR_BENCH=$TIERS ML_AIR_BENCH_SECS=$SECS ML_AIR_RING=$RING ML_AIR_FPS=$FPS"
-ENV_ARGS="$ENV_ARGS ML_AIR_ENC=\"v4l2h265enc output-io-mode=dmabuf-import"
-ENV_ARGS="$ENV_ARGS extra-controls=\\\"controls,video_gop_size=$GOP,frame_level_rate_control_enable=1"
-ENV_ARGS="$ENV_ARGS,video_bitrate=$BITRATE,video_bitrate_mode=1"
-ENV_ARGS="$ENV_ARGS,hevc_minimum_qp_value=$MINQP,hevc_i_frame_qp_value=$IQP"
-ENV_ARGS="$ENV_ARGS,h264_mb_level_rate_control=$MBRC"
-ENV_ARGS="$ENV_ARGS,vbv_buffer_size=$VBV\\\"\""
+au_enc_controls_env
 
 MODE="${MODE:-sustain}"
 
@@ -198,7 +172,7 @@ LIMIT=$(( NTIERS * (SECS + 5) + 30 ))
 
 echo "=== $MODE: $NTIERS tier(s), $SECS s each, $FPS fps declared, ${BITRATE} bit/s/tile, ring $RING ==="
 echo "=== vbv $VBV ms permits $(( VBV * BITRATE / 8000 )) B/AU, datagram limit $AU_LIMIT B ==="
-echo "=== min qp $MINQP, i-frame qp $IQP, mbrc $MBRC, gop $GOP ==="
+echo "=== qp $MINQP..$MAXQP, i-frame qp $IQP, mbrc $MBRC, gop $GOP ==="
 sshg "cd /tmp && timeout $LIMIT env $ENV_ARGS ./ml-air-video >/tmp/bench.log 2>&1; echo \"exit \$?\"" </dev/null
 
 echo
@@ -218,6 +192,4 @@ then
 	sshg "rm -f $DUMPDIR/bench_tile*.h265"
 fi
 
-echo
-echo "=== encoder health ==="
-sshg "dmesg | grep -iE 'watchdog|syserr|enc instance|PIC_RUN|vdi pool' | tail -15"
+au_encoder_health

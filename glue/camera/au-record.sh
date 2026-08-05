@@ -37,20 +37,9 @@ mkdir -p "$OUT"
 echo "=== staging ==="
 device_push "$REPO/native/build/ml-cam2enc" || exit 1
 
-if ! sshg 'lsmod | grep -q "^ar_cvisp "' </dev/null
-then
-	echo "ar_cvisp is not loaded: run CVDEPTH=3 glue/camera/au-v4l2-chain.sh first" >&2
-	exit 1
-fi
-
 # Depth 1 re-arms one buffer per frame, so any encode latency reads a buffer
 # mid-overwrite: torn frames with a clean drop counter. Refuse to record.
-DEPTH=$(sshg 'cat /sys/module/ar_cvisp/parameters/depth' </dev/null)
-if [ "${DEPTH:-0}" -lt 3 ]
-then
-	echo "cvisp depth is ${DEPTH:-unknown}, recording needs 3: run CVDEPTH=3 glue/camera/au-v4l2-chain.sh" >&2
-	exit 1
-fi
+au_require_cvisp 3
 
 echo "=== recording ${SECONDS_RUN}s (GOP $GOP, cap ${CAP_MB} MB, CBR $BITRATE) ==="
 sshg "rm -f /tmp/rec.265; /tmp/ml-cam2enc -n $FRAMES -G $GOP -m $CAP_MB -R $BITRATE -o /tmp/rec.265" </dev/null | tail -5

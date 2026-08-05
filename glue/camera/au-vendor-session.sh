@@ -33,6 +33,14 @@ au_stock_slot_a
 
 TAG="${TAG:-light1}"
 OUT="$REPO/out/au-vendor-session"
+# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
+BREATH='I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
+	echo "--- sensor exposure 0x0202"; $I 0 0x1a 0x0202 -n 4
+	echo "--- sensor gain 0x0205";     $I 0 0x1a 0x0205 -n 4
+	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
+	echo "--- cvisp blc 0x4200";       $R 0x08e04200 32
+	echo "--- isp lnr 0x3cc8";         $R 0x08c03cc8 88
+	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56'
 
 mkdir -p "$OUT"
 
@@ -108,13 +116,7 @@ case "$1" in
 	# One breath, nothing in between: the abscissa solve needs every stage read at the same
 	# operating point. Two runs at light levels far enough apart to land in different bands.
 	# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
-	echo "--- sensor exposure 0x0202"; $I 0 0x1a 0x0202 -n 4
-	echo "--- sensor gain 0x0205";     $I 0 0x1a 0x0205 -n 4
-	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
-	echo "--- cvisp blc 0x4200";       $R 0x08e04200 32
-	echo "--- isp lnr 0x3cc8";         $R 0x08c03cc8 88
-	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56' > "$OUT/breath-$TAG.txt" 2>&1
+	sshg "$BREATH" > "$OUT/breath-$TAG.txt" 2>&1
 	grep -A2 "sensor gain" "$OUT/breath-$TAG.txt" | head -4
 	echo "  wrote $OUT/breath-$TAG.txt"
 	;;
@@ -141,13 +143,7 @@ case "$1" in
 	# is the operating point the older vendor captures were taken at, so this is what makes the
 	# old and new capture sets directly comparable.
 	# shellcheck disable=SC2016  # expansion happens in the device shell, not this one.
-	sshg 'I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
-	echo "--- sensor exposure 0x0202"; $I 0 0x1a 0x0202 -n 4
-	echo "--- sensor gain 0x0205";     $I 0 0x1a 0x0205 -n 4
-	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
-	echo "--- cvisp blc 0x4200";       $R 0x08e04200 32
-	echo "--- isp lnr 0x3cc8";         $R 0x08c03cc8 88
-	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56' > "$OUT/breath-covered.txt" 2>&1
+	sshg "$BREATH" > "$OUT/breath-covered.txt" 2>&1
 	SKIP=$(( 0x50c000 / 4096 ))
 	CNT=$(( (0x1b90000 - 0x50c000) / 4096 ))
 	sshg "dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null" > "$OUT/heap-covered.bin"

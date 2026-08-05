@@ -37,34 +37,14 @@ echo "=== staging ==="
 device_push "$REPO/native/build/ml-cam2enc" || exit 1
 echo "  staged ml-cam2enc"
 
-# The encoder module cannot be swapped on a running system. rmmod plus insmod reaches
-# vpu_init_with_bitcode and fails -16: the firmware instance from the first load is still
-# resident, and the old module is gone by then, so the attempt costs the encoder node for the
-# rest of the boot. A new wave5.ko is therefore INSTALLED and picked up by the next boot.
-KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
-MODPATH=/lib/modules/6.18.36/kernel/wave5.ko
-if [ "${WAVE5_INSTALL:-1}" = 1 ] && [ -f "$KD/wave5.ko" ]
-then
-	WANT="$(md5sum < "$KD/wave5.ko" | cut -d' ' -f1)"
-	HAVE="$(sshg "md5sum < $MODPATH" </dev/null | cut -d' ' -f1)"
-	if [ "$WANT" != "$HAVE" ]
-	then
-		device_push "$KD/wave5.ko" || exit 1
-		sshg "cp -n $MODPATH $MODPATH.pre-stride; cp /tmp/wave5.ko $MODPATH; sync" </dev/null || exit 1
-		echo "  installed the staged wave5.ko: POWER-CYCLE before the encoder tests mean anything"
-		echo "  (the running kernel still has the old one; the previous module is kept as .pre-stride)"
-	else
-		echo "  wave5.ko on the rootfs matches the staged build"
-	fi
-fi
+au_ensure_wave5
 
 # The camera modules have to be up for the modes that open the capture node. Saying so is
 # cheaper than a run that fails halfway with an error about a missing node. The encoder-only
 # mode does not touch the camera, so it is allowed to run on its own.
-if [ "$MODE" != encoder ] && ! sshg 'lsmod | grep -q "^ar_cvisp "' </dev/null
+if [ "$MODE" != encoder ]
 then
-	echo "ar_cvisp is not loaded: run glue/camera/au-prove-camera.sh first" >&2
-	exit 1
+	au_require_cvisp
 fi
 
 if [ "$MODE" = all ] || [ "$MODE" = export ]

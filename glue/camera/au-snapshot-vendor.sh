@@ -51,24 +51,14 @@ do
 	device_push "$REPO/native/build/$t" 2>/dev/null || echo "  (optional tool $t not staged)"
 done
 
-# Register clusters. The ISP list is exactly the span our replay writes, derived from
-# ar-isp-defaults.h, so each is known-mapped. The other blocks use the windows our drivers map.
+# Register clusters, from the shared list au-prove-camera.sh stage 5c also dumps; one source is
+# what keeps the two dumps diffable. The ISP spans are exactly what our replay writes, so each
+# is known-mapped. The other blocks use the windows our drivers map.
+ISP_WINDOWS="$(grep -v '^#' "$HERE/isp-windows.list" | tr '\n' ' ')"
 echo
 echo "=== register windows ==="
 {
-	for spec in \
-		isp:0x08c00000:0x0000:64    isp:0x08c00000:0x0800:322 \
-		isp:0x08c00000:0x1800:512   isp:0x08c00000:0x2400:16 \
-		isp:0x08c00000:0x4000:64 \
-		isp:0x08c00000:0x2800:64    isp:0x08c00000:0x2e00:1032 \
-		isp:0x08c00000:0x4800:576   isp:0x08c00000:0x5800:28 \
-		isp:0x08c00000:0x6000:384   isp:0x08c00000:0x6c00:704 \
-		cvisp:0x08e00000:0x8000:64  cvisp:0x08e00000:0x4600:16 \
-		cvisp:0x08e00000:0x4000:256 cvisp:0x08e00000:0x4400:64 \
-		cvisp:0x08e00000:0x4700:16 \
-		vif:0x08870000:0x0000:256   vif:0x08870000:0x0300:64 \
-		csi2:0x08880000:0x0400:64   csi2:0x08880000:0x0800:64 \
-		cgu:0x0a104000:0x0000:32
+	for spec in $ISP_WINDOWS
 	do
 		blk=${spec%%:*}; rest=${spec#*:}
 		base=${rest%%:*}; rest=${rest#*:}
