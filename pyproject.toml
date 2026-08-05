@@ -44,9 +44,12 @@ dev = [
 # Follows requires-python: one interpreter, so the UP rules may target it directly.
 target-version = "py314"
 line-length = 100
-include = ["missinglynk/**/*.py", "tests/**/*.py", "glue/**/*.py"]
-# glue/dev/ is gitignored per-machine scratch, not part of the tree.
-extend-exclude = ["glue/dev"]
+include = ["missinglynk/**/*.py", "tests/**/*.py", "glue/**/*.py",
+           "kernel/scripts/**/*.py"]
+# glue/dev/ is gitignored per-machine scratch, not part of the tree. kernel/build/ holds the
+# fetched kernel tree and its thousands of upstream scripts; ruff's default excludes already
+# drop a directory named build, and this states it rather than relying on that.
+extend-exclude = ["glue/dev", "kernel/build"]
 
 [tool.ruff.lint]
 # E/F/W/I: errors, pyflakes, warnings, import order. UP/B/C4/SIM: pyupgrade, bugbear,

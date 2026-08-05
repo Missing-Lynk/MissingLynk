@@ -18,7 +18,7 @@ This applies to any device with two boot slots. The commands shown are the concr
 
 A slot's image is the set of boot components it owns. Generically: bootloader, kernel, dtb (if separate), env, and rootfs. Clone all of them so the target is a complete, bootable copy.
 
-Example, VR04 source-to-target mapping (cloning B to A; reverse the columns to clone A to B; the authoritative full MTD map is in [docs/reference/open-firmware-bsp.md](../../docs/reference/open-firmware-bsp.md)). **Re-verify against `cat /proc/mtd`.**
+Example, VR04 source-to-target mapping (cloning B to A; reverse the columns to clone A to B). **`cat /proc/mtd` on the live device is the authoritative map; re-verify against it.**
 
 | Component | Slot A partition | Slot B partition |
 |---|---|---|

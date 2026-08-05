@@ -50,12 +50,12 @@ static cJSON *read_vendor(void)
         static const char *const keys[] = {
             "hardware_version", "software_version", "sequence_number", "product_version",
         };
-        for (unsigned k = 0; k < sizeof keys / sizeof keys[0]; k++) {
-            const cJSON *field = cJSON_GetObjectItemCaseSensitive(root, keys[k]);
+        for (unsigned j = 0; j < sizeof keys / sizeof keys[0]; j++) {
+            const cJSON *field = cJSON_GetObjectItemCaseSensitive(root, keys[j]);
             if (cJSON_IsString(field) && field->valuestring) {
-                cJSON_AddStringToObject(vendor, keys[k], field->valuestring);
+                cJSON_AddStringToObject(vendor, keys[j], field->valuestring);
             } else if (cJSON_IsNumber(field)) {
-                cJSON_AddNumberToObject(vendor, keys[k], field->valuedouble);
+                cJSON_AddNumberToObject(vendor, keys[j], field->valuedouble);
             }
         }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Artosyn/Proxima BootROM UART recovery downloader (0x55-frame protocol, RE'd from bootrom-0x0.bin).
+"""
+Artosyn/Proxima BootROM UART recovery downloader (0x55-frame protocol, RE'd from bootrom-0x0.bin).
 
 Absolute last resort (see RECOVERY.md): drive the mask BootROM over the 3 debug-UART wires when
 nothing else boots. Spam ASCII "0123456" during the cold V1.4 menu -> the ROM replies 'Y', then it

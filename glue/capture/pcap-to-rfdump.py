@@ -69,7 +69,8 @@ def read_pcap_ts(path):
 
 
 def collect(path, want_ports):
-    """[(ts, dport, udp_payload)] for air->goggle UDP on want_ports, fragments reassembled.
+    """
+    [(ts, dport, udp_payload)] for air->goggle UDP on want_ports, fragments reassembled.
     A reassembled datagram carries its FIRST fragment's timestamp."""
     out = []
     frags = {}   # (src,dst,proto,id) -> {"parts": {off: bytes}, "last_end": int|None, "ts": float}

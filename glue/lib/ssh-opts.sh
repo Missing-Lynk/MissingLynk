@@ -18,6 +18,8 @@
 # Also provides sshg() (run a root command on $DEVICE_IP with $PASS), device_ssh() (same, with
 # explicit pass+ip args), and device_ssh_timeout() (sshg wrapped in `timeout`), so scripts stop
 # redefining that one-liner.
+#
+# DEVICE_PORT sets the port for every helper here (22 otherwise), for a target behind a relay.
 
 SSH_OPTS_LIBRE=(
     -o StrictHostKeyChecking=no
@@ -61,14 +63,14 @@ fi
 # Reads $DEVICE_IP and $PASS (defaulted above). For a one-off host/password (a credential probe,
 # or the air unit) use device_ssh with explicit args instead.
 sshg() {
-    sshpass -p "$PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$DEVICE_IP" "$@"
+    sshpass -p "$PASS" ssh "${SSH_OPTS_LEGACY[@]}" -p "${DEVICE_PORT:-22}" root@"$DEVICE_IP" "$@"
 }
 
 # device_ssh <pass> <ip> <cmd...> - explicit-credential variant of sshg (no globals).
 device_ssh() {
     local pass="$1" ip="$2"
     shift 2
-    sshpass -p "$pass" ssh "${SSH_OPTS_LEGACY[@]}" root@"$ip" "$@"
+    sshpass -p "$pass" ssh "${SSH_OPTS_LEGACY[@]}" -p "${DEVICE_PORT:-22}" root@"$ip" "$@"
 }
 
 # device_ssh_timeout <secs> <cmd...> - sshg bounded by `timeout <secs>`. A caller cannot write
@@ -77,7 +79,67 @@ device_ssh() {
 device_ssh_timeout() {
     local secs="$1"
     shift
-    timeout "$secs" sshpass -p "$PASS" ssh "${SSH_OPTS_LEGACY[@]}" root@"$DEVICE_IP" "$@"
+    timeout "$secs" sshpass -p "$PASS" ssh "${SSH_OPTS_LEGACY[@]}" -p "${DEVICE_PORT:-22}" root@"$DEVICE_IP" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# File transfer. USE THESE, NOT scp.
+#
+# NEITHER stack has an sftp subsystem: the vendor Dropbear on stock slot A and the air unit
+# has none, and the open slot-B sshd ships without one. scp defaults to sftp, so it fails with
+# "sh: /usr/lib/ssh/sftp-server: not found" / "Connection closed". `scp -O` (legacy protocol)
+# does not save it either, because that needs an `scp` binary on the device and there is none.
+#
+# So bytes go over a plain ssh channel. This keeps being re-derived per script; it is here now
+# so it stops being.
+#
+# One caution that is not about sftp: pushing a LARGE file this way has crashed the goggle's
+# USB gadget mid-transfer. Keep pushed tools small, and prefer several small pushes to one big
+# one. For directories, device_push tars rather than looping, which is both faster and fewer
+# round trips.
+
+# device_push <local> [remote-dir] - copy a file or directory to the device (default /tmp).
+# Files keep their exec bit; directories go as a gzip'd tar and are unpacked with busybox tar.
+device_push() {
+    local src="$1" dest="${2:-/tmp}"
+
+    device_push_as "$src" "$dest/$(basename "$src")"
+}
+
+# device_push_as <local> <remote-path> - device_push to an explicit path, for callers that rename
+# on the way. One ssh round trip per file: a bring-up stages a dozen, over a link that has crashed
+# under transfer load.
+device_push_as() {
+    local src="$1" dst="$2" dir base
+    dir="$(dirname "$dst")"
+    base="$(basename "$src")"
+
+    [ -e "$src" ] || { echo "device_push: no such file or directory: $src" >&2; return 1; }
+
+    if [ -d "$src" ]; then
+        tar cz -C "$(dirname "$src")" "$base" | sshg "mkdir -p '$dst' && tar xz -C '$dst'"
+    elif [ -x "$src" ]; then
+        sshg "mkdir -p '$dir' && cat > '$dst' && chmod +x '$dst'" < "$src"
+    else
+        sshg "mkdir -p '$dir' && cat > '$dst'" < "$src"
+    fi
+}
+
+# device_pull <remote> [local] - copy a file off the device (default: basename in the cwd).
+# Binary safe: no tty is allocated, so nothing translates newlines.
+# Lands in <local>.part, moved into place only once non-empty, so a failed pull leaves an earlier
+# copy intact: a plain redirect once destroyed a capture that cost a bring-up. Nonzero if empty.
+device_pull() {
+    local src="$1" dst="${2:-}"
+
+    [ -n "$dst" ] || dst="$(basename "$src")"
+    if sshg "cat '$src'" > "$dst.part" && [ -s "$dst.part" ]; then
+        mv -f "$dst.part" "$dst"
+        return 0
+    fi
+    rm -f "$dst.part"
+    echo "device_pull: $src arrived empty, does it exist on the device?" >&2
+    return 1
 }
 
 # ensure_device_reachable - confirm the target answers SSH as root/$PASS. If the open slot-B

@@ -23,6 +23,8 @@ Five components plus a manifest:
 
 Deliberately excluded (not slot-relative, so not part of any slot image): `usr_data` / `usr_log` (the shared, persistent `/usrdata` store that must survive a reflash), and `vendor`, `factory`, `spl*`, `gpt*`.
 
+**Never write `factory` (`mtd8`).** It is a per-device partition, not slot content, and it holds `certification`, a per-unit token the stock stack's media pipeline verifies at startup. It is not in any downloadable firmware image, so wiping it cannot be repaired by reflashing: the unit boots, links RF, and shows no video, with no obvious cause. The open stack neither reads nor mounts it. If you need to inspect it, mount `-o ro`.
+
 ## Vendor blobs (`firmware/bin/`)
 
 The build needs stock `uboot` + `env` + an OTRA template (a stock `kernel` partition dump) from your own device. Capture them once:

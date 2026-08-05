@@ -57,7 +57,8 @@ def _find_header(data: bytes) -> int:
 
 
 def parse(data: bytes) -> tuple:
-    """Locate the GPT and its entries.
+    """
+    Locate the GPT and its entries.
 
     Returns (header_off, header_size, array_off, entry_count, entry_size, entries), where
     entries maps a partition name -> (entry_off, attributes).

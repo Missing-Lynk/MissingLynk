@@ -60,13 +60,13 @@ static int text_extent(const stbtt_fontinfo *font, const char *text, float scale
 
 static void blend_glyph(Glyphs *g, const unsigned char *bm, int gw, int gh, int ox, int oy)
 {
-    for (int j = 0; j < gh; j++) {
-        for (int k = 0; k < gw; k++) {
-            int px = ox + k, py = oy + j;
+    for (int i = 0; i < gh; i++) {
+        for (int j = 0; j < gw; j++) {
+            int px = ox + j, py = oy + i;
             if (px < 0 || px >= g->width || py < 0 || py >= g->height) {
                 continue;
             }
-            unsigned char src = bm[j * gw + k];
+            unsigned char src = bm[i * gw + j];
             unsigned char *dst = &g->cov[py * g->width + px];
             if (src > *dst) {
                 *dst = src;
@@ -157,15 +157,15 @@ void canvas_clear(Canvas *canvas, uint16_t color)
 
 void canvas_fill(Canvas *canvas, int x, int y, int w, int h, uint16_t color)
 {
-    for (int j = y; j < y + h; j++) {
-        if (j < 0 || j >= canvas->h) {
+    for (int i = y; i < y + h; i++) {
+        if (i < 0 || i >= canvas->h) {
             continue;
         }
-        for (int k = x; k < x + w; k++) {
-            if (k < 0 || k >= canvas->w) {
+        for (int j = x; j < x + w; j++) {
+            if (j < 0 || j >= canvas->w) {
                 continue;
             }
-            canvas->px[j * canvas->w + k] = color;
+            canvas->px[i * canvas->w + j] = color;
         }
     }
 }
@@ -180,9 +180,9 @@ void canvas_box(Canvas *canvas, int x, int y, int w, int h, int thickness, uint1
 
 void canvas_triangle(Canvas *canvas, int x, int y, int size, uint16_t color)
 {
-    for (int j = 0; j < size; j++) {
-        int span = (j <= size / 2 ? j : size - j) * 2;
-        canvas_fill(canvas, x, y + j, span / 2 + 1, 1, color);
+    for (int i = 0; i < size; i++) {
+        int span = (i <= size / 2 ? i : size - i) * 2;
+        canvas_fill(canvas, x, y + i, span / 2 + 1, 1, color);
     }
 }
 
@@ -206,13 +206,13 @@ void canvas_text(Canvas *canvas, const Font *font, const char *str, int x, int y
     if (g.cov == NULL) {
         return;
     }
-    for (int j = 0; j < g.height; j++) {
-        for (int k = 0; k < g.width; k++) {
-            int dx = x + k, dy = y + j;
+    for (int i = 0; i < g.height; i++) {
+        for (int j = 0; j < g.width; j++) {
+            int dx = x + j, dy = y + i;
             if (dx < 0 || dx >= canvas->w || dy < 0 || dy >= canvas->h) {
                 continue;
             }
-            canvas->px[dy * canvas->w + dx] = over(canvas->px[dy * canvas->w + dx], g.cov[j * g.width + k], col);
+            canvas->px[dy * canvas->w + dx] = over(canvas->px[dy * canvas->w + dx], g.cov[i * g.width + j], col);
         }
     }
     free(g.cov);
@@ -231,10 +231,10 @@ void canvas_text_center(Canvas *canvas, const Font *font, const char *str, int y
 
 void canvas_present(Canvas *canvas)
 {
-    for (int p = 0; p < canvas->npages; p++) {
-        for (int y = 0; y < canvas->h; y++) {
-            uint16_t *dst = canvas->fb + (size_t)(y + p * canvas->h) * STRIDE_PX;
-            memcpy(dst, canvas->px + (size_t)y * canvas->w, (size_t)canvas->w * 2);
+    for (int i = 0; i < canvas->npages; i++) {
+        for (int j = 0; j < canvas->h; j++) {
+            uint16_t *dst = canvas->fb + (size_t)(j + i * canvas->h) * STRIDE_PX;
+            memcpy(dst, canvas->px + (size_t)j * canvas->w, (size_t)canvas->w * 2);
         }
     }
 }
@@ -264,9 +264,9 @@ static const unsigned char *block_for(char ch)
 static int block_cols(const unsigned char *g)
 {
     int mask = 0;
-    for (int r = 0; r < 7; r++) {
+    for (int i = 0; i < 7; i++) {
         for (int col = 0; col < 5; col++) {
-            if (g[r] & (1 << (4 - col))) {
+            if (g[i] & (1 << (4 - col))) {
                 if (col + 1 > mask) {
                     mask = col + 1;
                 }
@@ -306,10 +306,10 @@ void draw_title(Canvas *canvas, const char *str, int x, int y, int cell, int gap
         }
         const unsigned char *g = block_for(str[i]);
         if (g) {
-            for (int r = 0; r < 7; r++) {
+            for (int j = 0; j < 7; j++) {
                 for (int col = 0; col < 5; col++) {
-                    if (g[r] & (1 << (4 - col))) {
-                        canvas_fill(canvas, cx + col * cell, y + r * cell, cell - 1, cell - 1, color);
+                    if (g[j] & (1 << (4 - col))) {
+                        canvas_fill(canvas, cx + col * cell, y + j * cell, cell - 1, cell - 1, color);
                     }
                 }
             }

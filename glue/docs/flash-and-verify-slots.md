@@ -28,7 +28,7 @@ If your device is missing capability 1 (RAM-boot), you can still flash to B and 
 
 Each slot owns its own copy of every boot component. There is also one small region that records which slot is active (a GPT attribute bit, a boot flag, an eMMC boot-partition selector, depending on the device). That pointer is the only shared thing you ever write.
 
-Example, VR04 (one SPI-NAND device split into 20 partitions; the whole device is `mtd0` with the partitions as `mtd1`..`mtd20`; the authoritative full MTD map is in [docs/reference/open-firmware-bsp.md](../../docs/reference/open-firmware-bsp.md)). **Always re-confirm the numbers on the live device with `cat /proc/mtd` before any write; do not trust this table blindly.**
+Example, VR04 (one SPI-NAND device split into 20 partitions; the whole device is `mtd0` with the partitions as `mtd1`..`mtd20`). **Always re-confirm the numbers on the live device with `cat /proc/mtd` before any write; do not trust this table blindly.**
 
 | Component | Slot A (never write) | Slot B (write target) |
 |---|---|---|

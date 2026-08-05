@@ -85,8 +85,9 @@ static int write_image(int fd, const struct mtd_info_user *mi,
     size_t pos = 0;
     uint32_t off = 0;
 
-    if (erase_range(fd, mi, (uint32_t)len))
+    if (erase_range(fd, mi, (uint32_t)len)) {
         return -1;
+    }
 
     while (pos < len) {
         if (is_bad_block(fd, off)) {
@@ -213,17 +214,20 @@ int mtd_write_verify(const char *dev_path, const unsigned char *data, size_t len
     } else {
         rc = (lseek(fd, 0, SEEK_SET) == 0 &&
               write(fd, data, len) == (ssize_t)len) ? 0 : -1;
-        if (rc)
+        if (rc) {
             perror(dev_path);
+        }
     }
     close(fd);
 
-    if (rc)
+    if (rc) {
         return -1;
+    }
 
     unsigned char *back = readback(dev_path, is_mtd, len);
-    if (!back)
+    if (!back) {
         return -1;
+    }
 
     char hex[65];
     sha256_hex(back, len, hex);

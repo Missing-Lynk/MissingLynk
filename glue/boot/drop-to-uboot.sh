@@ -23,7 +23,7 @@ BIN="$HERE/../build/uboot-trigger"
 STAGE=/tmp
 
 echo "[*] deploying to $DEVICE_IP:$STAGE (cat-over-ssh; dropbear has no SFTP)..."
-if ! cat "$BIN" | sshg "cat >$STAGE/uboot-trigger && chmod +x $STAGE/uboot-trigger"; then
+if ! device_push_as "$BIN" "$STAGE/uboot-trigger"; then
   echo "[!] deploy failed - is the goggle up and reachable at $DEVICE_IP as root/$PASS?"; exit 1
 fi
 

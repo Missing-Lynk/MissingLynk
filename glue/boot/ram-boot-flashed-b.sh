@@ -38,11 +38,10 @@ DTB1_GEOMETRY="$(mtdparts_partition dtb1 || true)"
 read -r KERNEL1_OFFSET KERNEL1_SIZE <<<"$KERNEL1_GEOMETRY"
 read -r DTB1_OFFSET DTB1_SIZE <<<"$DTB1_GEOMETRY"
 
-# This script boots whatever is FLASHED in kernel1/dtb1, which may predate the
-# truthful-256-MiB memory node in the DTS. Append mem=148m to the default args:
-# harmless with a new DTB (identical truncation), and it stops a stale 1 GiB-node
-# dtb1 from letting the kernel run into nonexistent RAM.
-BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT mem=148m}}"
+# The kernel boots on the DTB's full 256 MiB memory node. A mem= cap below 0x2d000000 leaves
+# isp-cma and vif-cma outside RAM while mmz, cvisp-cma and CONFIG_CMA's 56 MiB still come off
+# what remains, which OOMs the kernel during initcalls.
+BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT}}"
 
 [ -x "$ML_UBOOT_PY" ] || { echo "[!] missing $ML_UBOOT_PY"; exit 1; }
 

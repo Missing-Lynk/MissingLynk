@@ -277,16 +277,20 @@ int probe_slot(int slot, struct slot_probe *out)
 const char *slot_content_name(enum slot_content content)
 {
     switch (content) {
-    case SLOT_CONTENT_OPEN:
+    case SLOT_CONTENT_OPEN: {
         return "open";
+    } break;
 
-    case SLOT_CONTENT_VENDOR:
+    case SLOT_CONTENT_VENDOR: {
         return "vendor";
+    } break;
 
-    case SLOT_CONTENT_EMPTY:
+    case SLOT_CONTENT_EMPTY: {
         return "empty";
+    } break;
 
-    default:
+    default: {
         return "unknown";
+    } break;
     }
 }

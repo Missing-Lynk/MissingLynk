@@ -99,7 +99,7 @@ if [ -z "$TPL" ]; then
   echo "[*] pulling slot-B kernel1 read-only as OTRA template..."
   KMTD="$(sshg 'grep -m1 "\"kernel1\"" /proc/mtd | cut -d: -f1')"
   [ -n "$KMTD" ] || { echo "[!] could not find kernel1 in /proc/mtd"; exit 1; }
-  sshg "cat /dev/$KMTD" > "$SCRATCH/template.bin" 2>/dev/null
+  device_pull "/dev/$KMTD" "$SCRATCH/template.bin"
   TPL="$SCRATCH/template.bin"
 fi
 [ "$(xxd -l 4 -p "$TPL")" = "4f545241" ] || { echo "[!] OTRA template has no OTRA magic"; exit 1; }

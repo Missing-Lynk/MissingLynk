@@ -20,6 +20,9 @@
 #                   fetch, and the full chagall.bin is also staged at
 #                   lib/firmware/cnm/wave521c_k3_codec_fw.bin - the exact path/name the
 #                   open wave5 V4L2 driver requests, ready to drop into the B rootfs.
+#   ISP tuning      /usr/usrdata/tunning/<sensor>_tuning_preview_fpv.bin - what ar-isp
+#                   turns into its gamma and DRC pages. Only on an air unit (a goggle
+#                   slot A has no camera), so these are optional here.
 #   Vendor MPI libs /usr/lib/libmpi_{sys,venc,vdec,vb,scaler}.so + libmpp_service.so -
 #                   what userspace/libre/tools/ml-codec-probe links (point AR_LIBDIR at
 #                   <dest>/usr/lib as an alternative to a full out/P1_GND extraction).
@@ -34,34 +37,24 @@
 # is up. Missing optional files warn; missing required ones fail the run at the end.
 #
 # Usage:   glue/fetch/fetch-vendor-blobs.sh [dest-dir]
-# Env:     DEVICE_IP (default 192.168.3.100)
+# Env:     DEVICE_IP (default: the stock unit, resolved by ensure_stock_slot_a)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 DEST="${1:-$REPO/firmware/bin/slot-a}"
-DEVICE_IP="${DEVICE_IP:-192.168.3.100}"
 
 command -v sshpass >/dev/null || { echo "sshpass not installed" >&2; exit 1; }
 
 # Legacy-crypto Dropbear on the vendor (slot A) system - see docs/guides/serial-and-debug-access.md.
 . "$(dirname "$0")/../lib/ssh-opts.sh"
-SSHOPTS=("${SSH_OPTS_LEGACY[@]}")
-sshv() { sshpass -p artosyn ssh "${SSHOPTS[@]}" root@"$DEVICE_IP" "$@"; }
 
-echo "[*] checking $DEVICE_IP is booted on slot A (stock vendor)..."
-if ! sshv true 2>/dev/null; then
-    if sshpass -p libre ssh -o ConnectTimeout=6 "${SSH_OPTS_LIBRE[@]}" root@"$DEVICE_IP" true 2>/dev/null; then
-        echo "refusing: $DEVICE_IP is on slot B (open Alpine), not slot A." >&2
-        echo "  These blobs (esp. the auto_merge'd RF config) only exist on a running stock A." >&2
-        echo "  Run: glue/boot/flip-slot.sh a   (then re-run this script once it's back up)" >&2
-        exit 1
-    fi
-
-    echo "cannot SSH to $DEVICE_IP as root/artosyn - is it booted and on slot A?" >&2
+# The gate the flashers use: it resolves the stock address, confirms slot A, and names slot B as
+# the refusal rather than reporting the unit unreachable.
+ensure_stock_slot_a || {
+    echo "  These blobs (esp. the auto_merge'd RF config) only exist on a running stock A." >&2
     exit 1
-fi
-echo "[+] confirmed: slot A (root/artosyn)"
+}
 
 MISSING_REQ=()
 MISSING_OPT=()
@@ -70,7 +63,7 @@ MISSING_OPT=()
 fetch() {
     local req="$1" rpath="$2"
     local lpath="$DEST/${rpath#/}"
-    if ! sshv "test -f '$rpath'" 2>/dev/null; then
+    if ! sshg "test -f '$rpath'" 2>/dev/null; then
         if [ "$req" = required ]; then
             echo "[!] MISSING (required): $rpath" >&2; MISSING_REQ+=("$rpath")
         else
@@ -81,9 +74,9 @@ fetch() {
     fi
 
     mkdir -p "$(dirname "$lpath")"
-    sshv "cat '$rpath'" > "$lpath"
+    device_pull "$rpath" "$lpath"
     local rsum lsum
-    rsum="$(sshv "md5sum '$rpath'" | cut -d' ' -f1)"
+    rsum="$(sshg "md5sum '$rpath'" | cut -d' ' -f1)"
     lsum="$(md5sum "$lpath" | cut -d' ' -f1)"
     if [ -z "$rsum" ] || [ "$rsum" != "$lsum" ]; then
         echo "[!] md5 mismatch for $rpath (remote=$rsum local=$lsum)" >&2
@@ -146,6 +139,15 @@ fetch required /usr/bin/chagall.bin.gz
 fetch optional /usr/bin/chagall_lowmem.bin.gz
 fetch optional /usr/bin/chagall.bin
 fetch optional /usr/bin/chagall_lowmem.bin
+
+# ISP tuning blobs. ar-isp request_firmware()s the NT99235 one and generates its gamma and DRC
+# pages from it; the air unit's rootfs build refuses to assemble an image without it. One fixed
+# 0xd6c58-byte struct per sensor, and the vendor spells the directory "tunning". Optional because
+# a goggle slot A carries no camera: fetch these from an air unit.
+echo "[*] ISP tuning blobs (/usr/usrdata/tunning)..."
+for sensor in nt99235 sc2210 sc231; do
+    fetch optional "/usr/usrdata/tunning/${sensor}_tuning_preview_fpv.bin"
+done
 
 echo "[*] vendor MPI libraries (/usr/lib, for ml-codec-probe)..."
 for lib in libmpi_sys.so libmpi_venc.so libmpi_vdec.so libmpi_vb.so libmpi_scaler.so libmpp_service.so; do
