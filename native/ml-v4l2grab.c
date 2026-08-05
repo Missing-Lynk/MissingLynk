@@ -517,14 +517,14 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
         ready = select(device->fd + 1, &fds, NULL, NULL, &wait);
         if (ready < 0) {
             fprintf(stderr, "ml-v4l2grab: select: %s\n", strerror(errno));
-            goto done;
+            break;
         }
 
         if (ready == 0) {
             fprintf(stderr,
                     "ml-v4l2grab: timed out after %u frames waiting for a buffer\n",
                     captured);
-            goto done;
+            break;
         }
 
         memset(planes, 0, sizeof(planes));
@@ -539,7 +539,7 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
 
         if (ioctl_retry(device->fd, VIDIOC_DQBUF, &buffer) != 0) {
             fprintf(stderr, "ml-v4l2grab: DQBUF: %s\n", strerror(errno));
-            goto done;
+            break;
         }
 
         if (!device->quiet) {
@@ -565,7 +565,7 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
             }
 
             if (write_buffer(&buffers[buffer.index], path) != 0) {
-                goto done;
+                break;
             }
         }
 
@@ -579,13 +579,18 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
 
         if (ioctl_retry(device->fd, VIDIOC_QBUF, &buffer) != 0) {
             fprintf(stderr, "ml-v4l2grab: re-QBUF: %s\n", strerror(errno));
-            goto done;
+            break;
         }
     }
 
-    result = 0;
+    /*
+     * Only a loop that ran to completion is a success. Every early exit above has already
+     * said why it stopped, and each leaves captured short of frame_count.
+     */
+    if (captured == frame_count) {
+        result = 0;
+    }
 
-done:
     elapsed = now_seconds() - started;
 
     if (elapsed > 0.0) {

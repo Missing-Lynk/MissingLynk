@@ -932,6 +932,62 @@ static int run_encoder_only(uint32_t codec)
     return coded > 0 ? 0 : 1;
 }
 
+/**
+ * Take buffers back off the encoder until fewer than max_inflight are still out with it, and
+ * return each one to the camera.
+ *
+ * Nonzero means the run cannot continue: the caller stops the frame loop and drains. Every
+ * failure is reported here, so the caller has nothing to add.
+ *
+ * In -s and -k the camera is not rotating these buffers, so a reclaimed buffer is only
+ * accounted for and not re-queued.
+ */
+static int reclaim_inflight(int cam, int enc, const struct geometry *g,
+                            int *inflight, int max_inflight)
+{
+    while (*inflight >= max_inflight) {
+        struct v4l2_buffer d;
+        struct v4l2_plane dp[MAX_PLANES];
+        struct v4l2_buffer r;
+        struct v4l2_plane rp[MAX_PLANES];
+
+        if (!wait_ready(enc, POLLOUT, 2000, "encoder OUTPUT reclaim")) {
+            return -1;
+        }
+
+        memset(&d, 0, sizeof d);
+        memset(dp, 0, sizeof dp);
+        d.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        d.memory = V4L2_MEMORY_DMABUF;
+        d.m.planes = dp;
+        d.length = g->planes;
+        if (ioctl(enc, VIDIOC_DQBUF, &d)) {
+            bad("DQBUF(encoder OUTPUT)");
+            return -1;
+        }
+
+        (*inflight)--;
+
+        if (opt_static || opt_hold) {
+            continue;
+        }
+
+        memset(&r, 0, sizeof r);
+        memset(rp, 0, sizeof rp);
+        r.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        r.memory = V4L2_MEMORY_MMAP;
+        r.index = d.index;
+        r.m.planes = rp;
+        r.length = g->planes;
+        if (ioctl(cam, VIDIOC_QBUF, &r)) {
+            bad("re-QBUF(camera)");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /** Joined run: camera buffers exported and imported straight into the encoder. */
 static int run_joined(uint32_t codec)
 {
@@ -1091,44 +1147,8 @@ static int run_joined(uint32_t codec)
         }
 
         /* Reclaim before taking another frame, so the camera never starves. */
-        while (inflight >= max_inflight) {
-            struct v4l2_buffer d;
-            struct v4l2_plane dp[MAX_PLANES];
-            struct v4l2_buffer r;
-            struct v4l2_plane rp[MAX_PLANES];
-
-            if (!wait_ready(enc, POLLOUT, 2000, "encoder OUTPUT reclaim")) {
-                goto done;
-            }
-
-            memset(&d, 0, sizeof d);
-            memset(dp, 0, sizeof dp);
-            d.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-            d.memory = V4L2_MEMORY_DMABUF;
-            d.m.planes = dp;
-            d.length = g.planes;
-            if (ioctl(enc, VIDIOC_DQBUF, &d)) {
-                bad("DQBUF(encoder OUTPUT)");
-                goto done;
-            }
-
-            inflight--;
-
-            if (opt_static || opt_hold) {
-                continue;
-            }
-
-            memset(&r, 0, sizeof r);
-            memset(rp, 0, sizeof rp);
-            r.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-            r.memory = V4L2_MEMORY_MMAP;
-            r.index = d.index;
-            r.m.planes = rp;
-            r.length = g.planes;
-            if (ioctl(cam, VIDIOC_QBUF, &r)) {
-                bad("re-QBUF(camera)");
-                goto done;
-            }
+        if (reclaim_inflight(cam, enc, &g, &inflight, max_inflight)) {
+            break;
         }
 
         memset(&b, 0, sizeof b);
@@ -1138,7 +1158,7 @@ static int run_joined(uint32_t codec)
             b.index = (unsigned int)(n % allocated);
         } else {
             if (!wait_ready(cam, POLLIN, 2000, "camera frame")) {
-                goto done;
+                break;
             }
 
             b.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1147,7 +1167,7 @@ static int run_joined(uint32_t codec)
             b.length = g.planes;
             if (ioctl(cam, VIDIOC_DQBUF, &b)) {
                 bad("DQBUF(camera)");
-                goto done;
+                break;
             }
 
             if (b.flags & V4L2_BUF_FLAG_ERROR) {
@@ -1161,7 +1181,7 @@ static int run_joined(uint32_t codec)
             if (opt_hold) {
                 if (ioctl(cam, VIDIOC_QBUF, &b)) {
                     bad("re-QBUF(camera, hold)");
-                    goto done;
+                    break;
                 }
 
                 b.index = 0;
@@ -1219,14 +1239,13 @@ static int run_joined(uint32_t codec)
 
             snprintf(step, sizeof step, "QBUF(encoder OUTPUT, camera buffer %u)", b.index);
             bad(step);
-            goto done;
+            break;
         }
 
         inflight++;
         total += encoder_reap(enc, cap_map, out, &coded);
     }
 
-done:
     /* Drain whatever the encoder still holds before judging the run. */
     for (int i = 0; i < 8 && (opt_frames == 0 || coded < opt_frames); i++) {
         struct pollfd pf = { .fd = enc, .events = POLLIN };

@@ -59,6 +59,11 @@ NOMEM="${MMIO_NOMEM:-0}"
 SKIP_LO="${MMIO_SKIP_LO:-1}"
 SKIP_HI="${MMIO_SKIP_HI:-0}"
 CENSUS="${MMIO_IOCTL_CENSUS:-0}"
+
+# The device halves are files of their own. Their knobs go over as environment rather than
+# being interpolated into the script text, so they stay real files that shellcheck can read.
+MMIO_ENV="LO=$LO HI=$HI READS=$READS TIME=$TIME NOMEM=$NOMEM"
+MMIO_ENV="$MMIO_ENV SKIP_LO=$SKIP_LO SKIP_HI=$SKIP_HI CENSUS=$CENSUS"
 mkdir -p "$OUT"
 
 cmd="${1:-discover}"
@@ -72,25 +77,8 @@ push)
 
 discover)
     echo "=== processes that map MMIO (/dev/mem or /dev/ar_sys) = the register writers ==="
-    # shellcheck disable=SC2016  # remote command string: the loop expands on the device, not here.
-    sshg '
-    for m in /proc/[0-9]*/maps; do
-      pid=${m%/maps}; pid=${pid##*/}
-      if grep -qE "/dev/mem|/dev/ar_sys" "$m" 2>/dev/null; then
-        comm=$(cat /proc/$pid/comm 2>/dev/null)
-        cl=$(tr "\0" " " < /proc/$pid/cmdline 2>/dev/null)
-        ppid=$(awk "/^PPid:/{print \$2}" /proc/$pid/status 2>/dev/null)
-        pcomm=$(cat /proc/$ppid/comm 2>/dev/null)
-        echo "PID=$pid comm=$comm PPid=$ppid($pcomm)"
-        echo "   cmd: $cl"
-        echo "   exe: $(readlink /proc/$pid/exe 2>/dev/null)  cwd: $(readlink /proc/$pid/cwd 2>/dev/null)"
-        echo "   maps: $(grep -oE "/dev/(mem|ar_sys)" "$m" | sort -u | tr "\n" " ")"
-      fi
-    done
-    echo "=== how the camera daemon is started (init) ==="
-    grep -rniE "camera|ldrt|arlink|vin|mpp|server|vi_" /etc/init.d/ /etc/inittab /etc/rc* 2>/dev/null | head -20
-    echo "=== running procs (camera-ish) ==="
-    ps -w 2>/dev/null | grep -iE "camera|ldrt|arlink|vin|mpp|server|cam" | grep -v grep'
+    device_push_as "$HERE/mmio-discover-remote.sh" /tmp/mmio-discover.sh || exit 1
+    sshg '/tmp/mmio-discover.sh'
     echo
     echo ">>> Pick the PID whose maps include /dev/mem (the VIF register writer)."
     echo ">>> Then: $0 trace <PID>"
@@ -103,36 +91,8 @@ discover)
 trace)
     pid="${2:?usage: $0 trace <PID>}"
     echo "=== capturing argv/cwd of PID $pid ==="
-    sshg "
-    exe=\$(readlink /proc/$pid/exe)
-    cwd=\$(readlink /proc/$pid/cwd)
-    echo \"exe=\$exe cwd=\$cwd\"
-    tr '\0' '\n' < /proc/$pid/cmdline > /tmp/argv.txt
-    echo '--- argv ---'; cat -n /tmp/argv.txt
-    echo '=== stopping the current instance ==='
-    kill $pid 2>/dev/null; sleep 1
-    kill -9 $pid 2>/dev/null; sleep 1
-    # kill -0 succeeds on a ZOMBIE, so it reports a process we just killed as alive
-    # and sends you looking for a supervisor that is not there. Read the state field
-    # instead: Z means dead-and-unreaped, which is gone for our purposes.
-    st=\$(awk '{print \$3}' /proc/$pid/stat 2>/dev/null)
-    case \"\$st\" in
-      '') echo 'still alive: no (reaped)' ;;
-      Z)  echo 'still alive: no (zombie, killed and unreaped)' ;;
-      *)  echo \"still alive: YES-supervisor-respawn (state \$st)\" ;;
-    esac
-    echo '=== relaunching under the tracer (log /tmp/mmio.log) ==='
-    : > /tmp/mmio.log
-    cd \"\$cwd\" 2>/dev/null || cd /
-    LD_PRELOAD=/tmp/mmiotrace.so MMIOTRACE_OUT=/tmp/mmio.log \
-      MMIOTRACE_LO=$LO MMIOTRACE_HI=$HI \
-      MMIOTRACE_READS=$READS MMIOTRACE_TIME=$TIME MMIOTRACE_NOMEM=$NOMEM \
-      MMIOTRACE_SKIP_LO=$SKIP_LO MMIOTRACE_SKIP_HI=$SKIP_HI MMIOTRACE_IOCTL_CENSUS=$CENSUS \
-      setsid \$(cat /tmp/argv.txt | tr '\n' ' ') > /tmp/cam.out 2>&1 &
-    sleep 8
-    echo '--- mmio.log size ---'; wc -l /tmp/mmio.log 2>/dev/null
-    echo '--- first lines ---'; head -20 /tmp/mmio.log 2>/dev/null
-    echo '--- cam.out tail ---'; tail -5 /tmp/cam.out 2>/dev/null"
+    device_push_as "$HERE/mmio-trace-remote.sh" /tmp/mmio-trace.sh || exit 1
+    sshg "$MMIO_ENV /tmp/mmio-trace.sh $pid"
     echo
     echo ">>> If mmio.log is empty: the writer is a different PID, or it maps a device"
     echo "    other than /dev/mem|/dev/ar_sys, or a supervisor respawned the unhooked"
@@ -163,48 +123,8 @@ install-preload)
     echo "=== installing thin debug hook /usrdata/run_dbg.sh (writable ubifs) ==="
     device_push_as "$REPO/native/build/mmiotrace.so" /usrdata/mmiotrace.so || exit 1
     device_push_as "$TEMPLATE" /usrdata/run_dbg.sh.tmpl || exit 1
-    # shellcheck disable=SC2016  # remote command string: every expansion below runs on the device.
-    sshg '
-    set -e
-    # 1. buildtime byte-exact FIRST, then verify - guards the rm -rf /usrdata/* wipe path.
-    cp /usr/usrdata/buildtime /usrdata/buildtime
-    o=$(md5sum /usr/usrdata/buildtime | cut -d" " -f1)
-    n=$(md5sum /usrdata/buildtime   | cut -d" " -f1)
-    if [ "$o" != "$n" ]; then echo "ABORT: buildtime mismatch ($o != $n) - NOT writing run_dbg.sh"; rm -f /usrdata/run_dbg.sh /usrdata/run_dbg.sh.tmpl; exit 1; fi
-    echo "buildtime match: $n"
-    # 2. resolve the REAL ar_lowdelay absolute path - abort if not found (a broken
-    #    shim with an empty target would recurse). Then substitute placeholders.
-    REAL=$(command -v ar_lowdelay 2>/dev/null || true)
-    if [ -z "$REAL" ]; then for d in /usr/bin /bin /usr/sbin /sbin /usr/usrdata; do [ -x "$d/ar_lowdelay" ] && REAL="$d/ar_lowdelay" && break; done; fi
-    if [ -z "$REAL" ] || [ ! -x "$REAL" ]; then echo "ABORT: cannot locate real ar_lowdelay"; rm -f /usrdata/run_dbg.sh.tmpl; exit 1; fi
-    echo "real ar_lowdelay: $REAL"
-    sed -e "s#__REAL__#$REAL#g" -e "s#__LO__#'"$LO"'#g" -e "s#__HI__#'"$HI"'#g" \
-      -e "s#__READS__#'"$READS"'#g" -e "s#__TIME__#'"$TIME"'#g" \
-      -e "s#__NOMEM__#'"$NOMEM"'#g" \
-      -e "s#__SKIP_LO__#'"$SKIP_LO"'#g" -e "s#__SKIP_HI__#'"$SKIP_HI"'#g" \
-      -e "s#__CENSUS__#'"$CENSUS"'#g" \
-      /usrdata/run_dbg.sh.tmpl > /usrdata/run_dbg.sh
-    rm -f /usrdata/run_dbg.sh.tmpl
-    chmod +x /usrdata/run_dbg.sh
-    # 3. sanity: no placeholders left, the shim env line is present, real path is executable.
-    if grep -q "__REAL__\|__LO__\|__HI__\|__READS__\|__TIME__\|__NOMEM__\|__SKIP_LO__\|__SKIP_HI__\|__CENSUS__" /usrdata/run_dbg.sh; then echo "ABORT: unsubstituted placeholder in run_dbg.sh"; rm -f /usrdata/run_dbg.sh; exit 1; fi
-    echo "--- shim LD_PRELOAD line (want mmiotrace.so + real path + window) ---"
-    grep -n "LD_PRELOAD=/usrdata/mmiotrace.so" /usrdata/run_dbg.sh
-    echo "--- self-remove + verbatim run.sh source present? (want both) ---"
-    grep -nE "rm -f /usrdata/run_dbg.sh|\. /usr/usrdata/run.sh" /usrdata/run_dbg.sh
-    # 4. FLUSH to flash before the operator can power-cut. /usrdata is ubifs;
-    #    without this the write cache can lose buildtime while run_dbg.sh persists,
-    #    which trips run.sh mismatch guard (rm -rf /usrdata/*; reboot) and scrubs the
-    #    hook. Sync, then re-verify the on-flash buildtime still matches by dropping
-    #    caches is not available, so cmp the two files after sync as the persistence
-    #    check the boot gate itself will do.
-    sync; sync
-    if ! cmp -s /usr/usrdata/buildtime /usrdata/buildtime; then
-      echo "ABORT: buildtime mismatch AFTER sync - the gate would wipe the hook; not leaving it armed"
-      rm -f /usrdata/run_dbg.sh; sync; exit 1
-    fi
-    echo "synced; buildtime persisted and still matches"
-    echo "--- staged ---"; ls -la /usrdata/run_dbg.sh /usrdata/buildtime /usrdata/mmiotrace.so'
+    device_push_as "$HERE/mmio-preload-remote.sh" /tmp/mmio-preload.sh || exit 1
+    sshg "$MMIO_ENV /tmp/mmio-preload.sh"
     echo
     echo ">>> Now: cold power cycle A with the GOGGLE OFF. On boot, run.sh runs our"
     echo "    self-removing /usrdata/run_dbg.sh: it shims ar_lowdelay under the tracer"

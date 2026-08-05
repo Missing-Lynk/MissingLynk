@@ -98,14 +98,16 @@ static void put_hex(char *buf, int *pos, uint64_t n, int digits)
     static const char h[] = "0123456789abcdef";
     int i;
 
-    for (i = digits - 1; i >= 0; i--)
+    for (i = digits - 1; i >= 0; i--) {
         buf[(*pos)++] = h[(n >> (i * 4)) & 0xf];
+    }
 }
 
 static void put_str(char *buf, int *pos, const char *s)
 {
-    while (*s)
+    while (*s) {
         buf[(*pos)++] = *s++;
+    }
 }
 
 /**
@@ -118,10 +120,12 @@ static void log_access(char kind, uint64_t phys, uint64_t val, int width, int de
     char buf[128];
     int p = 0;
 
-    if (g_log_fd < 0)
+    if (g_log_fd < 0) {
         return;
-    if (phys < g_lo || phys > g_hi)
+    }
+    if (phys < g_lo || phys > g_hi) {
         return;
+    }
 
     buf[p++] = kind;
     put_hex(buf, &p, g_seq++, 6);
@@ -159,8 +163,9 @@ static void log_note(const char *text, uint32_t insn)
     char buf[96];
     int p = 0;
 
-    if (g_log_fd < 0)
+    if (g_log_fd < 0) {
         return;
+    }
 
     put_str(buf, &p, "# ");
     put_str(buf, &p, text);
@@ -174,20 +179,27 @@ static void log_note(const char *text, uint32_t insn)
 
 static void resolve(void)
 {
-    if (!real_mmap)
+    if (!real_mmap) {
         real_mmap = dlsym(RTLD_NEXT, "mmap");
-    if (!real_open)
+    }
+    if (!real_open) {
         real_open = dlsym(RTLD_NEXT, "open");
-    if (!real_openat)
+    }
+    if (!real_openat) {
         real_openat = dlsym(RTLD_NEXT, "openat");
-    if (!real_ioctl)
+    }
+    if (!real_ioctl) {
         real_ioctl = dlsym(RTLD_NEXT, "ioctl");
-    if (!real_munmap)
+    }
+    if (!real_munmap) {
         real_munmap = dlsym(RTLD_NEXT, "munmap");
-    if (!real_sigaction)
+    }
+    if (!real_sigaction) {
         real_sigaction = dlsym(RTLD_NEXT, "sigaction");
-    if (!real_signal)
+    }
+    if (!real_signal) {
         real_signal = dlsym(RTLD_NEXT, "signal");
+    }
 }
 
 static void find_map(uintptr_t addr, struct traced_map **out, size_t *off)
@@ -257,13 +269,15 @@ static void decode_store(uint32_t insn, ucontext_t *uc, uintptr_t fault,
          * access width. Rn 31 is SP here, not the zero register.
          */
         if (stp != 0x29000000u) {
-            if (imm7 & 0x40)
+            if (imm7 & 0x40) {
                 imm7 -= 0x80;
+            }
 
-            if (rn == 31)
+            if (rn == 31) {
                 uc->uc_mcontext.sp += (int64_t)imm7 * w;
-            else
+            } else {
                 uc->uc_mcontext.regs[rn] += (int64_t)imm7 * w;
+            }
         }
 
         return;
@@ -319,10 +333,12 @@ static int insn_is_load(uint32_t insn)
 {
     unsigned family = (insn >> 27) & 7;
 
-    if (family == 5)                                    /* pair */
+    if (family == 5) { /* pair */
         return (insn >> 22) & 1;
-    if (family == 7)                                    /* register */
+    }
+    if (family == 7) { /* register */
         return ((insn >> 22) & 3) != 0;
+    }
     return 0;
 }
 
@@ -335,26 +351,31 @@ static int load_serviceable(uint32_t insn)
 {
     unsigned family = (insn >> 27) & 7;
 
-    if (insn & (1u << 26))                                      /* SIMD/FP */
+    if (insn & (1u << 26)) { /* SIMD/FP */
         return 0;
+    }
 
     if (family == 5) {
-        if ((insn >> 30) == 1)                          /* LDPSW: 4 bytes, signed */
+        if ((insn >> 30) == 1) { /* LDPSW: 4 bytes, signed */
             return 0;
+        }
         return ((insn >> 23) & 3) == 2;                 /* signed offset only */
     }
 
     if (family == 7) {
         unsigned class = (insn >> 24) & 3;
 
-        if (class == 1)                                 /* scaled unsigned offset */
+        if (class == 1) { /* scaled unsigned offset */
             return 1;
-        if (class == 0 && !((insn >> 21) & 1) && !((insn >> 10) & 3))
+        }
+        if (class == 0 && !((insn >> 21) & 1) && !((insn >> 10) & 3)) {
             return 1;                           /* LDUR unscaled */
-        if (class == 0 && ((insn >> 21) & 1) && ((insn >> 10) & 3) == 2)
+        }
+        if (class == 0 && ((insn >> 21) & 1) && ((insn >> 10) & 3) == 2) {
             return 1;                           /* register offset: no writeback,
-                                 * and the fault already gives us
-                                 * the resolved address */
+                                                 * and the fault already gives us
+                                                 * the resolved address */
+        }
     }
     return 0;
 }
@@ -362,16 +383,18 @@ static int load_serviceable(uint32_t insn)
 /** Place a loaded value into Xt, honouring the encoding's extension. */
 static void put_reg(ucontext_t *uc, unsigned rt, uint64_t val, int width, unsigned opc)
 {
-    if (rt == 31)                                       /* XZR: the result is discarded */
+    if (rt == 31) { /* XZR: the result is discarded */
         return;
+    }
 
     if (opc == 2 || opc == 3) {                 /* sign-extending load */
         unsigned bits = width * 8;
         uint64_t sign = 1ull << (bits - 1);
 
         val = (val ^ sign) - sign;
-        if (opc == 3)                           /* ...to a W register */
+        if (opc == 3) { /* ...to a W register */
             val &= 0xffffffffull;
+        }
     }
     uc->uc_mcontext.regs[rt] = val;
 }
@@ -411,8 +434,9 @@ static int decode_load(uint32_t insn, ucontext_t *uc, struct traced_map *m, size
     volatile uint8_t *src = m->rw + off;
     uint64_t val;
 
-    if (!load_serviceable(insn))
+    if (!load_serviceable(insn)) {
         return 0;
+    }
 
     /* LDP: opc[31:30] gives 4- or 8-byte elements, and two registers load. */
     if (((insn >> 27) & 7) == 5) {
@@ -447,8 +471,9 @@ static int decode_load(uint32_t insn, ucontext_t *uc, struct traced_map *m, size
  */
 static void untrap_reads(struct traced_map *m, uint32_t insn)
 {
-    if (m->prot_len)
+    if (m->prot_len) {
         mprotect((void *)m->prot_va, m->prot_len, PROT_READ);
+    }
     log_note("read tracing disabled: unsupported load form", insn);
 }
 
@@ -465,20 +490,22 @@ static void segv_handler(int sig, siginfo_t *si, void *ctx)
     find_map(fault, &m, &off);
     if (!m) {
         /* Not our page: restore the previous handler and let it crash. */
-        if (g_old_segv.sa_flags & SA_SIGINFO)
+        if (g_old_segv.sa_flags & SA_SIGINFO) {
             g_old_segv.sa_sigaction(sig, si, ctx);
-        else if (g_old_segv.sa_handler == SIG_DFL ||
-             g_old_segv.sa_handler == SIG_IGN)
+        } else if (g_old_segv.sa_handler == SIG_DFL ||
+                   g_old_segv.sa_handler == SIG_IGN) {
             _exit(139);
-        else
+        } else {
             g_old_segv.sa_handler(sig);
+        }
         return;
     }
     insn = *(uint32_t *)uc->uc_mcontext.pc;
 
     if (g_reads && insn_is_load(insn)) {
-        if (!decode_load(insn, uc, m, off))
+        if (!decode_load(insn, uc, m, off)) {
             untrap_reads(m, insn);
+        }
         return;
     }
     decode_store(insn, uc, fault, m, off);
@@ -489,35 +516,45 @@ static void install(void)
     struct sigaction sa;
     const char *e;
 
-    if (g_installed)
+    if (g_installed) {
         return;
+    }
     g_installed = 1;
 
     e = getenv("MMIOTRACE_OUT");
     g_log_fd = open(e ? e : "/tmp/mmio.log",
             O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if ((e = getenv("MMIOTRACE_LO")))
+    if ((e = getenv("MMIOTRACE_LO"))) {
         g_lo = strtoull(e, NULL, 0);
-    if ((e = getenv("MMIOTRACE_HI")))
+    }
+    if ((e = getenv("MMIOTRACE_HI"))) {
         g_hi = strtoull(e, NULL, 0);
-    if ((e = getenv("MMIOTRACE_NOMEM")) && *e && *e != '0')
+    }
+    if ((e = getenv("MMIOTRACE_NOMEM")) && *e && *e != '0') {
         g_nomem = 1;
-    if ((e = getenv("MMIOTRACE_READS")) && *e && *e != '0')
+    }
+    if ((e = getenv("MMIOTRACE_READS")) && *e && *e != '0') {
         g_reads = 1;
-    if ((e = getenv("MMIOTRACE_TIME")) && *e && *e != '0')
+    }
+    if ((e = getenv("MMIOTRACE_TIME")) && *e && *e != '0') {
         g_time = 1;
-    if ((e = getenv("MMIOTRACE_IOCTL_CENSUS")) && *e && *e != '0')
+    }
+    if ((e = getenv("MMIOTRACE_IOCTL_CENSUS")) && *e && *e != '0') {
         g_ioctl_census = 1;
-    if ((e = getenv("MMIOTRACE_SKIP_LO")))
+    }
+    if ((e = getenv("MMIOTRACE_SKIP_LO"))) {
         g_skip_lo = strtoull(e, NULL, 0);
-    if ((e = getenv("MMIOTRACE_SKIP_HI")))
+    }
+    if ((e = getenv("MMIOTRACE_SKIP_HI"))) {
         g_skip_hi = strtoull(e, NULL, 0);
+    }
 
     /* In NOMEM mode nothing is trapped, so the SIGSEGV handler is never needed;
      * installing it would only risk swallowing a genuine app fault.
      */
-    if (g_nomem)
+    if (g_nomem) {
         return;
+    }
 
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = segv_handler;
@@ -536,20 +573,24 @@ static void install(void)
 int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
 {
     resolve();
-    if (signum != SIGSEGV || g_nomem)
+    if (signum != SIGSEGV || g_nomem) {
         return real_sigaction(signum, act, oldact);
-    if (oldact)
+    }
+    if (oldact) {
         *oldact = g_old_segv;
-    if (act)
+    }
+    if (act) {
         g_old_segv = *act;
+    }
     return 0;
 }
 
 void (*signal(int signum, void (*handler)(int)))(int)
 {
     resolve();
-    if (signum != SIGSEGV || g_nomem)
+    if (signum != SIGSEGV || g_nomem) {
         return real_signal(signum, handler);
+    }
 
     void (*prev)(int) = (g_old_segv.sa_flags & SA_SIGINFO)
                 ? NULL : g_old_segv.sa_handler;
@@ -569,12 +610,15 @@ __attribute__((constructor)) static void ctor(void)
 
 static int classify_dev(const char *path)
 {
-    if (!path)
+    if (!path) {
         return 0;
-    if (strcmp(path, "/dev/mem") == 0)
+    }
+    if (strcmp(path, "/dev/mem") == 0) {
         return 1;
-    if (strcmp(path, "/dev/ar_sys") == 0)
+    }
+    if (strcmp(path, "/dev/ar_sys") == 0) {
         return 2;
+    }
     return 0;
 }
 
@@ -591,8 +635,9 @@ int open(const char *path, int flags, ...)
         va_end(ap);
     }
     fd = real_open(path, flags, mode);
-    if (fd >= 0 && fd < (int)sizeof(g_devtype))
+    if (fd >= 0 && fd < (int)sizeof(g_devtype)) {
         g_devtype[fd] = classify_dev(path);
+    }
     return fd;
 }
 
@@ -609,8 +654,9 @@ int openat(int dirfd, const char *path, int flags, ...)
         va_end(ap);
     }
     fd = real_openat(dirfd, path, flags, mode);
-    if (fd >= 0 && fd < (int)sizeof(g_devtype))
+    if (fd >= 0 && fd < (int)sizeof(g_devtype)) {
         g_devtype[fd] = classify_dev(path);
+    }
     return fd;
 }
 
@@ -620,17 +666,21 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 
     resolve();
     ret = real_mmap(addr, len, prot, flags, fd, offset);
-    if (ret == MAP_FAILED)
+    if (ret == MAP_FAILED) {
         return ret;
+    }
     /* NOMEM: leave every mapping fully writable and untrapped - capture comes
      * solely from the /dev/ar_sys ioctl hook, which needs no page faults.
      */
-    if (g_nomem)
+    if (g_nomem) {
         return ret;
-    if (fd < 0 || fd >= (int)sizeof(g_devtype) || !g_devtype[fd])
+    }
+    if (fd < 0 || fd >= (int)sizeof(g_devtype) || !g_devtype[fd]) {
         return ret;
-    if (!(prot & PROT_WRITE) || g_map_count >= MAX_MAPS)
+    }
+    if (!(prot & PROT_WRITE) || g_map_count >= MAX_MAPS) {
         return ret;
+    }
 
     install();
     /* Open a read-write alias handle on the same device the app mapped, so the
@@ -639,12 +689,14 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
     int alias_fd;
 
     if (g_devtype[fd] == 2) {
-        if (g_arsys_fd < 0)
+        if (g_arsys_fd < 0) {
             g_arsys_fd = real_open("/dev/ar_sys", O_RDWR | O_SYNC);
+        }
         alias_fd = g_arsys_fd;
     } else {
-        if (g_mem_fd < 0)
+        if (g_mem_fd < 0) {
             g_mem_fd = real_open("/dev/mem", O_RDWR | O_SYNC);
+        }
         alias_fd = g_mem_fd;
     }
     if (alias_fd >= 0) {
@@ -675,8 +727,9 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
                 long pg = sysconf(_SC_PAGESIZE);
                 uint64_t a = plo & ~((uint64_t)pg - 1);         /* align down */
                 uint64_t b = (phi + pg - 1) & ~((uint64_t)pg - 1); /* align up */
-                if (b > map_hi)
+                if (b > map_hi) {
                     b = map_hi;
+                }
                 uintptr_t va = (uintptr_t)ret + (a - map_lo);
                 /* PROT_NONE also faults loads, which is the only way to see
                  * the vendor's polls; PROT_READ traps stores alone.
@@ -697,11 +750,13 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
                     uint64_t s_lo = g_skip_lo & ~((uint64_t)pg - 1);
                     uint64_t s_hi = (g_skip_hi + pg) & ~((uint64_t)pg - 1);
 
-                    if (a < s_lo)
+                    if (a < s_lo) {
                         mprotect((void *)va, (size_t)(s_lo - a), prot);
-                    if (s_hi < b)
+                    }
+                    if (s_hi < b) {
                         mprotect((void *)((uintptr_t)ret + (s_hi - map_lo)),
-                             (size_t)(b - s_hi), prot);
+                        (size_t)(b - s_hi), prot);
+                    }
                 } else {
                     mprotect((void *)va, (size_t)(b - a), prot);
                 }
@@ -734,8 +789,9 @@ int munmap(void *addr, size_t len)
     resolve();
 
     for (i = 0; i < g_map_count; i++) {
-        if ((uintptr_t)addr != g_maps[i].ro_base)
+        if ((uintptr_t)addr != g_maps[i].ro_base) {
             continue;
+        }
 
         if (len < g_maps[i].len) {
             log_note("partial munmap of a traced mapping, slot kept", (uint32_t)len);
@@ -778,8 +834,9 @@ int ioctl(int fd, unsigned long request, ...)
         unsigned i;
 
         for (i = 0; i < g_seen_count; i++) {
-            if (g_seen[i] == request)
+            if (g_seen[i] == request) {
                 return real_ioctl(fd, request, arg);
+            }
         }
         if (g_seen_count < MAX_SEEN) {
             g_seen[g_seen_count++] = request;
