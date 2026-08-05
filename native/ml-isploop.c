@@ -409,14 +409,13 @@ int main(int argc, char **argv)
          * second run cannot answer it because the frame will have changed.
          */
         const uint32_t len = 2048 * 1080;
-        unsigned p;
 
-        for (p = 0; p < nplanes; p++) {
-            volatile uint8_t *m = map_block(fd, planes[p], len);
+        for (i = 0; i < (int)nplanes; i++) {
+            volatile uint8_t *m = map_block(fd, planes[i], len);
             char path[256];
             FILE *f;
 
-            snprintf(path, sizeof path, "%s.%u", dump, p);
+            snprintf(path, sizeof path, "%s.%u", dump, i);
             f = fopen(path, "wb");
             if (!f) {
                 perror(path);
@@ -429,9 +428,9 @@ int main(int argc, char **argv)
                 }
                 fclose(f);
                 printf("dumped %u bytes of 0x%08x to %s\n", len,
-                       planes[p], path);
+                       planes[i], path);
             }
-            unmap_block(m, planes[p], len);
+            unmap_block(m, planes[i], len);
         }
     }
 

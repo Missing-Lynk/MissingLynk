@@ -163,23 +163,23 @@ static uint64_t find_handle(int fd, uint64_t start, uint64_t end)
     }
 
     uint64_t handle = 0;
-    for (uint64_t a = start; a < end && handle == 0; a += CHUNK) {
-        size_t want = (end - a < CHUNK) ? (size_t) (end - a) : CHUNK;
-        if (pread(fd, buf, want, (off_t) a) != (ssize_t) want) {
+    for (uint64_t i = start; i < end && handle == 0; i += CHUNK) {
+        size_t want = (end - i < CHUNK) ? (size_t) (end - i) : CHUNK;
+        if (pread(fd, buf, want, (off_t) i) != (ssize_t) want) {
             continue;   /* unreadable window: skip */
         }
 
-        for (size_t o = 0; o + 3 < want; o++) {
-            if (buf[o] != 'V' || !isdigit(buf[o + 1]) || buf[o + 2] != '.') {
+        for (size_t j = 0; j + 3 < want; j++) {
+            if (buf[j] != 'V' || !isdigit(buf[j + 1]) || buf[j + 2] != '.') {
                 continue;
             }
 
             uint8_t ver[16];
-            if (pread(fd, ver, sizeof ver, (off_t) (a + o + OFF_SWVER)) != (ssize_t) sizeof ver) {
+            if (pread(fd, ver, sizeof ver, (off_t) (i + j + OFF_SWVER)) != (ssize_t) sizeof ver) {
                 continue;
             }
             if (is_version_string(ver, sizeof ver)) {
-                handle = a + o;   /* +0x00 = "V1.x", +0x20 = sw version -> struct base */
+                handle = i + j;   /* +0x00 = "V1.x", +0x20 = sw version -> struct base */
                 break;
             }
         }

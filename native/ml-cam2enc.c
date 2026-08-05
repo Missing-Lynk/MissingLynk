@@ -211,12 +211,12 @@ static int open_camera(char *path, size_t pathlen)
 /** Open the wave5 M2M node whose CAPTURE side offers the wanted coded format. */
 static int open_encoder(uint32_t want, uint32_t *got, char *path, size_t pathlen)
 {
-    for (int n = 0; n < 16; n++) {
+    for (int i = 0; i < 16; i++) {
         int fd;
         struct v4l2_fmtdesc d;
         struct v4l2_capability cap;
 
-        snprintf(path, pathlen, "/dev/video%d", n);
+        snprintf(path, pathlen, "/dev/video%d", i);
         fd = open(path, O_RDWR);
         if (fd < 0) {
             continue;
@@ -330,8 +330,8 @@ static int plane_roughness(const unsigned char *base, unsigned int stride, unsig
     for (unsigned int i = 0; i < samples; i++) {
         const unsigned char *row = base + (size_t)(rows / samples * i) * stride;
 
-        for (unsigned int x = 0; x + 1 < span; x++) {
-            int d = (int)row[x + 1] - (int)row[x];
+        for (unsigned int j = 0; j + 1 < span; j++) {
+            int d = (int)row[j + 1] - (int)row[j];
 
             total += (unsigned long)(d < 0 ? -d : d);
             count++;
@@ -361,8 +361,8 @@ static unsigned long plane_fingerprint(const unsigned char *base, unsigned int s
     for (unsigned int i = 0; i < 64; i++) {
         const unsigned char *row = base + (size_t)(rows / 64 * i) * stride;
 
-        for (unsigned int x = 0; x < 256; x += 4) {
-            h = (h ^ row[x]) * 1099511628211UL;
+        for (unsigned int j = 0; j < 256; j += 4) {
+            h = (h ^ row[j]) * 1099511628211UL;
         }
     }
 
@@ -447,34 +447,34 @@ static int camera_export(int fd, const struct geometry *g, int nbufs,
     *allocated = (int)rb.count;
     printf("  REQBUFS asked %d, got %d\n", nbufs, *allocated);
 
-    for (int b = 0; b < *allocated && b < MAX_BUFS; b++) {
+    for (int i = 0; i < *allocated && i < MAX_BUFS; i++) {
         int ok = 1;
 
-        for (unsigned int p = 0; p < g->planes; p++) {
+        for (unsigned int j = 0; j < g->planes; j++) {
             struct v4l2_exportbuffer e;
             char step[64];
             off_t size;
 
             memset(&e, 0, sizeof e);
             e.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-            e.index = (unsigned int)b;
-            e.plane = p;
+            e.index = (unsigned int)i;
+            e.plane = j;
             e.flags = O_RDWR | O_CLOEXEC;
 
-            fds[b][p] = -1;
+            fds[i][j] = -1;
 
             if (ioctl(fd, VIDIOC_EXPBUF, &e)) {
-                snprintf(step, sizeof step, "EXPBUF(buf %d plane %u)", b, p);
+                snprintf(step, sizeof step, "EXPBUF(buf %d plane %u)", i, j);
                 bad(step);
                 ok = 0;
                 continue;
             }
 
-            fds[b][p] = e.fd;
+            fds[i][j] = e.fd;
             size = lseek(e.fd, 0, SEEK_END);
             printf("  ok: EXPBUF buf %d plane %u -> fd %d, dmabuf size %lld (want %u)%s\n",
-                   b, p, e.fd, (long long)size, g->sizeimage[p],
-                   size >= (off_t)g->sizeimage[p] ? "" : "  SHORT");
+                   i, j, e.fd, (long long)size, g->sizeimage[j],
+                   size >= (off_t)g->sizeimage[j] ? "" : "  SHORT");
 
             /*
              * Mapping the exported fd goes through dma_mmap_attrs() on no-map memory, which is a
@@ -485,7 +485,7 @@ static int camera_export(int fd, const struct geometry *g, int nbufs,
                 volatile uint32_t *m = mmap(NULL, 4096, PROT_READ, MAP_SHARED, e.fd, 0);
 
                 if (m == MAP_FAILED) {
-                    snprintf(step, sizeof step, "mmap(dmabuf buf %d plane %u)", b, p);
+                    snprintf(step, sizeof step, "mmap(dmabuf buf %d plane %u)", i, j);
                     bad(step);
                 } else {
                     printf("    probe: first word 0x%08x\n", m[0]);
@@ -827,26 +827,26 @@ static int run_encoder_only(uint32_t codec)
 
     encoder_capture_bufs(fd, cap_map, cap_len);
 
-    for (int b = 0; b < 2; b++) {
-        for (unsigned int p = 0; p < g.planes; p++) {
+    for (int i = 0; i < 2; i++) {
+        for (unsigned int j = 0; j < g.planes; j++) {
             uint8_t *m;
 
-            fds[b][p] = heap_alloc(g.sizeimage[p]);
-            m = mmap(NULL, g.sizeimage[p], PROT_READ | PROT_WRITE, MAP_SHARED, fds[b][p], 0);
+            fds[i][j] = heap_alloc(g.sizeimage[j]);
+            m = mmap(NULL, g.sizeimage[j], PROT_READ | PROT_WRITE, MAP_SHARED, fds[i][j], 0);
             if (m == MAP_FAILED) {
                 fail("mmap(heap source)");
             }
 
-            if (p == 0) {
-                for (unsigned int y = 0; y < g.height; y++) {
-                    memset(m + (size_t)y * g.bytesperline[0], (int)((y + (unsigned)b * 32) & 0xff),
+            if (j == 0) {
+                for (unsigned int k = 0; k < g.height; k++) {
+                    memset(m + (size_t)k * g.bytesperline[0], (int)((k + (unsigned)i * 32) & 0xff),
                            g.bytesperline[0]);
                 }
             } else {
-                memset(m, 128, g.sizeimage[p]);
+                memset(m, 128, g.sizeimage[j]);
             }
 
-            munmap(m, g.sizeimage[p]);
+            munmap(m, g.sizeimage[j]);
         }
     }
 
@@ -866,8 +866,8 @@ static int run_encoder_only(uint32_t codec)
         return 1;
     }
 
-    for (int n = 0; n < opt_frames; n++) {
-        if (n >= 2) {
+    for (int i = 0; i < opt_frames; i++) {
+        if (i >= 2) {
             struct pollfd pf = { .fd = fd, .events = POLLOUT };
             struct v4l2_buffer d;
             struct v4l2_plane dp[MAX_PLANES];
@@ -884,7 +884,7 @@ static int run_encoder_only(uint32_t codec)
             }
         }
 
-        if (encoder_queue(fd, &g, n % 2, fds[n % 2])) {
+        if (encoder_queue(fd, &g, i % 2, fds[i % 2])) {
             bad("QBUF(encoder OUTPUT DMABUF)");
             break;
         }
@@ -1032,7 +1032,7 @@ static int run_joined(uint32_t codec)
      * the encoder sees it, and that cannot be answered from outside the buffer.
      */
     if (opt_verify) {
-        for (int b = 0; b < allocated && b < MAX_BUFS; b++) {
+        for (int i = 0; i < allocated && i < MAX_BUFS; i++) {
             struct v4l2_buffer q;
             struct v4l2_plane qp[MAX_PLANES];
 
@@ -1040,7 +1040,7 @@ static int run_joined(uint32_t codec)
             memset(qp, 0, sizeof qp);
             q.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
             q.memory = V4L2_MEMORY_MMAP;
-            q.index = (unsigned int)b;
+            q.index = (unsigned int)i;
             q.m.planes = qp;
             q.length = g.planes;
             if (ioctl(cam, VIDIOC_QUERYBUF, &q)) {
@@ -1048,10 +1048,10 @@ static int run_joined(uint32_t codec)
                 break;
             }
 
-            luma[b] = mmap(NULL, qp[0].length, PROT_READ, MAP_SHARED, cam, qp[0].m.mem_offset);
-            if (luma[b] == MAP_FAILED) {
+            luma[i] = mmap(NULL, qp[0].length, PROT_READ, MAP_SHARED, cam, qp[0].m.mem_offset);
+            if (luma[i] == MAP_FAILED) {
                 bad("mmap(camera luma)");
-                luma[b] = NULL;
+                luma[i] = NULL;
             }
         }
     }
@@ -1096,7 +1096,7 @@ static int run_joined(uint32_t codec)
      * the encoder reads.
      */
     if (!opt_static) {
-        for (int b = opt_hold ? 1 : 0; b < allocated; b++) {
+        for (int i = opt_hold ? 1 : 0; i < allocated; i++) {
             struct v4l2_buffer q;
             struct v4l2_plane qp[MAX_PLANES];
 
@@ -1104,7 +1104,7 @@ static int run_joined(uint32_t codec)
             memset(qp, 0, sizeof qp);
             q.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
             q.memory = V4L2_MEMORY_MMAP;
-            q.index = (unsigned int)b;
+            q.index = (unsigned int)i;
             q.m.planes = qp;
             q.length = g.planes;
             if (ioctl(cam, VIDIOC_QBUF, &q)) {
@@ -1137,7 +1137,7 @@ static int run_joined(uint32_t codec)
            opt_static ? "static, camera not streaming" : "streaming",
            opt_frames, max_inflight);
 
-    for (int n = 0; (n < opt_frames || opt_frames == 0) && !g_stop; n++) {
+    for (int i = 0; (i < opt_frames || opt_frames == 0) && !g_stop; i++) {
         struct v4l2_buffer b;
         struct v4l2_plane p[MAX_PLANES];
 
@@ -1155,7 +1155,7 @@ static int run_joined(uint32_t codec)
         memset(p, 0, sizeof p);
 
         if (opt_static) {
-            b.index = (unsigned int)(n % allocated);
+            b.index = (unsigned int)(i % allocated);
         } else {
             if (!wait_ready(cam, POLLIN, 2000, "camera frame")) {
                 break;
@@ -1213,7 +1213,7 @@ static int run_joined(uint32_t codec)
                 changed++;
                 if (changed <= 5) {
                     printf("  frame %d, buffer %u: CHANGED while userspace owned it\n",
-                           n, b.index);
+                           i, b.index);
                 }
             }
         }
@@ -1333,7 +1333,7 @@ static int run_verify_only(void)
     allocated = (int)rb.count;
     printf("  %d buffers\n", allocated);
 
-    for (int b = 0; b < allocated && b < MAX_BUFS; b++) {
+    for (int i = 0; i < allocated && i < MAX_BUFS; i++) {
         struct v4l2_buffer q;
         struct v4l2_plane qp[MAX_PLANES];
 
@@ -1341,16 +1341,16 @@ static int run_verify_only(void)
         memset(qp, 0, sizeof qp);
         q.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         q.memory = V4L2_MEMORY_MMAP;
-        q.index = (unsigned int)b;
+        q.index = (unsigned int)i;
         q.m.planes = qp;
         q.length = g.planes;
         if (ioctl(cam, VIDIOC_QUERYBUF, &q)) {
             fail("QUERYBUF(camera)");
         }
 
-        luma[b] = mmap(NULL, qp[0].length, PROT_READ, MAP_SHARED, cam, qp[0].m.mem_offset);
-        if (luma[b] == MAP_FAILED) {
-            luma[b] = NULL;
+        luma[i] = mmap(NULL, qp[0].length, PROT_READ, MAP_SHARED, cam, qp[0].m.mem_offset);
+        if (luma[i] == MAP_FAILED) {
+            luma[i] = NULL;
             bad("mmap(camera luma)");
         }
 
@@ -1365,7 +1365,7 @@ static int run_verify_only(void)
         return 1;
     }
 
-    for (int n = 0; n < opt_frames; n++) {
+    for (int i = 0; i < opt_frames; i++) {
         struct v4l2_buffer b;
         struct v4l2_plane p[MAX_PLANES];
         int rough;
@@ -1391,7 +1391,7 @@ static int run_verify_only(void)
          * tell a picture from noise.
          */
         if (opt_dump != NULL && luma[b.index] != NULL && next_dump < opt_dump_count
-            && n >= next_dump * spacing) {
+            && i >= next_dump * spacing) {
             char path[256];
             FILE *f;
 
@@ -1400,7 +1400,7 @@ static int run_verify_only(void)
             if (f != NULL) {
                 fwrite(luma[b.index], 1, (size_t)g.bytesperline[0] * AR_ROWS, f);
                 fclose(f);
-                printf("  dumped %s from buffer %u at frame %d\n", path, b.index, n);
+                printf("  dumped %s from buffer %u at frame %d\n", path, b.index, i);
             } else {
                 bad("fopen(dump)");
             }
@@ -1425,7 +1425,7 @@ static int run_verify_only(void)
                 changed++;
                 if (changed <= 5) {
                     printf("  frame %d, buffer %u: CHANGED while userspace owned it\n",
-                           n, b.index);
+                           i, b.index);
                 }
             } else {
                 stable++;
@@ -1436,7 +1436,7 @@ static int run_verify_only(void)
         if (rough > AR_NOISE_MAD) {
             noise++;
             if (noise <= 5) {
-                printf("  frame %d, buffer %u: NOISE, roughness %d\n", n, b.index, rough);
+                printf("  frame %d, buffer %u: NOISE, roughness %d\n", i, b.index, rough);
             }
         } else if (rough >= 0) {
             image++;
@@ -1508,13 +1508,13 @@ static int run_heap_bridge(uint32_t codec)
     nbufs = (int)rb.count;
     printf("  camera queue takes %d imported buffers\n", nbufs);
 
-    for (int b = 0; b < nbufs && b < MAX_BUFS; b++) {
-        for (unsigned int p = 0; p < g.planes; p++) {
-            fds[b][p] = heap_alloc(g.sizeimage[p]);
+    for (int i = 0; i < nbufs && i < MAX_BUFS; i++) {
+        for (unsigned int j = 0; j < g.planes; j++) {
+            fds[i][j] = heap_alloc(g.sizeimage[j]);
         }
     }
 
-    for (int b = 0; b < nbufs && b < MAX_BUFS; b++) {
+    for (int i = 0; i < nbufs && i < MAX_BUFS; i++) {
         struct v4l2_buffer q;
         struct v4l2_plane qp[MAX_PLANES];
 
@@ -1522,12 +1522,12 @@ static int run_heap_bridge(uint32_t codec)
         memset(qp, 0, sizeof qp);
         q.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
         q.memory = V4L2_MEMORY_DMABUF;
-        q.index = (unsigned int)b;
+        q.index = (unsigned int)i;
         q.m.planes = qp;
         q.length = g.planes;
-        for (unsigned int p = 0; p < g.planes; p++) {
-            qp[p].m.fd = fds[b][p];
-            qp[p].length = g.sizeimage[p];
+        for (unsigned int j = 0; j < g.planes; j++) {
+            qp[j].m.fd = fds[i][j];
+            qp[j].length = g.sizeimage[j];
         }
 
         if (ioctl(cam, VIDIOC_QBUF, &q)) {
@@ -1565,7 +1565,7 @@ static int run_heap_bridge(uint32_t codec)
         return 1;
     }
 
-    for (int n = 0; n < opt_frames; n++) {
+    for (int i = 0; i < opt_frames; i++) {
         struct v4l2_buffer b;
         struct v4l2_plane p[MAX_PLANES];
         struct v4l2_buffer d;
@@ -1606,9 +1606,9 @@ static int run_heap_bridge(uint32_t codec)
             break;
         }
 
-        for (unsigned int q = 0; q < g.planes; q++) {
-            p[q].m.fd = fds[b.index][q];
-            p[q].length = g.sizeimage[q];
+        for (unsigned int j = 0; j < g.planes; j++) {
+            p[j].m.fd = fds[b.index][j];
+            p[j].length = g.sizeimage[j];
         }
 
         if (ioctl(cam, VIDIOC_QBUF, &b)) {

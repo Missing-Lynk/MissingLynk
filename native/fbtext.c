@@ -158,15 +158,15 @@ static void blend_glyph(
   int oy
 )
 {
-    for (int j = 0; j < gh; j++) {
-        for (int k = 0; k < gw; k++) {
-            int px = ox + k;
-            int py = oy + j;
+    for (int i = 0; i < gh; i++) {
+        for (int j = 0; j < gw; j++) {
+            int px = ox + j;
+            int py = oy + i;
             if (px < 0 || px >= glyphs->width || py < 0 || py >= glyphs->height) {
                 continue;
             }
 
-            unsigned char src = bitmap[j * gw + k];
+            unsigned char src = bitmap[i * gw + j];
             unsigned char *dst = &glyphs->cov[py * glyphs->width + px];
             if (src > *dst) {
                 *dst = src;
@@ -269,11 +269,11 @@ static void fb_blit(int fd, const Glyphs *glyphs, int x, int y, Color color, con
         return;
     }
 
-    for (int j = 0; j < glyphs->height; j++) {
-        for (int k = 0; k < glyphs->width; k++) {
-            row[k] = premultiply(glyphs->cov[j * glyphs->width + k], color);
+    for (int i = 0; i < glyphs->height; i++) {
+        for (int j = 0; j < glyphs->width; j++) {
+            row[j] = premultiply(glyphs->cov[i * glyphs->width + j], color);
         }
-        write_row(fd, row, glyphs->width, x, y + j, info);
+        write_row(fd, row, glyphs->width, x, y + i, info);
     }
 
     free(row);

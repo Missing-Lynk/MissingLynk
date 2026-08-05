@@ -200,8 +200,8 @@ int gpt_active_slot(void)
             break;
         }
 
-        for (uint32_t e = 0; e < num_entries && active < 0; e++) {
-            const unsigned char *entry = buf + array_off + (long)e * entry_size;
+        for (uint32_t j = 0; j < num_entries && active < 0; j++) {
+            const unsigned char *entry = buf + array_off + (long)j * entry_size;
             char name[GPT_ENT_NAME_LEN / 2 + 1];
             gpt_entry_name(entry, name, sizeof name);
 
@@ -249,8 +249,8 @@ static int gpt_edit_active(unsigned char *buf, size_t len, int slot)
     }
 
     int touched = 0;
-    for (uint32_t e = 0; e < num; e++) {
-        unsigned char *entry = buf + base + (long)e * psz;
+    for (uint32_t i = 0; i < num; i++) {
+        unsigned char *entry = buf + base + (long)i * psz;
         char name[GPT_ENT_NAME_LEN / 2 + 1];
         gpt_entry_name(entry, name, sizeof name);
 

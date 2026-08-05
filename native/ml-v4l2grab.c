@@ -310,7 +310,6 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
     for (i = 0; i < request.count; i++) {
         struct v4l2_plane planes[MAX_PLANES];
         struct v4l2_buffer buffer;
-        unsigned int p;
 
         memset(planes, 0, sizeof(planes));
         memset(&buffer, 0, sizeof(buffer));
@@ -347,9 +346,9 @@ static int map_buffers(const struct capture_device *device, struct capture_buffe
 
         buffers[i].planes = buffer.length;
 
-        for (p = 0; p < buffer.length; p++) {
-            if (map_plane(device->fd, &buffers[i].plane[p], planes[p].length,
-                          (off_t)planes[p].m.mem_offset) != 0) {
+        for (unsigned int j = 0; j < buffer.length; j++) {
+            if (map_plane(device->fd, &buffers[i].plane[j], planes[j].length,
+                          (off_t)planes[j].m.mem_offset) != 0) {
                 return 1;
             }
         }
@@ -411,19 +410,17 @@ static void report_frame_content(const uint8_t *data, size_t length)
  */
 static int write_buffer(const struct capture_buffer *buffer, const char *path)
 {
-    unsigned int p;
-
-    for (p = 0; p < buffer->planes; p++) {
+    for (unsigned int i = 0; i < buffer->planes; i++) {
         char plane_path[512];
         FILE *output;
 
         if (buffer->planes == 1) {
             snprintf(plane_path, sizeof(plane_path), "%s", path);
         } else {
-            snprintf(plane_path, sizeof(plane_path), "%s.%u", path, p);
+            snprintf(plane_path, sizeof(plane_path), "%s.%u", path, i);
         }
 
-        report_frame_content(buffer->plane[p].start, buffer->plane[p].length);
+        report_frame_content(buffer->plane[i].start, buffer->plane[i].length);
 
         output = fopen(plane_path, "wb");
         if (output == NULL) {
@@ -431,9 +428,9 @@ static int write_buffer(const struct capture_buffer *buffer, const char *path)
             return 1;
         }
 
-        fwrite(buffer->plane[p].start, 1, buffer->plane[p].length, output);
+        fwrite(buffer->plane[i].start, 1, buffer->plane[i].length, output);
         fclose(output);
-        printf("wrote %zu bytes to %s\n", buffer->plane[p].length, plane_path);
+        printf("wrote %zu bytes to %s\n", buffer->plane[i].length, plane_path);
     }
 
     return 0;
@@ -456,13 +453,12 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
                           unsigned int timeout, const char *path)
 {
     enum v4l2_buf_type type = device->type;
-    unsigned int i;
     unsigned int captured;
     double started;
     double elapsed;
     int result = 1;
 
-    for (i = 0; i < buffer_count; i++) {
+    for (unsigned int i = 0; i < buffer_count; i++) {
         struct v4l2_plane planes[MAX_PLANES];
         struct v4l2_buffer buffer;
 
@@ -478,10 +474,8 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
         }
 
         if (device->mark) {
-            unsigned int p;
-
-            for (p = 0; p < buffers[i].planes; p++) {
-                mark_plane(&buffers[i].plane[p]);
+            for (unsigned int j = 0; j < buffers[i].planes; j++) {
+                mark_plane(&buffers[i].plane[j]);
             }
         }
 
@@ -551,14 +545,12 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
          */
         if (!device->quiet && (captured == 0 || captured + 1 == frame_count)) {
             if (device->mark) {
-                unsigned int p;
-
-                for (p = 0; p < buffers[buffer.index].planes; p++) {
+                for (unsigned int j = 0; j < buffers[buffer.index].planes; j++) {
                     char label[32];
 
-                    snprintf(label, sizeof(label), "plane %u coverage", p);
-                    report_plane_coverage(&buffers[buffer.index].plane[p],
-                                          device->stride[p], label);
+                    snprintf(label, sizeof(label), "plane %u coverage", j);
+                    report_plane_coverage(&buffers[buffer.index].plane[j],
+                                          device->stride[j], label);
                 }
             }
 
@@ -568,10 +560,8 @@ static int capture_frames(const struct capture_device *device, struct capture_bu
         }
 
         if (device->mark) {
-            unsigned int p;
-
-            for (p = 0; p < buffers[buffer.index].planes; p++) {
-                mark_plane(&buffers[buffer.index].plane[p]);
+            for (unsigned int j = 0; j < buffers[buffer.index].planes; j++) {
+                mark_plane(&buffers[buffer.index].plane[j]);
             }
         }
 
