@@ -42,8 +42,7 @@ stage_isp_experiments() {
 	# Values are derived here from the captured snapshots rather than hardcoded, so the file cannot
 	# drift away from the dumps it was measured against.
 	rm -f "$OUT/block3d.txt"
-	if [ -n "${BLOCK3D:-}" ]
-	then
+	if [ -n "${BLOCK3D:-}" ]; then
 		python3 "$HERE/gen-block3d.py" "${BLOCK3D}" ${BLOCK3D_RANGE:+"$BLOCK3D_RANGE"} > "$OUT/block3d.txt" || exit 1
 		device_push "$OUT/block3d.txt" || exit 1
 		echo "  staged BLOCK3D=$BLOCK3D: $(wc -l < "$OUT/block3d.txt") register writes"
@@ -55,8 +54,7 @@ stage_isp_experiments() {
 	# ISP is armed, so the fetch pulse picks it up. The device script switches on the file being
 	# present, which avoids quoting a flag through the heredoc. Absent GAMMA, the stale file is
 	# removed so a previous run's injection cannot silently persist into this one.
-	if [ -n "${GAMMA:-}" ]
-	then
+	if [ -n "${GAMMA:-}" ]; then
 		[ -s "$GAMMA" ] || { echo "GAMMA=$GAMMA is missing or empty"; exit 1; }
 		device_push_as "$GAMMA" "/tmp/gamma.bin" || exit 1
 		echo "  gamma injection armed from $GAMMA"
@@ -70,8 +68,7 @@ stage_isp_experiments() {
 	# glob keeps the order given here.
 	sshg 'rm -f /tmp/sw_*.bin'
 	SWEEP_NAMES=""
-	if [ -n "${SWEEP:-}" ]
-	then
+	if [ -n "${SWEEP:-}" ]; then
 		i=0
 		for f in $SWEEP
 		do
@@ -87,8 +84,7 @@ stage_isp_experiments() {
 	# REARM=<file>: after the sweep, load this table and re-run the full ISP replay rather than
 	# pulsing the fetch bits. Runs last, so it cannot cost an earlier capture.
 	sshg 'rm -f /tmp/rearm.bin'
-	if [ -n "${REARM:-}" ]
-	then
+	if [ -n "${REARM:-}" ]; then
 		[ -s "$REARM" ] || { echo "REARM=$REARM is missing or empty"; exit 1; }
 		device_push_as "$REARM" "/tmp/rearm.bin" || exit 1
 		SWEEP_NAMES="$SWEEP_NAMES rearm"
@@ -98,16 +94,14 @@ stage_isp_experiments() {
 	# LSCPOKE=1: zero the LSC DMA page mid-stream and re-arm its valid bit, to decide whether the
 	# block is actually fetching. Registered here so the capture is pulled and rendered like any
 	# other sweep step.
-	if [ "${LSCPOKE:-0}" = 1 ]
-	then
+	if [ "${LSCPOKE:-0}" = 1 ]; then
 		SWEEP_NAMES="$SWEEP_NAMES lsc"
 		echo "  LSC fetch probe armed"
 	fi
 
 	# HDRPOKE=1: zero GTM2's 512-byte payload and re-arm, to decide whether its content matters
 	# at all. It is the only table in the tone path with no static source anywhere.
-	if [ "${HDRPOKE:-0}" = 1 ]
-	then
+	if [ "${HDRPOKE:-0}" = 1 ]; then
 		SWEEP_NAMES="$SWEEP_NAMES gtm2"
 		echo "  GTM2 payload probe armed"
 	fi

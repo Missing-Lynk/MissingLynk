@@ -61,8 +61,7 @@ done
 FC0="$(sshg '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
 sleep 2
 FC1="$(sshg '/tmp/ml-regdump 0x088701f8 1' 2>/dev/null | awk 'NR==1{print $2}')"
-if [ "0x${FC0:-0}" = "0x${FC1:-0}" ]
-then
+if [ "0x${FC0:-0}" = "0x${FC1:-0}" ]; then
 	echo "  VIF frame counter is not advancing ($FC0 -> $FC1): the pipeline is NOT streaming."
 	echo "  Power the goggle and bring the link up, then re-run. Nothing read."
 	exit 1

@@ -147,18 +147,15 @@ esac
 # NOT taking, which is the case that overruns.
 DUMPDIR="${DUMPDIR:-/dev/shm}"
 
-if [ -n "${ONLY:-}" ]
-then
+if [ -n "${ONLY:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_ONLY=$ONLY"
 fi
 
-if [ -n "${DUMP:-}" ]
-then
+if [ -n "${DUMP:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_DUMP=$DUMPDIR/bench"
 fi
 
-if [ -z "${TX:-}" ]
-then
+if [ -z "${TX:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_NOTX=1"
 else
 	echo "=== RF pre-flight ==="
@@ -179,8 +176,7 @@ echo
 echo "=== bench.log ==="
 sshg "cat /tmp/bench.log"
 
-if [ -n "${DUMP:-}" ]
-then
+if [ -n "${DUMP:-}" ]; then
 	echo
 	echo "=== dumps ==="
 	sshg "ls -la $DUMPDIR/bench_tile*.h265; df -h $DUMPDIR | tail -1"

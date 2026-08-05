@@ -45,8 +45,7 @@ echo "=== recording ${SECONDS_RUN}s (GOP $GOP, cap ${CAP_MB} MB, CBR $BITRATE) =
 sshg "rm -f /tmp/rec.265; /tmp/ml-cam2enc -n $FRAMES -G $GOP -m $CAP_MB -R $BITRATE -o /tmp/rec.265" </dev/null | tail -5
 
 echo "=== pulling ==="
-if ! device_pull /tmp/rec.265 "$OUT/rec.265"
-then
+if ! device_pull /tmp/rec.265 "$OUT/rec.265"; then
 	echo "no recording came back" >&2
 	exit 1
 fi
@@ -55,13 +54,11 @@ sshg 'rm -f /tmp/rec.265' </dev/null
 SIZE="$(stat -c %s "$OUT/rec.265")"
 echo "  $OUT/rec.265, $SIZE bytes"
 
-if command -v ffmpeg >/dev/null 2>&1
-then
+if command -v ffmpeg >/dev/null 2>&1; then
 	ffmpeg -loglevel error -y -fflags +genpts -r 60 -i "$OUT/rec.265" -c copy "$OUT/rec.mp4"
 	echo "  $OUT/rec.mp4"
 	# The IRAP cadence, so a wrong GOP shows here instead of during a seek later.
-	if command -v ffprobe >/dev/null 2>&1
-	then
+	if command -v ffprobe >/dev/null 2>&1; then
 		KEYS="$(ffprobe -loglevel error -select_streams v -show_entries frame=key_frame \
 			-of csv=p=0 "$OUT/rec.mp4" | grep -c '^1')"
 		FRAMECOUNT="$(ffprobe -loglevel error -select_streams v -count_frames \

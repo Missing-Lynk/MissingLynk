@@ -156,7 +156,6 @@ static int dump_window(int mem_fd, const char *label, uint64_t base, uint32_t of
     void *mapping = NULL;
     size_t mapping_length = 0;
     volatile uint32_t *registers;
-    size_t index;
 
     registers = map_physical(mem_fd, base + offset, word_count * sizeof(uint32_t), 0,
                              &mapping, &mapping_length);
@@ -167,13 +166,13 @@ static int dump_window(int mem_fd, const char *label, uint64_t base, uint32_t of
     printf("--- %s (0x%08llx + 0x%03x, %zu words) ---\n", label,
            (unsigned long long)base, offset, word_count);
 
-    for (index = 0; index < word_count; index++) {
-        if ((index % 4) == 0) {
-            printf("%s+0x%03zx:", (index == 0) ? "" : "\n",
-                   offset + index * sizeof(uint32_t));
+    for (size_t i = 0; i < word_count; i++) {
+        if ((i % 4) == 0) {
+            printf("%s+0x%03zx:", (i == 0) ? "" : "\n",
+                   offset + i * sizeof(uint32_t));
         }
 
-        printf(" %08x", registers[index]);
+        printf(" %08x", registers[i]);
     }
 
     printf("\n");
@@ -269,7 +268,6 @@ static int report_sensor(int bus_number)
         { 0x034e, "output height high" },
         { 0x034f, "output height low" },
     };
-    size_t index;
     int bus_fd;
     int failures = 0;
 
@@ -280,16 +278,16 @@ static int report_sensor(int bus_number)
 
     printf("--- sensor (i2c-%d, 7-bit 0x%02x) ---\n", bus_number, SENSOR_I2C_ADDRESS);
 
-    for (index = 0; index < sizeof(interesting) / sizeof(interesting[0]); index++) {
+    for (size_t i = 0; i < sizeof(interesting) / sizeof(interesting[0]); i++) {
         uint8_t value;
 
-        if (sensor_read(bus_fd, interesting[index].reg, &value) != 0) {
+        if (sensor_read(bus_fd, interesting[i].reg, &value) != 0) {
             failures++;
             continue;
         }
 
-        printf("0x%04x = 0x%02x   %s\n", interesting[index].reg, value,
-               interesting[index].meaning);
+        printf("0x%04x = 0x%02x   %s\n", interesting[i].reg, value,
+               interesting[i].meaning);
     }
 
     close(bus_fd);
@@ -352,26 +350,26 @@ static void report_content(const uint8_t *data, size_t length)
     size_t distinct = 0;
     size_t nonzero = 0;
     uint64_t neighbour_delta = 0;
-    size_t index;
+    size_t i;
 
     memset(histogram, 0, sizeof(histogram));
 
-    for (index = 0; index < length; index++) {
-        histogram[data[index]]++;
+    for (i = 0; i < length; i++) {
+        histogram[data[i]]++;
 
-        if (data[index] != 0) {
+        if (data[i] != 0) {
             nonzero++;
         }
 
-        if (index > 0) {
-            int delta = (int)data[index] - (int)data[index - 1];
+        if (i > 0) {
+            int delta = (int)data[i] - (int)data[i - 1];
 
             neighbour_delta += (uint64_t)(delta < 0 ? -delta : delta);
         }
     }
 
-    for (index = 0; index < 256; index++) {
-        if (histogram[index] != 0) {
+    for (i = 0; i < 256; i++) {
+        if (histogram[i] != 0) {
             distinct++;
         }
     }
@@ -397,14 +395,12 @@ static void report_content(const uint8_t *data, size_t length)
  */
 static void hexdump(const uint8_t *data, size_t length)
 {
-    size_t index;
-
-    for (index = 0; index < length; index++) {
-        if ((index % HEXDUMP_LINE_BYTES) == 0) {
-            printf("%s  %04zx:", (index == 0) ? "" : "\n", index);
+    for (size_t i = 0; i < length; i++) {
+        if ((i % HEXDUMP_LINE_BYTES) == 0) {
+            printf("%s  %04zx:", (i == 0) ? "" : "\n", i);
         }
 
-        printf(" %02x", data[index]);
+        printf(" %02x", data[i]);
     }
 
     printf("\n");

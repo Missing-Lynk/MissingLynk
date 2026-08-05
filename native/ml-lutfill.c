@@ -47,139 +47,150 @@
 
 int main(int argc, char **argv)
 {
-	uint32_t phys, count, slack, base;
-	const char *mode;
-	volatile uint8_t *map;
-	volatile uint32_t *lut;
-	unsigned i;
-	int fd;
+    uint32_t phys, count, slack, base;
+    const char *mode;
+    volatile uint8_t *map;
+    volatile uint32_t *lut;
+    unsigned i;
+    int fd;
 
-	if (argc < 4) {
-		fprintf(stderr,
-			"usage: %s <phys> <count> ramp[:max] | const:<hex> | index | read"
-			" | save:<path> | load:<path>\n",
-			argv[0]);
-		return 2;
-	}
+    if (argc < 4) {
+        fprintf(stderr,
+            "usage: %s <phys> <count> ramp[:max] | const:<hex> | index | read"
+            " | save:<path> | load:<path>\n",
+            argv[0]);
 
-	phys = strtoul(argv[1], NULL, 0);
-	count = strtoul(argv[2], NULL, 0);
-	mode = argv[3];
+        return 2;
+    }
 
-	fd = open("/dev/mem", O_RDWR | O_SYNC);
-	if (fd < 0) {
-		perror("open /dev/mem");
-		return 1;
-	}
+    phys = strtoul(argv[1], NULL, 0);
+    count = strtoul(argv[2], NULL, 0);
+    mode = argv[3];
 
-	slack = phys & 0xfffu;
-	base = phys - slack;
-	map = mmap(NULL, count * 4 + slack, PROT_READ | PROT_WRITE, MAP_SHARED, fd, base);
-	if (map == MAP_FAILED) {
-		perror("mmap");
-		close(fd);
-		return 1;
-	}
-	lut = (volatile uint32_t *)(map + slack);
+    fd = open("/dev/mem", O_RDWR | O_SYNC);
+    if (fd < 0) {
+        perror("open /dev/mem");
+        return 1;
+    }
 
-	if (!strcmp(mode, "read")) {
-		printf("0x%08x, first 16 of %u entries:\n", phys, count);
-		for (i = 0; i < 16 && i < count; i++) {
-			printf("  [%4u] 0x%08x\n", i, lut[i]);
-		}
-	} else if (!strncmp(mode, "save:", 5)) {
-		/*
-		 * Copy the region out so it can be pulled to the host and
-		 * inspected. DDR survives a RAM-boot, so if the vendor stack
-		 * ran in slot A before us these addresses may still hold its
-		 * real tuning tables, which is worth more than any curve we
-		 * could synthesise. Word-at-a-time, matching the rest of this
-		 * tool, and read-only: nothing is written back.
-		 */
-		FILE *f = fopen(mode + 5, "wb");
+    slack = phys & 0xfffu;
+    base = phys - slack;
+    map = mmap(NULL, count * 4 + slack, PROT_READ | PROT_WRITE, MAP_SHARED, fd, base);
+    if (map == MAP_FAILED) {
+        perror("mmap");
+        close(fd);
+        return 1;
+    }
 
-		if (!f) {
-			perror("fopen");
-			munmap((void *)map, count * 4 + slack);
-			close(fd);
-			return 1;
-		}
-		for (i = 0; i < count; i++) {
-			uint32_t v = lut[i];
+    lut = (volatile uint32_t *)(map + slack);
 
-			if (fwrite(&v, sizeof(v), 1, f) != 1) {
-				perror("fwrite");
-				fclose(f);
-				munmap((void *)map, count * 4 + slack);
-				close(fd);
-				return 1;
-			}
-		}
-		fclose(f);
-		printf("saved 0x%08x, %u entries, to %s\n", phys, count,
-		       mode + 5);
-	} else if (!strncmp(mode, "load:", 5)) {
-		/*
-		 * Fill from a file holding the table verbatim, little-endian
-		 * u32 per entry. This is how a curve extracted from the vendor
-		 * tuning blob gets in: a real curve is worth more than any
-		 * synthetic ramp, because a ramp only tests the mechanism
-		 * while the real one tests the mechanism and the source at
-		 * once. Short files are an error rather than a partial fill,
-		 * which would leave a torn table the hardware still fetches.
-		 */
-		FILE *f = fopen(mode + 5, "rb");
+    if (!strcmp(mode, "read")) {
+        printf("0x%08x, first 16 of %u entries:\n", phys, count);
+        for (i = 0; i < 16 && i < count; i++) {
+            printf("  [%4u] 0x%08x\n", i, lut[i]);
+        }
+    } else if (!strncmp(mode, "save:", 5)) {
+        /*
+         * Copy the region out so it can be pulled to the host and
+         * inspected. DDR survives a RAM-boot, so if the vendor stack
+         * ran in slot A before us these addresses may still hold its
+         * real tuning tables, which is worth more than any curve we
+         * could synthesise. Word-at-a-time, matching the rest of this
+         * tool, and read-only: nothing is written back.
+         */
+        FILE *f = fopen(mode + 5, "wb");
 
-		if (!f) {
-			perror("fopen");
-			munmap((void *)map, count * 4 + slack);
-			close(fd);
-			return 1;
-		}
-		for (i = 0; i < count; i++) {
-			uint32_t val;
+        if (!f) {
+            perror("fopen");
+            munmap((void *)map, count * 4 + slack);
+            close(fd);
+            return 1;
+        }
 
-			if (fread(&val, sizeof(val), 1, f) != 1) {
-				fprintf(stderr,
-					"%s: short file, %u of %u entries\n",
-					mode + 5, i, count);
-				fclose(f);
-				munmap((void *)map, count * 4 + slack);
-				close(fd);
-				return 1;
-			}
-			lut[i] = val;
-		}
-		fclose(f);
-		printf("filled 0x%08x, %u entries, from %s\n", phys, count,
-		       mode + 5);
-	} else if (!strncmp(mode, "const:", 6)) {
-		uint32_t v = strtoul(mode + 6, NULL, 16);
+        for (i = 0; i < count; i++) {
+            uint32_t v = lut[i];
 
-		for (i = 0; i < count; i++) {
-			lut[i] = v;
-		}
-		printf("filled 0x%08x, %u entries, constant 0x%08x\n", phys, count, v);
-	} else if (!strcmp(mode, "index")) {
-		for (i = 0; i < count; i++) {
-			lut[i] = i;
-		}
-		printf("filled 0x%08x, %u entries, entry = index\n", phys, count);
-	} else if (!strncmp(mode, "ramp", 4)) {
-		uint32_t max = (mode[4] == ':') ? strtoul(mode + 5, NULL, 0) : 4095;
+            if (fwrite(&v, sizeof(v), 1, f) != 1) {
+                perror("fwrite");
+                fclose(f);
+                munmap((void *)map, count * 4 + slack);
+                close(fd);
+                return 1;
+            }
+        }
 
-		for (i = 0; i < count; i++) {
-			lut[i] = (uint32_t)(((uint64_t)i * max) / (count - 1));
-		}
-		printf("filled 0x%08x, %u entries, ramp 0..%u\n", phys, count, max);
-	} else {
-		fprintf(stderr, "unknown mode: %s\n", mode);
-		munmap((void *)map, count * 4 + slack);
-		close(fd);
-		return 2;
-	}
+        fclose(f);
+        printf("saved 0x%08x, %u entries, to %s\n", phys, count,
+               mode + 5);
+    } else if (!strncmp(mode, "load:", 5)) {
+        /*
+         * Fill from a file holding the table verbatim, little-endian
+         * u32 per entry. This is how a curve extracted from the vendor
+         * tuning blob gets in: a real curve is worth more than any
+         * synthetic ramp, because a ramp only tests the mechanism
+         * while the real one tests the mechanism and the source at
+         * once. Short files are an error rather than a partial fill,
+         * which would leave a torn table the hardware still fetches.
+         */
+        FILE *f = fopen(mode + 5, "rb");
 
-	munmap((void *)map, count * 4 + slack);
-	close(fd);
-	return 0;
+        if (!f) {
+            perror("fopen");
+            munmap((void *)map, count * 4 + slack);
+            close(fd);
+
+      return 1;
+        }
+
+        for (i = 0; i < count; i++) {
+            uint32_t val;
+
+            if (fread(&val, sizeof(val), 1, f) != 1) {
+                fprintf(stderr,
+                    "%s: short file, %u of %u entries\n",
+                    mode + 5, i, count);
+                fclose(f);
+                munmap((void *)map, count * 4 + slack);
+                close(fd);
+
+                return 1;
+            }
+            lut[i] = val;
+        }
+
+        fclose(f);
+        printf("filled 0x%08x, %u entries, from %s\n", phys, count,
+               mode + 5);
+    } else if (!strncmp(mode, "const:", 6)) {
+        uint32_t v = strtoul(mode + 6, NULL, 16);
+
+        for (i = 0; i < count; i++) {
+            lut[i] = v;
+        }
+
+        printf("filled 0x%08x, %u entries, constant 0x%08x\n", phys, count, v);
+    } else if (!strcmp(mode, "index")) {
+        for (i = 0; i < count; i++) {
+            lut[i] = i;
+        }
+
+        printf("filled 0x%08x, %u entries, entry = index\n", phys, count);
+    } else if (!strncmp(mode, "ramp", 4)) {
+        uint32_t max = (mode[4] == ':') ? strtoul(mode + 5, NULL, 0) : 4095;
+
+        for (i = 0; i < count; i++) {
+            lut[i] = (uint32_t)(((uint64_t)i * max) / (count - 1));
+        }
+
+        printf("filled 0x%08x, %u entries, ramp 0..%u\n", phys, count, max);
+    } else {
+        fprintf(stderr, "unknown mode: %s\n", mode);
+        munmap((void *)map, count * 4 + slack);
+        close(fd);
+        return 2;
+    }
+
+    munmap((void *)map, count * 4 + slack);
+    close(fd);
+    return 0;
 }

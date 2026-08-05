@@ -51,8 +51,7 @@ device_push "$REPO/native/build/ml-3a" || exit 1
 
 # The vendor tuning file, verbatim. ar-isp generates its gamma and DRC pages from it.
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"
-if [ -s "$TUNING" ]
-then
+if [ -s "$TUNING" ]; then
 	device_push_as "$TUNING" "/tmp/nt99235-tuning-preview-fpv.bin" || exit 1
 else
 	echo "  no tuning file at $TUNING: ar-isp will seed, not generate"
@@ -116,11 +115,9 @@ cgu_rmw() {
 	/tmp/ml-regdump -w \$1 0x\$new >/dev/null || fail \"cgu write \$1\"
 }
 
-if [ \"\$CGU_MODE\" = none ]
-then
+if [ \"\$CGU_MODE\" = none ]; then
 	:
-elif [ \"\$CGU_MODE\" = full ]
-then
+elif [ \"\$CGU_MODE\" = full ]; then
 	/tmp/ml-regdump -w 0x0a10400c 0x13001300 >/dev/null || fail 'cgu 0x0a10400c'
 	/tmp/ml-regdump -w 0x0a104010 0x02001300 >/dev/null || fail 'cgu 0x0a104010'
 	/tmp/ml-regdump -w 0x0a104020 0x10001103 >/dev/null || fail 'cgu 0x0a104020'
@@ -158,8 +155,7 @@ NODE=''
 for d in /sys/class/video4linux/video*
 do
 	[ -r \"\$d/name\" ] || continue
-	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]
-	then
+	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 		NODE=/dev/\$(basename \$d)
 		break
 	fi
@@ -170,8 +166,7 @@ echo \"  capture node \$NODE\"
 # Rate first, contents second. -q returns buffers without a CPU pass over them, which is what a
 # consumer importing the dmabuf does; reading them costs more than a frame period because these
 # buffers are uncached.
-if /tmp/ml-v4l2grab -d \$NODE -q -n $FRAMES -t 10 >/tmp/c1.out 2>&1
-then
+if /tmp/ml-v4l2grab -d \$NODE -q -n $FRAMES -t 10 >/tmp/c1.out 2>&1; then
 	grep -E 'interface|allocated|current|delivered' /tmp/c1.out | sed 's/^/    /'
 	echo '  rate pass ok'
 else
@@ -180,8 +175,7 @@ else
 fi
 
 rm -f /tmp/chain.0 /tmp/chain.1 /tmp/chain.2
-if /tmp/ml-v4l2grab -d \$NODE -o /tmp/chain -n 4 -t 10 >/tmp/c2.out 2>&1
-then
+if /tmp/ml-v4l2grab -d \$NODE -o /tmp/chain -n 4 -t 10 >/tmp/c2.out 2>&1; then
 	grep -E 'frame |wrote|delivered' /tmp/c2.out | sed 's/^/    /'
 	echo '  capture ok'
 else

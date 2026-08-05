@@ -120,8 +120,7 @@ done
 # them from whatever the vendor left in DRAM. It is proprietary, so it is not in the repository:
 # this is the copy `missinglynk dump-firmware` pulled off a stock unit.
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"
-if [ -s "$TUNING" ]
-then
+if [ -s "$TUNING" ]; then
 	device_push_as "$TUNING" "/tmp/nt99235-tuning-preview-fpv.bin" || exit 1
 	echo "  staged tuning file, $(stat -c %s "$TUNING") bytes"
 else
@@ -227,8 +226,7 @@ echo '  stage 1c ok: tuning pages captured for residency check'
 # The write is plain DRAM through /dev/mem, no hardware access, and 0x2b2ec600 sits above the
 # kernel's capped memory, so it cannot corrupt anything the kernel owns. It happens before
 # insmod so nothing has fetched the table yet.
-if [ -f /tmp/gamma.bin ]
-then
+if [ -f /tmp/gamma.bin ]; then
 	if /tmp/ml-lutfill 0x2b2ec600 4096 load:/tmp/gamma.bin >/dev/null 2>&1
 	then echo '  stage 1d ok: vendor gamma injected at 0x2b2ec600'
 	else echo '  stage 1d FAILED: gamma not injected'
@@ -240,8 +238,7 @@ fi
 # Stage 1e: the tuning file has to be on the firmware search path before ar-isp probes. The
 # rootfs is not the place for it during a bring-up, so point the loader at tmpfs, which is where
 # the push landed anyway. Moved rather than copied: /tmp is 32 MB.
-if [ -f /tmp/nt99235-tuning-preview-fpv.bin ]
-then
+if [ -f /tmp/nt99235-tuning-preview-fpv.bin ]; then
 	mkdir -p /tmp/fw/artosyn
 	mv /tmp/nt99235-tuning-preview-fpv.bin /tmp/fw/artosyn/
 	if echo -n /tmp/fw > /sys/module/firmware_class/parameters/path 2>/dev/null
@@ -277,8 +274,7 @@ NODE=''
 for d in /sys/class/video4linux/video*
 do
 	[ -r \"\$d/name\" ] || continue
-	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]
-	then
+	if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 		NODE=/dev/\$(basename \$d)
 		break
 	fi
@@ -297,8 +293,7 @@ echo \"  stage 3 ok: capture node \$NODE\"
 # vendor's slot addresses, and those are only live when the node is not streaming.
 /tmp/ml-v4l2grab -d \$NODE -q -n 8 -t 15 >/tmp/g.out 2>&1
 GP=''
-if grep -q 'delivered [1-9]' /tmp/g.out
-then
+if grep -q 'delivered [1-9]' /tmp/g.out; then
 	echo \"  stage 4: chain up, \$(grep -o 'delivered .*' /tmp/g.out)\"
 else
 	echo '--- bring-up output ---'
@@ -310,8 +305,7 @@ fi
 # check. Comparing against the vendor's dump decides whether the 271 registers the vendor holds
 # non-zero and our mode table never writes are vendor writes we are missing, or power-on
 # defaults. Read-only: the -n form, since a bare fourth argument WRITES.
-if [ -x /tmp/ml-i2cprobe ]
-then
+if [ -x /tmp/ml-i2cprobe ]; then
 	: > /tmp/oursensor.txt
 	for pg in 0x0000 0x0100 0x0200 0x0300 0x0400 0x0500 0x0600 0x0800 0x0c00 0x3000 0x3100 0x3200 0x3300 \
 	          0x3500 0x3600 0x3a00 0x8000 0x8200 0x8300 0x8500 0x8700 0x9000
@@ -372,8 +366,7 @@ echo \"  cpu streaming sample (3 s, 2 cpus, 100 Hz jiffies):\"
 echo \"    t0: \$S0\"
 echo \"    t1: \$S1\"
 
-if [ \"\$CYC\" = cycle ]
-then
+if [ \"\$CYC\" = cycle ]; then
 	EXTRA=--isp-cycle
 else
 	EXTRA=
@@ -396,8 +389,7 @@ echo \"  stage 5 ok: captured \$NAME\"
 # frames rather than a re-read of the first.
 #
 # SWITCH_TP is the value to switch TO: 0 live, 1 solid, 2 colour bars, 3 fade.
-if [ -n \"\${SWITCH_TP:-}\" ]
-then
+if [ -n \"\${SWITCH_TP:-}\" ]; then
 	/tmp/ml-i2cprobe 0 0x1a 0x0600 0 >/dev/null 2>&1
 	/tmp/ml-i2cprobe 0 0x1a 0x0601 \$SWITCH_TP >/dev/null 2>&1
 	RB=\$(/tmp/ml-i2cprobe 0 0x1a 0x0601 2>/dev/null)
@@ -428,20 +420,17 @@ fi
 # Note the node does NOT bring the chain up. The sensor, VIF and ISP are already streaming by
 # the time this runs, which is the whole reason the old path stays intact in the same boot: if
 # this stage fails, nothing before it has been disturbed.
-if [ -n \"\${V4L2CAP:-}\" ]
-then
+if [ -n \"\${V4L2CAP:-}\" ]; then
 	NODE=''
 	for d in /sys/class/video4linux/video*
 	do
 		[ -r \"\$d/name\" ] || continue
-		if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]
-		then
+		if [ \"\$(cat \$d/name)\" = 'ar-cvisp' ]; then
 			NODE=/dev/\$(basename \$d)
 			break
 		fi
 	done
-	if [ -z \"\$NODE\" ]
-	then
+	if [ -z \"\$NODE\" ]; then
 		echo '  stage 5v FAILED: no video node named ar-cvisp'
 	else
 		echo \"  stage 5v: capture node \$NODE\"
@@ -455,8 +444,7 @@ then
 		# frame, so it drops frames by design and its throughput numbers mean nothing.
 		MARK=''
 		[ -n \"\${V4L2MARK:-}\" ] && MARK='-m'
-		if /tmp/ml-v4l2grab -d \$NODE \$MARK -o /tmp/\${NAME}_v4l2 -n \$V4L2CAP -t 5 >/tmp/g4.out 2>&1
-		then
+		if /tmp/ml-v4l2grab -d \$NODE \$MARK -o /tmp/\${NAME}_v4l2 -n \$V4L2CAP -t 5 >/tmp/g4.out 2>&1; then
 			grep -E 'interface|allocated|current|plane |frame |wrote|content|coverage|delivered' /tmp/g4.out | sed 's/^/    /'
 			echo \"  stage 5v ok: captured \${NAME}_v4l2 through the node\"
 		else
@@ -470,8 +458,7 @@ then
 		# than a frame period and the delivered rate measures the tool. -q cycles
 		# buffers without touching their contents, which is what a consumer importing
 		# the dmabuf into the encoder does, and separates the two.
-		if /tmp/ml-v4l2grab -d \$NODE -q -n 200 -t 5 >/tmp/g5.out 2>&1
-		then
+		if /tmp/ml-v4l2grab -d \$NODE -q -n 200 -t 5 >/tmp/g5.out 2>&1; then
 			grep -E 'delivered' /tmp/g5.out | sed 's/^/    rate pass: /'
 			for c in rotations completions drops
 			do
@@ -506,8 +493,7 @@ then
 		/tmp/ml-isploop 1 --cvisp --dump /tmp/\${NAME}_post \\
 			--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000 \\
 			>/tmp/il_post 2>&1
-		if grep -q 'markers overwritten' /tmp/il_post
-		then
+		if grep -q 'markers overwritten' /tmp/il_post; then
 			grep -E 'markers overwritten' /tmp/il_post | sed 's/^/    /'
 			echo '  stage 5w: vendor ring re-armed after STREAMOFF'
 		else
@@ -533,16 +519,14 @@ echo \"  stage 5c ok: \$(grep -c '^+0x' /tmp/ourisp.txt) register lines read mid
 
 # ISP interrupt counters, meaningful only under USE_IRQ=1: events should track
 # roughly three per frame and irq_seen0/1 name the observed sources.
-if [ -r /sys/kernel/debug/ar-isp/irq_events ]
-then
+if [ -r /sys/kernel/debug/ar-isp/irq_events ]; then
 	echo \"  isp irq: events \$(cat /sys/kernel/debug/ar-isp/irq_events), stats-events \$(cat /sys/kernel/debug/ar-isp/irq_stats_events), seen0 \$(cat /sys/kernel/debug/ar-isp/irq_seen0), seen1 \$(cat /sys/kernel/debug/ar-isp/irq_seen1)\"
 fi
 
 # Statistics ping-pong. A flip count tracking the stats-event count says every
 # frame's event rotated the halves. The grid must then read real luma rather
 # than the not-yet-flipped placeholder a reader sees before the first flip.
-if [ -r /sys/kernel/debug/ar-isp/stats_flips ]
-then
+if [ -r /sys/kernel/debug/ar-isp/stats_flips ]; then
 	echo \"  isp stats: flips \$(cat /sys/kernel/debug/ar-isp/stats_flips)\"
 	echo \"    grid: \$(head -1 /sys/kernel/debug/ar-isp/stats 2>/dev/null)\"
 fi
@@ -552,8 +536,7 @@ fi
 # Deliberately AFTER the baseline capture and the register dump, so a single bring-up gives a
 # before and an after of the same scene under the same light. A boot buys one bring-up, so an
 # experiment that needs a comparison has to carry its own control.
-if [ -f /tmp/block3d.txt ] && ! grep -q '^GROUP' /tmp/block3d.txt
-then
+if [ -f /tmp/block3d.txt ] && ! grep -q '^GROUP' /tmp/block3d.txt; then
 	n=0
 	while read -r addr val
 	do
@@ -571,8 +554,7 @@ then
 	sleep 1
 	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_b3d \\
 		--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000 \\
-		>/tmp/il_b3d 2>&1
-	then
+		>/tmp/il_b3d 2>&1; then
 		grep -E 'markers overwritten' /tmp/il_b3d | sed 's/^/    /'
 		echo \"  stage 5d ok: captured \${NAME}_b3d\"
 	else
@@ -593,8 +575,7 @@ fi
 # per-line padding, which is stale DDR, so about 6% of the sampled bytes are noise. That is
 # irrelevant against the effect being looked for: the full write moved the mean from 97 to 184
 # and dark pixels from 57% to 0%.
-if grep -q '^GROUP' /tmp/block3d.txt 2>/dev/null
-then
+if grep -q '^GROUP' /tmp/block3d.txt 2>/dev/null; then
 	lumamean() {
 		dd if=\"\$1\" bs=2048 skip=536 count=8 2>/dev/null \\
 			| od -An -tu1 -v \\
@@ -604,8 +585,7 @@ then
 		rm -f /tmp/sw.0
 		/tmp/ml-isploop 1 --cvisp --dump /tmp/sw --plane 0x28014000 >/tmp/il_sw 2>&1
 		mk=\$(grep -c 'markers overwritten, first' /tmp/il_sw)
-		if [ -s /tmp/sw.0 ]
-		then
+		if [ -s /tmp/sw.0 ]; then
 			echo \"  group \$1: luma mean \$(lumamean /tmp/sw.0)  (planes written: \$mk)\"
 		else
 			echo \"  group \$1: NO CAPTURE\"
@@ -616,8 +596,7 @@ then
 	grp=
 	while read -r a b
 	do
-		if [ \"\$a\" = GROUP ]
-		then
+		if [ \"\$a\" = GROUP ]; then
 			[ -n \"\$grp\" ] && measure \"\$grp\"
 			grp=\$b
 			continue
@@ -645,15 +624,13 @@ do
 	# Read the values back off the sensor. A module parameter that was accepted but never
 	# reached the chip looks identical to a setting the sensor ignored. Note the -n form:
 	# a bare fourth argument to ml-i2cprobe WRITES that value.
-	if [ -x /tmp/ml-i2cprobe ]
-	then
+	if [ -x /tmp/ml-i2cprobe ]; then
 		echo \"    sensor: exposure\" \$(/tmp/ml-i2cprobe 0 0x1a 0x0202 -n 2 2>/dev/null | cut -d= -f2 | tr -d ' \\n') \
 		     \"gain\" \$(/tmp/ml-i2cprobe 0 0x1a 0x0206 -n 1 2>/dev/null | cut -d= -f2 | tr -d ' ')
 	fi
 	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_e\${ex}_g\${gn} \\
 		\$PLANES \\
-		>/tmp/il_e\$ex 2>&1
-	then
+		>/tmp/il_e\$ex 2>&1; then
 		echo \"  expo \$ex gain \$gn:\" \$(grep -c 'markers overwritten' /tmp/il_e\$ex) 'planes written'
 	else
 		echo \"  expo \$ex gain \$gn: CAPTURE FAILED\"
@@ -673,13 +650,11 @@ for f in /tmp/sw_*.bin
 do
 	[ -e \"\$f\" ] || continue
 	sw=\$(basename \$f .bin)
-	if ! kill -0 \$GP 2>/dev/null
-	then
+	if ! kill -0 \$GP 2>/dev/null; then
 		echo \"  sweep \$sw: SKIPPED, grabber is gone so the pipeline is dead\"
 		continue
 	fi
-	if ! /tmp/ml-lutfill 0x2b2ec600 4096 load:\$f >/dev/null 2>&1
-	then
+	if ! /tmp/ml-lutfill 0x2b2ec600 4096 load:\$f >/dev/null 2>&1; then
 		echo \"  sweep \$sw: LOAD FAILED, skipped\"
 		continue
 	fi
@@ -703,8 +678,7 @@ do
 	sleep 1
 	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_\$sw \\
 		\$PLANES \\
-		>/tmp/il_\$sw 2>&1
-	then
+		>/tmp/il_\$sw 2>&1; then
 		n=\$(grep -c 'markers overwritten' /tmp/il_\$sw)
 		echo \"  sweep \$sw: \$n planes written\"
 		# ml-isploop can exit 0 having captured nothing, which reads as a table with no effect
@@ -721,16 +695,13 @@ done
 # 0x0014 pulse does not re-fetch the table either, re-running the full ISP replay will, since
 # that is what loaded it in the first place. Mid-stream re-arm may disturb the pipeline, which
 # is precisely why it is the final step.
-if [ -f /tmp/rearm.bin ]
-then
+if [ -f /tmp/rearm.bin ]; then
 	/tmp/ml-lutfill 0x2b2ec600 4096 load:/tmp/rearm.bin >/dev/null 2>&1
-	if echo 1 > /sys/kernel/debug/ar-isp/arm 2>/dev/null
-	then
+	if echo 1 > /sys/kernel/debug/ar-isp/arm 2>/dev/null; then
 		sleep 2
 		if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_rearm \\
 			--plane 0x28014000 --plane 0x28232000 --plane 0x282bb000 \\
-			>/tmp/il_rearm 2>&1
-		then
+			>/tmp/il_rearm 2>&1; then
 			echo '  stage 7 ok: re-armed and captured'
 			grep -E 'markers overwritten' /tmp/il_rearm | sed 's/^/    /'
 		else
@@ -756,8 +727,7 @@ fi
 # against the library templates, and the raw zone grid, which is worth far more in a
 # deliberately non-uniform scene. Point the lens at a bright window and a dark corner.
 echo '  stage 7b: AE statistics'
-if [ -r /sys/kernel/debug/ar-isp/stats ]
-then
+if [ -r /sys/kernel/debug/ar-isp/stats ]; then
 	head -1 /sys/kernel/debug/ar-isp/stats | sed 's/^/    /'
 	tail -1 /sys/kernel/debug/ar-isp/stats | sed 's/^/    /'
 else
@@ -767,8 +737,7 @@ dmesg | grep -E 'stats: rro' | tail -1 | sed 's/^/    /'
 # Raw grid, from the address the driver printed, so this follows our allocation instead of a
 # hardcoded vendor address. ml-lutfill counts words: 0x1200 words is the 0x4800 extent.
 RRO=\$(dmesg | grep -oE 'stats: rro 0x[0-9a-f]+' | tail -1 | sed 's/.*0x/0x/')
-if [ -n \"\$RRO\" ]
-then
+if [ -n \"\$RRO\" ]; then
 	/tmp/ml-lutfill \$RRO 0x1200 save:/tmp/rro_raw.bin >/dev/null 2>&1 &&
 		echo \"    saved raw zone grid from \$RRO\"
 fi
@@ -794,8 +763,7 @@ fi
 #
 # Runs LAST, after every capture that matters, because it deliberately corrupts a live table.
 # Its own before-image is the stage 5 capture of the same scene.
-if [ \"\$LSCPOKE\" = 1 ]
-then
+if [ \"\$LSCPOKE\" = 1 ]; then
 	# 0x1a0 words is 0x680 bytes, the register-proven fetch length. Save first: this is the
 	# only copy of what the vendor computed for this scene, and it is not reproducible from
 	# the tuning file.
@@ -811,8 +779,7 @@ then
 	# unchanged image trustworthy here rather than possibly just a stale frame.
 	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_lsc \\
 		\$PLANES \\
-		>/tmp/il_lsc 2>&1
-	then
+		>/tmp/il_lsc 2>&1; then
 		echo '  stage 8 ok: captured after the poke'
 		grep -E 'markers overwritten' /tmp/il_lsc | sed 's/^/    /'
 	else
@@ -840,8 +807,7 @@ fi
 # change the image, the content matters and the RE has to continue.
 #
 # Runs after the LSC probe, last of everything, because it corrupts a live table.
-if [ \"\$HDRPOKE\" = 1 ]
-then
+if [ \"\$HDRPOKE\" = 1 ]; then
 	/tmp/ml-lutfill 0x2b2e0a00 0x80 save:/tmp/gtm2_pre.bin >/dev/null 2>&1
 	/tmp/ml-lutfill 0x2b2e0a00 0x80 const:0x00000000 >/dev/null 2>&1
 	echo '  stage 9: GTM2 payload zeroed, valid bit before/after:'
@@ -851,8 +817,7 @@ then
 	sleep 1
 	if /tmp/ml-isploop \$WATCH --cvisp --dump /tmp/\${NAME}_gtm2 \\
 		\$PLANES \\
-		>/tmp/il_gtm2 2>&1
-	then
+		>/tmp/il_gtm2 2>&1; then
 		echo '  stage 9 ok: captured after the poke'
 		grep -E 'markers overwritten' /tmp/il_gtm2 | sed 's/^/    /'
 	else
@@ -891,8 +856,7 @@ do
 	cyc="${run##*:}"
 	echo
 	echo "=== capture: $name (test_pattern=$tp, $cyc) ==="
-	if ! sshg "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' V4L2CAP='${V4L2CAP:-}' V4L2MARK='${V4L2MARK:-}' /tmp/prove.sh $tp $name $cyc"
-	then
+	if ! sshg "WATCH=$WATCH ESWEEP='${ESWEEP:-}' SWEEP_COLOUR='${SWEEP_COLOUR:-}' LSCPOKE='${LSCPOKE:-0}' HDRPOKE='${HDRPOKE:-0}' SWITCH_TP='${SWITCH_TP:-}' V4L2CAP='${V4L2CAP:-}' V4L2MARK='${V4L2MARK:-}' /tmp/prove.sh $tp $name $cyc"; then
 		echo ">>> $name FAILED, stopping. Nothing touched VIF or the ISP."
 		exit 1
 	fi
@@ -925,8 +889,7 @@ do
 	# The LSC page as the vendor computed it for this scene. hdf-037 established it has no
 	# static source: it is built at runtime from stats, so this capture is the only form of
 	# it we can hold, and the open driver carries a captured page rather than generating one.
-	if [ "${LSCPOKE:-0}" = 1 ]
-	then
+	if [ "${LSCPOKE:-0}" = 1 ]; then
 		device_pull "/tmp/lsc_pre.bin" "$OUT/lsc_pre.bin" 2>/dev/null || true
 	fi
 	# Stage 7b's artifacts. Unconditional: that stage is passive and always runs, so gating
@@ -934,16 +897,14 @@ do
 	device_pull "/tmp/rro_raw.bin" "$OUT/rro_raw.bin" 2>/dev/null || true
 	device_pull "/tmp/lut3d.bin" "$OUT/lut3d.bin" 2>/dev/null || true
 	device_pull "/tmp/ltm_page.bin" "$OUT/ltm_page_${SCENE:-a}.bin" 2>/dev/null || true
-	if [ "${HDRPOKE:-0}" = 1 ]
-	then
+	if [ "${HDRPOKE:-0}" = 1 ]; then
 		device_pull "/tmp/gtm2_pre.bin" "$OUT/gtm2_pre.bin" 2>/dev/null || true
 	fi
 	device_pull "/tmp/oursensor.txt" "$REPO/out/au-snapshot/ours-sensor-full.txt" 2>/dev/null || true
 	# Mid-stream register windows, for the live-against-live diff. Small, so unlike the raw
 	# frame this pull is reliable over the RF link.
 	device_pull "/tmp/ourisp.txt" "$REPO/out/au-snapshot/ours-registers-live.txt" 2>/dev/null || true
-	if [ -n "${BLOCK3D:-}" ]
-	then
+	if [ -n "${BLOCK3D:-}" ]; then
 		for p in 0 1 2
 		do
 			device_pull "/tmp/${name}_b3d.$p" "$OUT/${name}_b3d.$p" 2>/dev/null || true
@@ -952,8 +913,7 @@ do
 		python3 "$HERE/planes2png.py" "$OUT/${name}_b3d" "$OUT/${name}_b3d" || true
 		device_pull "/tmp/ourisp_b3d.txt" "$REPO/out/au-snapshot/ours-registers-live-b3d.txt" 2>/dev/null || true
 	fi
-	if [ -s "$REPO/out/au-snapshot/ours-registers-live.txt" ]
-	then
+	if [ -s "$REPO/out/au-snapshot/ours-registers-live.txt" ]; then
 		echo "  pulled mid-stream registers: $(grep -c '^+0x' "$REPO/out/au-snapshot/ours-registers-live.txt") lines"
 	else
 		echo "  WARNING: mid-stream register pull came back EMPTY"
@@ -1007,18 +967,15 @@ PYE
 	# Rendered with the same script as every other capture: the node's plane
 	# sizes carry the vendor's slot tails, which are longer than stride x height,
 	# and planes2png.py crops rather than assuming an exact length.
-	if [ -n "${V4L2CAP:-}" ]
-	then
+	if [ -n "${V4L2CAP:-}" ]; then
 		for p in 0 1 2
 		do
 			device_pull "/tmp/${name}_v4l2.$p" "$OUT/${name}_v4l2.$p" 2>/dev/null || true
 		done
 		sshg "rm -f /tmp/${name}_v4l2.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_v4l2" "$OUT/${name}_v4l2" || true
-		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_v4l2.0" ]
-		then
-			if cmp -s "$OUT/$name.0" "$OUT/${name}_v4l2.0"
-			then
+		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_v4l2.0" ]; then
+			if cmp -s "$OUT/$name.0" "$OUT/${name}_v4l2.0"; then
 				echo "  node check: IDENTICAL to the /dev/mem capture -> suspect a stale read, not a node frame"
 			else
 				echo "  node check: DIFFERS from the /dev/mem capture, as two frames of a live scene should"
@@ -1029,18 +986,15 @@ PYE
 	# The mid-stream pattern switch, if SWITCH_TP asked for one. Same bring-up,
 	# so this pair is directly comparable: same optics, same ISP state, only the
 	# sensor's pattern generator changed between them.
-	if [ -n "${SWITCH_TP:-}" ]
-	then
+	if [ -n "${SWITCH_TP:-}" ]; then
 		for p in 0 1 2
 		do
 			device_pull "/tmp/${name}_sw.$p" "$OUT/${name}_sw.$p" 2>/dev/null || true
 		done
 		sshg "rm -f /tmp/${name}_sw.[012]" </dev/null 2>/dev/null || true
 		python3 "$HERE/planes2png.py" "$OUT/${name}_sw" "$OUT/${name}_sw" || true
-		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_sw.0" ]
-		then
-			if cmp -s "$OUT/$name.0" "$OUT/${name}_sw.0"
-			then
+		if [ -s "$OUT/$name.0" ] && [ -s "$OUT/${name}_sw.0" ]; then
+			if cmp -s "$OUT/$name.0" "$OUT/${name}_sw.0"; then
 				echo "  switch check: IDENTICAL -> the second grab is stale, not a new frame"
 			else
 				echo "  switch check: DIFFER -> both grabs are real frames from one bring-up"
@@ -1051,10 +1005,8 @@ done
 
 echo
 echo "=== movement check: two live captures in the same configuration ==="
-if [ -s "$OUT/live.0" ] && [ -s "$OUT/live2.0" ]
-then
-	if cmp -s "$OUT/live.0" "$OUT/live2.0"
-	then
+if [ -s "$OUT/live.0" ] && [ -s "$OUT/live2.0" ]; then
+	if cmp -s "$OUT/live.0" "$OUT/live2.0"; then
 		echo "  IDENTICAL -> frames are NOT updating"
 	else
 		python3 - "$OUT/live.0" "$OUT/live2.0" <<'PYE'
@@ -1071,10 +1023,8 @@ fi
 
 echo
 echo "=== switch check: does the image follow the sensor setting? ==="
-if [ -s "$OUT/testpattern.0" ] && [ -s "$OUT/live.0" ]
-then
-	if cmp -s "$OUT/testpattern.0" "$OUT/live.0"
-	then
+if [ -s "$OUT/testpattern.0" ] && [ -s "$OUT/live.0" ]; then
+	if cmp -s "$OUT/testpattern.0" "$OUT/live.0"; then
 		echo "  IDENTICAL -> the switch did NOT take effect in the output"
 	else
 		echo "  DIFFER -> pattern and live produce different frames"

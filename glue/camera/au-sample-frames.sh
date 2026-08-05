@@ -40,8 +40,7 @@ i=0
 while [ "$i" -lt "$COUNT" ]
 do
 	tag="$(printf '%02d' "$i")"
-	if device_pull "/tmp/s.$tag.0" "$OUT/frame-$tag.raw"
-	then
+	if device_pull "/tmp/s.$tag.0" "$OUT/frame-$tag.raw"; then
 		# Raw luma at the block's 2048-byte stride, cropped to the 1920 the block writes.
 		ffmpeg -loglevel error -y -f rawvideo -pix_fmt gray -s 2048x1080 \
 			-i "$OUT/frame-$tag.raw" -vf "crop=1920:1080:0:0" "$OUT/frame-$tag.png"

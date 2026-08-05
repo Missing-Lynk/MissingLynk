@@ -119,8 +119,7 @@ do
 	set -- $line
 	blk="$1"; off="$2"; addr="$3"
 	nm="$(printf '%s_%s' "$blk" "${off#+}")"
-	if sshg "/tmp/ml-lutfill $addr 8192 save:/tmp/tbl_$nm.bin" </dev/null >/dev/null 2>&1
-	then
+	if sshg "/tmp/ml-lutfill $addr 8192 save:/tmp/tbl_$nm.bin" </dev/null >/dev/null 2>&1; then
 		device_pull "/tmp/tbl_$nm.bin" "$OUT/tbl_$nm.bin" 2>/dev/null && echo "  $nm from $addr"
 	else
 		echo "  $nm at $addr: unreadable, skipped"

@@ -42,20 +42,17 @@ au_ensure_wave5
 # The camera modules have to be up for the modes that open the capture node. Saying so is
 # cheaper than a run that fails halfway with an error about a missing node. The encoder-only
 # mode does not touch the camera, so it is allowed to run on its own.
-if [ "$MODE" != encoder ]
-then
+if [ "$MODE" != encoder ]; then
 	au_require_cvisp
 fi
 
-if [ "$MODE" = all ] || [ "$MODE" = export ]
-then
+if [ "$MODE" = all ] || [ "$MODE" = export ]; then
 	echo "=== export: can a no-map pool buffer become a dmabuf? ==="
 	sshg "/tmp/ml-cam2enc -x -b $BUFS" </dev/null
 	echo "  exit $?"
 fi
 
-if [ "$MODE" = all ] || [ "$MODE" = encoder ]
-then
+if [ "$MODE" = all ] || [ "$MODE" = encoder ]; then
 	echo "=== encoder: does wave5 take the camera's geometry? ==="
 	sshg "/tmp/ml-cam2enc -e -c $CODEC" </dev/null
 	echo "  exit $?"
@@ -63,32 +60,27 @@ fi
 
 # The two narrowing variants. Both are cheap and neither needs its own bring-up, so on a boot
 # where the joined run fails they are what say why.
-if [ "$MODE" = static ]
-then
+if [ "$MODE" = static ]; then
 	echo "=== static: camera buffers, camera stopped ==="
 	sshg "/tmp/ml-cam2enc -s -n $FRAMES -b $BUFS -c $CODEC" </dev/null
 	echo "  exit $?"
 fi
 
-if [ "$MODE" = hold ]
-then
+if [ "$MODE" = hold ]; then
 	echo "=== hold: camera streaming, buffer 0 kept out of its rotation ==="
 	sshg "/tmp/ml-cam2enc -k -n $FRAMES -b $BUFS -c $CODEC" </dev/null
 	echo "  exit $?"
 fi
 
-if [ "$MODE" = all ] || [ "$MODE" = joined ]
-then
+if [ "$MODE" = all ] || [ "$MODE" = joined ]; then
 	echo "=== joined: camera to encoder, no copy ==="
 	sshg "rm -f /tmp/cam.bit; /tmp/ml-cam2enc -n $FRAMES -b $BUFS -c $CODEC -o /tmp/cam.bit" </dev/null
 	echo "  exit $?"
 
-	if device_pull /tmp/cam.bit "$OUT/cam.bit"
-	then
+	if device_pull /tmp/cam.bit "$OUT/cam.bit"; then
 		echo "  pulled $OUT/cam.bit, $(stat -c %s "$OUT/cam.bit") bytes"
 		# Decode one frame so the run is judged on a picture rather than a byte count.
-		if command -v ffmpeg >/dev/null 2>&1
-		then
+		if command -v ffmpeg >/dev/null 2>&1; then
 			rm -f "$OUT/frame.png"
 			ffmpeg -loglevel error -y -i "$OUT/cam.bit" -frames:v 1 "$OUT/frame.png" 2>&1 | head -5
 			[ -s "$OUT/frame.png" ] && echo "  decoded $OUT/frame.png"

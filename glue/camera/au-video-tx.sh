@@ -37,8 +37,7 @@ goggle() {
 	device_ssh "$GOGGLE_PASS" "$GOGGLE_IP" "$@"
 }
 
-if [ -n "${STOP:-}" ]
-then
+if [ -n "${STOP:-}" ]; then
 	sshg "killall ml-air-video 2>/dev/null; sleep 1; echo stopped"
 	exit 0
 fi
@@ -54,11 +53,9 @@ sshg "ping -c 2 -W 2 $AU_RF_PEER | tail -2" </dev/null || exit 1
 
 # A live instance means this boot's usable encoder pair is already spent. pgrep/pkill -f match
 # their own command line on this busybox, so ask killall what it would find instead.
-if [ -z "${FORCE:-}" ]
-then
+if [ -z "${FORCE:-}" ]; then
 	au_refuse_air_video_running
-elif au_air_video_running
-then
+elif au_air_video_running; then
 	echo "FORCE: stopping the running instance (its encoder pair is already spent)"
 	sshg "killall ml-air-video; sleep 2"
 fi

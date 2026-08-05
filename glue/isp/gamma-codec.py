@@ -33,13 +33,14 @@ Usage:
 
 import struct
 import sys
+from collections.abc import Sequence
 
 PAGE = 0x800
 RECORDS = 128
 SAMPLES = 512
 
 
-def decode_page(data, base):
+def decode_page(data: bytes, base: int) -> list[int]:
     out = []
     for i in range(RECORDS):
         w0, w1, w2, _w3 = struct.unpack_from("<4I", data, base + i * 16)
@@ -47,10 +48,11 @@ def decode_page(data, base):
         out.append((w0 >> 12) & 0xFFF)
         out.append((w1 >> 16) & 0xFFF)
         out.append((w2 >> 8) & 0xFFF)
+
     return out
 
 
-def encode_page(samples, tail=0):
+def encode_page(samples: Sequence[int], tail: int = 0) -> bytes:
     """Pack 512 samples. `tail` is the last record's forward field, the sample AFTER the page.
 
     That field is not cosmetic: the hardware interpolates the curve's top segment towards it,
@@ -70,17 +72,19 @@ def encode_page(samples, tail=0):
         w1 = ((s1 >> 8) & 0xF) | (s2 << 4) | (s2 << 16) | ((s3 & 0xF) << 28)
         w2 = (s3 >> 4) | (s3 << 8) | (nxt << 20)
         struct.pack_into("<4I", buf, i * 16, w0 & 0xFFFFFFFF, w1 & 0xFFFFFFFF, w2 & 0xFFFFFFFF, 0)
+
     return bytes(buf)
 
 
-def curves(data):
+def curves(data: bytes) -> tuple[list[int], list[int]]:
     return decode_page(data, 0x000), decode_page(data, 0x800)
 
 
-def main():
+def main() -> int:
     if len(sys.argv) < 3:
         print(__doc__)
         return 1
+
     cmd, src = sys.argv[1], sys.argv[2]
     with open(src, "rb") as handle:
         data = handle.read()
@@ -91,6 +95,7 @@ def main():
             print(f"page {n}: {len(c)} samples, max {max(c)}, monotonic {mono}")
             print("  first 12:", c[:12])
             print("  every 64:", c[::64])
+
         return 0
 
     if cmd == "verify":
@@ -108,6 +113,7 @@ def main():
                 bad = sum(1 for a, b in zip(re_enc, data[base:base + PAGE], strict=True) if a != b)
                 print(f"page {n}: round-trip differs in {bad} bytes")
                 ok = False
+
         return 0 if ok else 1
 
     if cmd == "fromblob":
@@ -139,6 +145,7 @@ def main():
         if gain != 1.0:
             top = max(samples) or 4095
             samples = [min(0xFFF, int(round(top * (v / top) ** gain))) for v in samples]
+
         for i in range(1, len(samples)):
             if samples[i] < samples[i - 1]:
                 samples[i] = samples[i - 1]
@@ -148,17 +155,21 @@ def main():
         if base_path:
             with open(base_path, "rb") as handle:
                 out = bytearray(handle.read())
+
             if len(out) != 0x4000:
                 print("base table must be 0x4000 bytes")
                 return 1
         else:
             print("warning: no base table given, page 1 and 0x1000..0x3fff will be zero")
             out = bytearray(0x4000)
+
         out[0:PAGE] = encode_page(samples, max(tail, samples[-1]))
         with open(dst, "wb") as handle:
             handle.write(bytes(out))
+
         print(f"wrote {dst} from blob curve {index} (offset 0x{off:06x}), gain {gain:.2f}")
         print("  first 8 samples:", samples[:8])
+
         return 0
 
     if cmd == "build":
@@ -173,6 +184,7 @@ def main():
             for i in range(1, len(lifted)):
                 if lifted[i] < lifted[i - 1]:
                     lifted[i] = lifted[i - 1]
+
             enc = bytearray(encode_page(lifted))
             # The final record's mirror field points past the page, so it cannot be derived
             # from the samples. Carry the original through rather than writing zero.
@@ -181,8 +193,10 @@ def main():
             old = struct.unpack_from("<I", data, n * PAGE + o)[0]
             struct.pack_into("<I", enc, o, (new & 0x000FFFFF) | (old & 0xFFF00000))
             out[n * PAGE:(n + 1) * PAGE] = bytes(enc)
+
         with open(dst, "wb") as handle:
             handle.write(bytes(out))
+
         print(f"wrote {dst}, gain {gain:.2f}, {len(out)} bytes (0x1000..0x3fff copied through)")
         return 0
 

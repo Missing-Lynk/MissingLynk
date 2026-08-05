@@ -79,8 +79,7 @@ au_require_cvisp 3
 # every frame is horizontal-streak garbage that still encodes and decodes perfectly, so nothing
 # downstream reports a fault and the run looks like a codec bug. Measured that way once already.
 FWPATH=$(sshg 'cat /sys/module/firmware_class/parameters/path 2>/dev/null' </dev/null | tr -d '\r\n')
-if ! sshg "[ -f ${FWPATH:-/lib/firmware}/artosyn/nt99235-tuning-preview-fpv.bin ]" </dev/null
-then
+if ! sshg "[ -f ${FWPATH:-/lib/firmware}/artosyn/nt99235-tuning-preview-fpv.bin ]" </dev/null; then
 	echo >&2
 	echo "the ISP tuning blob is not where the driver looks for it" >&2
 	echo "  firmware_class.path is '${FWPATH:-unset}' and artosyn/nt99235-tuning-preview-fpv.bin" >&2
@@ -96,8 +95,7 @@ au_refuse_air_video_running
 
 NODE="${NODE:-$(au_find_cvisp_node)}"
 
-if [ -z "$NODE" ]
-then
+if [ -z "$NODE" ]; then
 	echo "could not find the ar-cvisp video node; set NODE=/dev/videoN" >&2
 	exit 1
 fi
@@ -124,28 +122,24 @@ ENV_ARGS="$ENV_ARGS ${EXTRA_ENV:-}"
 ENV_ARGS="$ENV_ARGS ML_AIR_BITRATE=$BITRATE ML_AIR_GOP=$GOP ML_AIR_MINQP=$MINQP"
 ENV_ARGS="$ENV_ARGS ML_AIR_MAXQP=$MAXQP ML_AIR_IQP=$IQP ML_AIR_MBRC=$MBRC"
 
-if [ -n "${ONLY:-}" ]
-then
+if [ -n "${ONLY:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_ONLY=$ONLY"
 fi
 
 # COPY=0|1 feeds that tile by copying out of the capture buffer instead of sharing it, so the two
 # encoder instances stop reading overlapping ranges of one allocation. The isolation test for the
 # second-instance watchdog, and the fallback if the firmware cannot take aliased source windows.
-if [ -n "${COPY:-}" ]
-then
+if [ -n "${COPY:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_COPY=$COPY"
 fi
 au_enc_controls_env
 
 DUMPDIR="${DUMPDIR:-/dev/shm}"
-if [ -n "${DUMP:-}" ]
-then
+if [ -n "${DUMP:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_DUMP=$DUMPDIR/cam"
 fi
 
-if [ -z "${TX:-}" ]
-then
+if [ -z "${TX:-}" ]; then
 	ENV_ARGS="$ENV_ARGS ML_AIR_NOTX=1"
 else
 	echo
@@ -193,8 +187,7 @@ sshg "tail -20 /tmp/cam-tx.log" </dev/null
 
 au_encoder_health
 
-if [ -n "${DUMP:-}" ]
-then
+if [ -n "${DUMP:-}" ]; then
 	echo
 	echo "=== dumps ==="
 	mkdir -p "$REPO/out/au-cam-tx"
@@ -205,23 +198,20 @@ then
 	pulled=1
 	for f in 0 1
 	do
-		if ! device_pull "$DUMPDIR/cam_tile$f.h265" "$REPO/out/au-cam-tx/cam_tile$f.h265"
-		then
+		if ! device_pull "$DUMPDIR/cam_tile$f.h265" "$REPO/out/au-cam-tx/cam_tile$f.h265"; then
 			echo "  tile $f did not come back; leaving $DUMPDIR/cam_tile$f.h265 on the device" >&2
 			pulled=0
 		fi
 	done
 
-	if [ "$pulled" = 1 ]
-	then
+	if [ "$pulled" = 1 ]; then
 		sshg "rm -f $DUMPDIR/cam_tile*.h265" </dev/null
 	fi
 
 	ls -la "$REPO/out/au-cam-tx/"
 fi
 
-if [ -z "${TX:-}" ]
-then
+if [ -z "${TX:-}" ]; then
 	sshg "killall ml-air-video 2>/dev/null; sleep 1; echo stopped" </dev/null
 else
 	echo

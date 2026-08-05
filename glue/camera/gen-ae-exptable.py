@@ -50,7 +50,7 @@ def emit(tbl: list[tuple[int, int]]) -> str:
     rows = []
     for i in range(0, COUNT, 4):
         cells = ", ".join(f"{{{v}, {lc}}}" for v, lc in tbl[i : i + 4])
-        rows.append(f"\t{cells},")
+        rows.append(f"    {cells},")
     body = "\n".join(rows)
     return f"""\
 /*
@@ -70,8 +70,8 @@ def emit(tbl: list[tuple[int, int]]) -> str:
 #define ML3A_EXP_TABLE_LEN {COUNT}
 
 struct ml3a_exp_entry {{
-	uint32_t gain_q8;
-	uint32_t line_count;
+    uint32_t gain_q8;
+    uint32_t line_count;
 }};
 
 static const struct ml3a_exp_entry ml3a_exp_table[ML3A_EXP_TABLE_LEN] = {{

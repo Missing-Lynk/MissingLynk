@@ -41,9 +41,11 @@ int main(int argc, char **argv)
     if ((e = getenv("MMIO_BASE")) != NULL) {
         base = strtoull(e, NULL, 0);
     }
+
     if ((e = getenv("MMIO_SPAN")) != NULL) {
         span = (size_t)strtoull(e, NULL, 0);
     }
+
     /* Page align the base down and round the span up. */
     uint64_t page_base = base & ~((uint64_t)PAGE_SIZE - 1);
     span = (span + (base - page_base) + PAGE_SIZE - 1) & ~((size_t)PAGE_SIZE - 1);
@@ -83,6 +85,7 @@ int main(int argc, char **argv)
         while (*p == ' ' || *p == '\t') {
             p++;
         }
+
         if (*p == '\0' || *p == '\n' || *p == '#') {
             continue;
         }
@@ -92,6 +95,7 @@ int main(int argc, char **argv)
         if (end == p) {
             continue;
         }
+
         val = (uint32_t)strtoul(end, &end, 0);
 
         if (addr < page_base || addr + 4 > page_base + span) {
@@ -110,5 +114,6 @@ int main(int argc, char **argv)
     printf("ml-mmioreplay: applied %lu writes, skipped %lu (out of window 0x%" PRIx64
            "+0x%zx)\n",
            applied, skipped, page_base, span);
+
     return 0;
 }
