@@ -38,11 +38,18 @@ DTB1_GEOMETRY="$(mtdparts_partition dtb1 || true)"
 read -r KERNEL1_OFFSET KERNEL1_SIZE <<<"$KERNEL1_GEOMETRY"
 read -r DTB1_OFFSET DTB1_SIZE <<<"$DTB1_GEOMETRY"
 
-# This script boots whatever is FLASHED in kernel1/dtb1, which may predate the
-# truthful-256-MiB memory node in the DTS. Append mem=148m to the default args:
-# harmless with a new DTB (identical truncation), and it stops a stale 1 GiB-node
-# dtb1 from letting the kernel run into nonexistent RAM.
-BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT mem=148m}}"
+# No mem= here. An earlier version appended mem=148m to guard against a stale dtb1 whose
+# memory node claimed 1 GiB, on the reasoning that it was a no-op against the truthful
+# 256-MiB node. It is not a no-op: the camera carveouts sit at 0x28000000..0x2d000000, so
+# a 148 MiB view (ending 0x29400000) puts isp-cma and vif-cma outside RAM entirely and cuts
+# cvisp-cma in half, while mmz (48 MiB), the surviving cvisp-cma (26 MiB) and CONFIG_CMA's
+# 56 MiB still come off the top. That leaves "Memory: 5656K/151552K available" and the
+# kernel OOM-kills itself in chr_dev_init before reaching userspace; U-Boot then falls back
+# to slot A. Measured on the console 2026-08-05.
+#
+# The stale-dtb1 hazard it guarded against is covered by flash-kernel-b.sh, which writes
+# dtb1 alongside kernel1 and verifies both by readback. Pass BOOTARGS explicitly to override.
+BOOTARGS="${1:-${BOOTARGS:-$ML_BOOTARGS_DEFAULT}}"
 
 [ -x "$ML_UBOOT_PY" ] || { echo "[!] missing $ML_UBOOT_PY"; exit 1; }
 

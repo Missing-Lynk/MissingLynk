@@ -20,6 +20,9 @@
 #                   fetch, and the full chagall.bin is also staged at
 #                   lib/firmware/cnm/wave521c_k3_codec_fw.bin - the exact path/name the
 #                   open wave5 V4L2 driver requests, ready to drop into the B rootfs.
+#   ISP tuning      /usr/usrdata/tunning/<sensor>_tuning_preview_fpv.bin - what ar-isp
+#                   turns into its gamma and DRC pages. Only on an air unit (a goggle
+#                   slot A has no camera), so these are optional here.
 #   Vendor MPI libs /usr/lib/libmpi_{sys,venc,vdec,vb,scaler}.so + libmpp_service.so -
 #                   what userspace/libre/tools/ml-codec-probe links (point AR_LIBDIR at
 #                   <dest>/usr/lib as an alternative to a full out/P1_GND extraction).
@@ -136,6 +139,15 @@ fetch required /usr/bin/chagall.bin.gz
 fetch optional /usr/bin/chagall_lowmem.bin.gz
 fetch optional /usr/bin/chagall.bin
 fetch optional /usr/bin/chagall_lowmem.bin
+
+# ISP tuning blobs. ar-isp request_firmware()s the NT99235 one and generates its gamma and DRC
+# pages from it; the air unit's rootfs build refuses to assemble an image without it. One fixed
+# 0xd6c58-byte struct per sensor, and the vendor spells the directory "tunning". Optional because
+# a goggle slot A carries no camera: fetch these from an air unit.
+echo "[*] ISP tuning blobs (/usr/usrdata/tunning)..."
+for sensor in nt99235 sc2210 sc231; do
+    fetch optional "/usr/usrdata/tunning/${sensor}_tuning_preview_fpv.bin"
+done
 
 echo "[*] vendor MPI libraries (/usr/lib, for ml-codec-probe)..."
 for lib in libmpi_sys.so libmpi_venc.so libmpi_vdec.so libmpi_vb.so libmpi_scaler.so libmpp_service.so; do
