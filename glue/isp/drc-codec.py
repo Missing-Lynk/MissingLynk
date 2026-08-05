@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Decode and encode the recovered dynamic portion of an Artosyn DRC DMA page.
+"""
+Decode and encode the recovered dynamic portion of an Artosyn DRC DMA page.
 
 The vendor DRC packer at libmpp_service.so:0x1a4200 updates two 0x800-byte
 banks at DMA offsets 0x000 and 0x800.  Each bank has 128 16-byte records.
@@ -135,6 +136,7 @@ def profile_banks(blob: bytes, profile_index: int) -> tuple[list[int], list[int]
 
     first = struct.unpack_from(f"<{SOURCE_SAMPLES_PER_BANK}I", blob, base)
     second = struct.unpack_from(f"<{SOURCE_SAMPLES_PER_BANK}I", blob, base + 0x404)
+
     return list(first), list(second)
 
 
@@ -146,6 +148,7 @@ def main() -> int:
     command, page_path = sys.argv[1:3]
     with open(page_path, "rb") as handle:
         page = handle.read()
+
     try:
         if command in ("dump", "verify"):
             regenerated = page

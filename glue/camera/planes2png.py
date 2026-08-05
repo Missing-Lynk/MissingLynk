@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Turn CVISP plane dumps into viewable PNGs.
+"""
+Turn CVISP plane dumps into viewable PNGs.
 
 ml-isploop --dump writes one file per plane: .0 is luma at stride 2048 for a 1920 wide frame,
 .1 and .2 are the chroma planes at stride 1024 for 960 wide, half height. Only the active part
@@ -33,14 +34,17 @@ def write_png(path, width, height, rows, colour):
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2 if colour else 0, 0, 0, 0)
     png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
     with open(path, "wb") as f:
         f.write(png)
+
     return len(png)
 
 
 def crop(data, stride, width, height):
     if len(data) < stride * height:
         return None
+
     return [data[r * stride : r * stride + width] for r in range(height)]
 
 
@@ -55,6 +59,7 @@ def main():
 
     with open(ypath, "rb") as handle:
         y = crop(handle.read(), Y_STRIDE, Y_WIDTH, Y_HEIGHT)
+
     if y is None:
         sys.exit(f"{ypath}: too short for {Y_WIDTH}x{Y_HEIGHT} at stride {Y_STRIDE}")
 
@@ -83,8 +88,10 @@ def main():
 
     with open(upath, "rb") as handle:
         u = crop(handle.read(), C_STRIDE, C_WIDTH, C_HEIGHT)
+
     with open(vpath, "rb") as handle:
         v = crop(handle.read(), C_STRIDE, C_WIDTH, C_HEIGHT)
+
     if u is None or v is None:
         print("  (chroma planes too short, greyscale only)")
         return
@@ -101,6 +108,7 @@ def main():
             out[c * 3] = 0 if rr < 0 else (255 if rr > 255 else rr)
             out[c * 3 + 1] = 0 if gg < 0 else (255 if gg > 255 else gg)
             out[c * 3 + 2] = 0 if bb < 0 else (255 if bb > 255 else bb)
+
         rows.append(out)
 
     n = write_png(dst + "-colour.png", Y_WIDTH, Y_HEIGHT, rows, colour=True)

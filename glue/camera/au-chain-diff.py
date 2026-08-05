@@ -28,6 +28,7 @@ def load(path):
     out, gates, section = {}, {}, None
     with open(path) as handle:
         lines = handle.read().splitlines()
+
     for line in lines:
         line = line.rstrip()
         m = re.match(r'GATE-(BEFORE|AFTER) (\S*)', line)
@@ -71,15 +72,18 @@ def load(path):
 def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
+
     a, ga = load(sys.argv[1])
     b, gb = load(sys.argv[2])
 
     print(f"slot A gate: {ga.get('BEFORE')} .. {ga.get('AFTER')}")
     print(f"slot B gate: {gb.get('BEFORE')} .. {gb.get('AFTER')}")
+
     for name, g in (("A", ga), ("B", gb)):
         if g.get('BEFORE') != '0784043c':
             print(f"\n*** slot {name} was not receiving video. This diff is not "
                   f"interpretable. ***")
+
     print()
 
     for sec in a:

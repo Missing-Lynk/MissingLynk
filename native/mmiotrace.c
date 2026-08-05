@@ -83,6 +83,7 @@ static void *(*real_mmap)(void *, size_t, int, int, int, off_t);
 static int (*real_open)(const char *, int, ...);
 static int (*real_openat)(int, const char *, int, ...);
 static int (*real_ioctl)(int, unsigned long, ...);
+static int (*real_munmap)(void *, size_t);
 static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *);
 static void (*(*real_signal)(int, void (*)(int)))(int);
 
@@ -181,6 +182,8 @@ static void resolve(void)
         real_openat = dlsym(RTLD_NEXT, "openat");
     if (!real_ioctl)
         real_ioctl = dlsym(RTLD_NEXT, "ioctl");
+    if (!real_munmap)
+        real_munmap = dlsym(RTLD_NEXT, "munmap");
     if (!real_sigaction)
         real_sigaction = dlsym(RTLD_NEXT, "sigaction");
     if (!real_signal)
@@ -221,12 +224,16 @@ static void decode_store(uint32_t insn, ucontext_t *uc, uintptr_t fault,
     volatile uint8_t *dst = m->rw + off;
 
     /* STP (store pair): opc[31:30]=00/10, bits[29:23]=1010xx0, L bit22=0. */
-    if ((insn & 0x7fc00000u) == 0x29000000u ||  /* STP signed offset */
-        (insn & 0x7fc00000u) == 0x29800000u ||  /* STP pre-index    */
-        (insn & 0x7fc00000u) == 0x28800000u) {  /* STP post-index   */
+    unsigned stp = insn & 0x7fc00000u;
+
+    if (stp == 0x29000000u ||  /* STP signed offset */
+        stp == 0x29800000u ||  /* STP pre-index    */
+        stp == 0x28800000u) {  /* STP post-index   */
         unsigned opc = insn >> 30;
         int w = opc ? 8 : 4;
         unsigned rt2 = (insn >> 10) & 0x1f;
+        unsigned rn = (insn >> 5) & 0x1f;
+        int imm7 = (int)((insn >> 15) & 0x7f);
         uint64_t v1 = (rt == 31) ? 0 : uc->uc_mcontext.regs[rt];
         uint64_t v2 = (rt2 == 31) ? 0 : uc->uc_mcontext.regs[rt2];
         volatile uint8_t *d = m->rw + off;
@@ -241,6 +248,24 @@ static void decode_store(uint32_t insn, ucontext_t *uc, uintptr_t fault,
             *(volatile uint32_t *)(d + 4) = (uint32_t)v2;
         }
         uc->uc_mcontext.pc += 4;
+
+        /* The pre- and post-index forms write the new address back to the base
+         * register; the signed-offset form does not. The store itself is right
+         * either way, because off comes from the faulting address, but skipping
+         * the writeback leaves the app's base stale and every later access
+         * through it lands somewhere else. imm7 is signed and scaled by the
+         * access width. Rn 31 is SP here, not the zero register.
+         */
+        if (stp != 0x29000000u) {
+            if (imm7 & 0x40)
+                imm7 -= 0x80;
+
+            if (rn == 31)
+                uc->uc_mcontext.sp += (int64_t)imm7 * w;
+            else
+                uc->uc_mcontext.regs[rn] += (int64_t)imm7 * w;
+        }
+
         return;
     }
 
@@ -676,6 +701,44 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
         }
     }
     return ret;
+}
+
+/**
+ * Drop the alias and the table slot when the app unmaps a traced range.
+ *
+ * Without this the table only ever grows: the app's mapping goes away, its slot
+ * keeps a stale ro_base that find_map can match against a later unrelated
+ * mapping at the same address, and once g_map_count reaches MAX_MAPS the mmap
+ * wrapper stops tracing new mappings with no diagnostic. The alias VMA also
+ * stays behind in a process we do not own.
+ *
+ * Only a whole-mapping unmap releases the slot. A partial unmap would leave the
+ * alias describing a range the app no longer has, and splitting the entry is not
+ * worth it for a case the vendor stack has never been seen to do; the entry is
+ * kept and a note goes in the trace so it is visible rather than silent.
+ */
+int munmap(void *addr, size_t len)
+{
+    int i;
+
+    resolve();
+
+    for (i = 0; i < g_map_count; i++) {
+        if ((uintptr_t)addr != g_maps[i].ro_base)
+            continue;
+
+        if (len < g_maps[i].len) {
+            log_note("partial munmap of a traced mapping, slot kept", (uint32_t)len);
+            break;
+        }
+
+        real_munmap((void *)g_maps[i].rw, g_maps[i].len);
+        g_maps[i] = g_maps[g_map_count - 1];
+        g_map_count--;
+        break;
+    }
+
+    return real_munmap(addr, len);
 }
 
 /* /dev/ar_sys register-write path used by the VIN HAL: ioctl 0xc018410f with a

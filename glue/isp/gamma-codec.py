@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Decode and encode the ISP gamma table's packed page format.
+"""
+Decode and encode the ISP gamma table's packed page format.
 
 Format recovered by Codex from the vendor packer at libmpp_service.so:0x1951a8 and confirmed
 here by an exact round-trip against the live hardware dump.
@@ -64,9 +65,11 @@ def encode_page(samples: Sequence[int], tail: int = 0) -> bytes:
     buf = bytearray(PAGE)
     for i in range(RECORDS):
         s0, s1, s2, s3 = (samples[4 * i + k] & 0xFFF for k in range(4))
+
         # The next record's first sample is mirrored into word2's top field.
         nxt = samples[4 * (i + 1)] & 0xFFF if i + 1 < RECORDS else tail & 0xFFF
         w0 = s0 | (s1 << 12) | ((s1 & 0xFF) << 24)
+
         # word1's top nibble is a fifth overlap field, sample[4i+3]'s low nibble. Codex's
         # decode did not need it; an encoder does, and it holds for all 128 records.
         w1 = ((s1 >> 8) & 0xF) | (s2 << 4) | (s2 << 16) | ((s3 & 0xF) << 28)

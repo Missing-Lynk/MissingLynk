@@ -94,8 +94,6 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
             -o "build/$name" || exit 1
     done &&
     gcc -O2 -Wall -fPIC -shared mmiotrace.c -o build/mmiotrace.so -ldl &&
-    gcc -O2 -Wall -static ml-isploop.c -o build/ml-isploop &&
-    gcc -O2 -Wall -static ml-lutfill.c -o build/ml-lutfill &&
     gcc -O2 -I. -Icommon mlmenu/draw.c mlmenu/config.c mlmenu/menu.c common/mlfile.c -o build/mlmenu -lm'
 
 # minidhcpd-musl: static musl build for the open slot-B rootfs (staged by rootfs/build.sh into
