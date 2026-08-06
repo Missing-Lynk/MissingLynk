@@ -3,8 +3,8 @@
 # /tmp/mmio-preload.sh and run there.
 #
 # Arms the vendor's own debug hook so the next boot runs ar_lowdelay under the tracer: renders
-# /usrdata/run_dbg.sh from the template the host pushed to /usrdata/run_dbg.sh.tmpl, then
-# verifies and flushes it.
+# /usrdata/run_dbg.sh from the template staged under /usrdata/missinglynk/mmiotrace, then verifies
+# and flushes it.
 #
 # This writes /usrdata on the STOCK slot, which is why every step is guarded. run.sh runs
 # run_dbg.sh only when /usrdata/buildtime matches /usr/usrdata/buildtime, and on a MISMATCH it
@@ -21,16 +21,26 @@
 #   CENSUS               log unrecognised ar_sys ioctl request numbers
 set -e
 
+ML_TRACE_DIR=/usrdata/missinglynk/mmiotrace
+ML_TEMPLATE=$ML_TRACE_DIR/run_dbg.sh.tmpl
+ML_PRELOAD=$ML_TRACE_DIR/mmiotrace.so
+
 # 1. buildtime byte-exact FIRST, then verify - guards the rm -rf /usrdata/* wipe path.
 cp /usr/usrdata/buildtime /usrdata/buildtime
 o=$(md5sum /usr/usrdata/buildtime | cut -d" " -f1)
 n=$(md5sum /usrdata/buildtime   | cut -d" " -f1)
 if [ "$o" != "$n" ]; then
 	echo "ABORT: buildtime mismatch ($o != $n) - NOT writing run_dbg.sh"
-	rm -f /usrdata/run_dbg.sh /usrdata/run_dbg.sh.tmpl
+	rm -f /usrdata/run_dbg.sh "$ML_TEMPLATE"
 	exit 1
 fi
 echo "buildtime match: $n"
+
+if [ ! -f "$ML_PRELOAD" ] || [ ! -f "$ML_TEMPLATE" ]; then
+	echo "ABORT: missing $ML_PRELOAD or $ML_TEMPLATE"
+	rm -f /usrdata/run_dbg.sh
+	exit 1
+fi
 
 # 2. resolve the REAL ar_lowdelay absolute path - abort if not found (a broken
 #    shim with an empty target would recurse). Then substitute placeholders.
@@ -43,7 +53,7 @@ fi
 
 if [ -z "$REAL" ] || [ ! -x "$REAL" ]; then
 	echo "ABORT: cannot locate real ar_lowdelay"
-	rm -f /usrdata/run_dbg.sh.tmpl
+	rm -f "$ML_TEMPLATE"
 	exit 1
 fi
 echo "real ar_lowdelay: $REAL"
@@ -53,8 +63,8 @@ sed -e "s#__REAL__#$REAL#g" -e "s#__LO__#$LO#g" -e "s#__HI__#$HI#g" \
 	-e "s#__NOMEM__#$NOMEM#g" \
 	-e "s#__SKIP_LO__#$SKIP_LO#g" -e "s#__SKIP_HI__#$SKIP_HI#g" \
 	-e "s#__CENSUS__#$CENSUS#g" \
-	/usrdata/run_dbg.sh.tmpl > /usrdata/run_dbg.sh
-rm -f /usrdata/run_dbg.sh.tmpl
+	"$ML_TEMPLATE" > /usrdata/run_dbg.sh
+rm -f "$ML_TEMPLATE"
 chmod +x /usrdata/run_dbg.sh
 
 # 3. sanity: no placeholders left, the shim env line is present, real path is executable.
@@ -65,7 +75,7 @@ if grep -q "__REAL__\|__LO__\|__HI__\|__READS__\|__TIME__\|__NOMEM__\|__SKIP_LO_
 fi
 
 echo "--- shim LD_PRELOAD line (want mmiotrace.so + real path + window) ---"
-grep -n "LD_PRELOAD=/usrdata/mmiotrace.so" /usrdata/run_dbg.sh
+grep -n "LD_PRELOAD=$ML_PRELOAD" /usrdata/run_dbg.sh
 echo "--- self-remove + verbatim run.sh source present? (want both) ---"
 grep -nE "rm -f /usrdata/run_dbg.sh|\. /usr/usrdata/run.sh" /usrdata/run_dbg.sh
 
@@ -83,4 +93,4 @@ if ! cmp -s /usr/usrdata/buildtime /usrdata/buildtime; then
 fi
 
 echo "synced; buildtime persisted and still matches"
-echo "--- staged ---"; ls -la /usrdata/run_dbg.sh /usrdata/buildtime /usrdata/mmiotrace.so
+echo "--- staged ---"; ls -la /usrdata/run_dbg.sh /usrdata/buildtime "$ML_PRELOAD"

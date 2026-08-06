@@ -9,8 +9,9 @@
 # every store.
 #
 # REQUIRES: air unit booted to STOCK slot A (root@192.168.3.100 / artosyn) with
-# the GOGGLE ON so the vendor actually streams the camera. This does NOT touch
-# slot B and writes nothing to flash.
+# the GOGGLE ON so the vendor actually streams the camera. The live trace modes
+# do NOT touch slot B or flash; install-preload arms the vendor's one-shot debug
+# hook and stores its payload under /usrdata/missinglynk/mmiotrace.
 #
 # Usage (run the phases in order):
 #   au-slotA-mmiotrace.sh push          # stage mmiotrace.so + ml-regdump on the unit
@@ -121,8 +122,8 @@ install-preload)
     TEMPLATE="$HERE/au-run-dbg.template.sh"
     [ -f "$TEMPLATE" ] || { echo "ABORT: missing $TEMPLATE"; exit 1; }
     echo "=== installing thin debug hook /usrdata/run_dbg.sh (writable ubifs) ==="
-    device_push_as "$REPO/native/build/mmiotrace.so" /usrdata/mmiotrace.so || exit 1
-    device_push_as "$TEMPLATE" /usrdata/run_dbg.sh.tmpl || exit 1
+    device_push_as "$REPO/native/build/mmiotrace.so" /usrdata/missinglynk/mmiotrace/mmiotrace.so || exit 1
+    device_push_as "$TEMPLATE" /usrdata/missinglynk/mmiotrace/run_dbg.sh.tmpl || exit 1
     device_push_as "$HERE/mmio-preload-remote.sh" /tmp/mmio-preload.sh || exit 1
     sshg "$MMIO_ENV /tmp/mmio-preload.sh"
     echo
@@ -135,11 +136,11 @@ install-preload)
     ;;
 
 verify)
-    # Forensic check after a hooked boot: /usrdata/hook.log records each stage the
-    # wrapper reached (shim install, ar_lowdelay hooked, run.sh sourced), and usb0
-    # state confirms the gadget bound. Works over UART if USB is down.
-    echo "=== boot-hook markers (/usrdata/hook.log) ==="
-    sshg 'cat /usrdata/hook.log 2>/dev/null || echo "(no hook.log - hook did not run, or already cleaned)"'
+    # Forensic check after a hooked boot: the project-owned hook log records each stage the wrapper
+    # reached (shim install, ar_lowdelay hooked, run.sh sourced), and usb0 state confirms the
+    # gadget bound. Works over UART if USB is down.
+    echo "=== boot-hook markers (/usrdata/missinglynk/mmiotrace/hook.log) ==="
+    sshg 'cat /usrdata/missinglynk/mmiotrace/hook.log 2>/dev/null || echo "(no hook.log - hook did not run, or already cleaned)"'
     echo "=== usb0 gadget state (want: usb0 present, UDC attached) ==="
     sshg 'ip -o link show usb0 2>/dev/null || echo "usb0 ABSENT"; echo "udc:"; cat /sys/class/udc/*/state 2>/dev/null || echo "(no udc)"'
     echo "=== ar_lowdelay running + hooked? ==="
@@ -152,7 +153,7 @@ verify)
 remove-preload)
     echo "=== removing the debug hook (restores normal boot) ==="
     sshg '
-    rm -rf /usrdata/run_dbg.sh /usrdata/run_dbg.sh.tmpl /usrdata/buildtime /usrdata/mmiotrace.so /usrdata/bin /usrdata/hook.log
+    rm -rf /usrdata/run_dbg.sh /usrdata/buildtime /usrdata/missinglynk/mmiotrace
     echo "run_dbg.sh present? (want: no such file)"; ls -la /usrdata/run_dbg.sh 2>&1 || true'
     ;;
 

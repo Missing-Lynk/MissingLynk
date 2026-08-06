@@ -13,12 +13,14 @@ DEV_FW_VERSION     = 1.0.44.rel
 DEV_BOARD_TYPE     = c401
 DEV_RF_ROLE        = air
 
-# Capabilities. camera=1 (NT99235 capture, greenfield); no display, no buzzer. The LED is a
-# single plain GPIO one (red bind indicator, global GPIO 0, mainline leds-gpio), NOT the goggle's
-# WS2812-over-SPI chain - so DEV_HAS_LED=1 here does not imply ml-ledd, which is WS2812-only and
-# reaches the goggle through its rootfs overlay init script rather than this flag. Input is a
-# single gpio-keys button (bind, code 0xf0 in the vendor DTB) - a different mechanism from the
-# goggle's adc-keys ladder, so DEV_HAS_KEYPAD=0, DEV_HAS_GPIO_KEYS=1 (the flags compose; a unit
+# Capabilities. camera=1 (NT99235 capture, greenfield); no display, no buzzer. The LEDs are two
+# plain GPIO ones (red bind indicator on global GPIO 0, green power light on GPIO 1, both active
+# low on mainline leds-gpio), NOT the goggle's WS2812-over-SPI chain - so DEV_HAS_LED=1 here does
+# not imply ml-ledd, which is WS2812-only and reaches the goggle through its rootfs overlay init
+# script rather than this flag. Input is a
+# single gpio-keys button (bind, global GPIO 42 = vendor bank 1 pin 19, active low; code 0xf0 in
+# the vendor DTB, KEY_CONNECT on the open kernel) - a different mechanism from the goggle's
+# adc-keys ladder, so DEV_HAS_KEYPAD=0, DEV_HAS_GPIO_KEYS=1 (the flags compose; a unit
 # could have both). This variant has no microSD -> no DVR, no MTP (rootfs board.conf HAS_SD=0); an
 # SD-equipped variant flips DEV_HAS_SD/DEV_HAS_DVR + HAS_SD. FC link (MSP over /dev/ttyS1) is
 # air-only.
