@@ -87,7 +87,7 @@ BLC_GAIN="${BLC_GAIN:-187}"
 CVDEPTH="${CVDEPTH:-2}"
 # DE3D=1 allocates de3d's three working buffers instead of leaving it writing the vendor's
 # memory. Sizes are bounds derived from the vendor's own packing, not measured extents, and
-# the third has no bound above it at all; see ar-isp.c. Unlike the other levers this one can
+# the third has no bound above it at all; see ar-isp-tables.c. Unlike the other levers this one can
 # change the picture, because de3d starts from an empty history rather than an inherited one.
 DE3D="${DE3D:-1}"
 # Complete frames from the VIF frame-done interrupt instead of the polling work item. Off by
