@@ -1,6 +1,6 @@
 /**
  * @file ml-rf-persist.c
- * @brief Persist a newly-paired air-unit MAC into the AR8030 candidate list.
+ * @brief Persist a newly-paired peer MAC into the AR8030 config.
  *
  * ml-linkd runs the RF pair sequence and locks the peer into the chip at runtime (bb_ioctl
  * 0x02000004). That lock does not survive a power cycle: the chip re-reads its config from the
@@ -27,7 +27,12 @@
  * plans/rf-binding.md "Future: more than 5 remembered bindings". (This is a remembered-bindings cap,
  * not a simultaneous-link cap: the goggle connects to one air unit at a time regardless.)
  *
- * Usage: ml-rf-persist <mac>   where <mac> is 8 lowercase hex digits (e.g. e515815c).
+ * The air unit is the mirror case, selected with --air: a DEV holds exactly one AP, so its binding
+ * is the scalar `baseband.basic.dev.ap_mac` rather than a candidate list, its config has no band
+ * variants, and it is re-emitted minified because the chip stages it verbatim at insmod and an
+ * oversized config stalls the boot with no error.
+ *
+ * Usage: ml-rf-persist [--air] <mac>   where <mac> is 8 lowercase hex digits (e.g. e515815c).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +57,47 @@ static const char *const CFG_FILES[] = {
     "bb_config_gnd.json.usr_cfg.json",
     "bb_config_gnd.json.normal_cfg.json",
 };
+
+/* The air unit has one config and no band variants. Its binding is the DEV-role peer scalar
+ * `baseband.basic.dev.ap_mac`, not the AP candidate array: a DEV holds exactly one AP, so there is
+ * nothing to remember a list of and no FIFO eviction to reproduce. */
+static const char *const CFG_FILES_AIR[] = {
+    "bb_config_air.json",
+};
+
+/* The chip's config staging area is troot_len bytes and an overflow stalls the boot with no error,
+ * so the air config is re-emitted minified. The measured pretty form is ~12.7 kB against this. */
+#define AIR_CFG_MAX 16384
+
+/**
+ * @brief Set the DEV-role peer scalar `baseband.basic.dev.ap_mac` to @p mac.
+ * @return 1 if the value changed, 0 if it already held @p mac, -1 if the path is absent.
+ *
+ * The wire order of the four MAC bytes is the order of the hex digits here: ml-linkd formats the
+ * MAC exactly as it read it from the GET_PAIR reply, and the chip receives it back the same way.
+ */
+static int air_apply(cJSON *root, const char *mac)
+{
+    cJSON *node = root;
+    static const char *const path[] = { "baseband", "basic", "dev", "ap_mac" };
+
+    for (unsigned i = 0; i < sizeof path / sizeof path[0]; i++) {
+        node = cJSON_GetObjectItemCaseSensitive(node, path[i]);
+        if (node == NULL) {
+            return -1;
+        }
+    }
+
+    if (!cJSON_IsString(node) || node->valuestring == NULL) {
+        return -1;
+    }
+
+    if (strcmp(node->valuestring, mac) == 0) {
+        return 0;
+    }
+
+    return cJSON_SetValuestring(node, mac) != NULL ? 1 : -1;
+}
 
 /**
  * @brief Locate the candidate.slot array in a parsed config tree.
@@ -139,12 +185,13 @@ static int slot_apply(cJSON *slot, const char *mac)
  * time. Nothing is written when the mac is already present and no /usrdata copy exists yet (the
  * baked config already holds it), so re-binding a factory-bound unit touches no files.
  */
-static int persist_one(const char *cfg, const char *mac)
+static int persist_one(const char *cfg, const char *mac, int air)
 {
     char dst[512], baked[512], backup[512];
     char *text;
     int from_baked;
-    cJSON *root, *slot;
+    int changed;
+    cJSON *root;
 
     if ((size_t)snprintf(dst, sizeof dst, "%s/%s", USR_DIR, cfg) >= sizeof dst
         || (size_t)snprintf(baked, sizeof baked, "%s/%s", FW_DIR, cfg) >= sizeof baked) {
@@ -170,16 +217,28 @@ static int persist_one(const char *cfg, const char *mac)
         return -1;
     }
 
-    slot = find_slot_array(root);
-    if (slot == NULL) {
-        fprintf(stderr, PROG ": %s: no baseband.basic.ap.candidate.slot array, skipping\n", cfg);
-        cJSON_Delete(root);
-        return -1;
+    if (air) {
+        changed = air_apply(root, mac);
+        if (changed < 0) {
+            fprintf(stderr, PROG ": %s: no baseband.basic.dev.ap_mac string, skipping\n", cfg);
+            cJSON_Delete(root);
+            return -1;
+        }
+    } else {
+        cJSON *slot = find_slot_array(root);
+
+        if (slot == NULL) {
+            fprintf(stderr, PROG ": %s: no baseband.basic.ap.candidate.slot array, skipping\n", cfg);
+            cJSON_Delete(root);
+            return -1;
+        }
+
+        changed = slot_apply(slot, mac);
     }
 
     /* No change and no /usrdata copy yet means the baked config already holds the mac: leave the
      * fallback in place and write nothing. */
-    if (slot_apply(slot, mac) == 0 && from_baked) {
+    if (changed == 0 && from_baked) {
         cJSON_Delete(root);
         printf(PROG ": %s: %s already bound, no change\n", cfg, mac);
         return 0;
@@ -196,9 +255,18 @@ static int persist_one(const char *cfg, const char *mac)
         }
     }
 
-    char *out = cJSON_Print(root);
+    /* The air config is re-emitted minified and size-checked: it is handed to the chip verbatim at
+     * insmod, and a config past the staging ceiling stalls the boot silently. */
+    char *out = air ? cJSON_PrintUnformatted(root) : cJSON_Print(root);
     cJSON_Delete(root);
     if (out == NULL) {
+        return -1;
+    }
+
+    if (air && strlen(out) >= AIR_CFG_MAX) {
+        fprintf(stderr, PROG ": %s: %zu bytes exceeds the %d-byte chip staging area, not written\n",
+                cfg, strlen(out), AIR_CFG_MAX);
+        free(out);
         return -1;
     }
 
@@ -238,8 +306,16 @@ int main(int argc, char **argv)
 
     ml_prog = PROG;
 
-    if (argc != 2 || !mac_valid(argv[1])) {
-        fprintf(stderr, "usage: " PROG " <mac>   (8 lowercase hex digits, e.g. e515815c)\n");
+    int air = (argc == 3 && strcmp(argv[1], "--air") == 0);
+    const char *mac = air ? argv[2] : (argc == 2 ? argv[1] : NULL);
+    const char *const *files = air ? CFG_FILES_AIR : CFG_FILES;
+    unsigned n = air ? sizeof CFG_FILES_AIR / sizeof CFG_FILES_AIR[0]
+                     : sizeof CFG_FILES / sizeof CFG_FILES[0];
+
+    if (mac == NULL || !mac_valid(mac)) {
+        fprintf(stderr, "usage: " PROG " [--air] <mac>   (8 lowercase hex digits, e.g. e515815c)\n"
+                        "  default: the goggle's AP candidate list\n"
+                        "  --air:   the air unit's DEV peer (baseband.basic.dev.ap_mac)\n");
         return 2;
     }
 
@@ -247,8 +323,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    for (unsigned i = 0; i < sizeof CFG_FILES / sizeof CFG_FILES[0]; i++) {
-        if (persist_one(CFG_FILES[i], argv[1]) != 0) {
+    for (unsigned i = 0; i < n; i++) {
+        if (persist_one(files[i], mac, air) != 0) {
             rc = 1;
         }
     }
