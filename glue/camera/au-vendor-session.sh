@@ -11,7 +11,8 @@
 #   1  live AE structures (process heap, maps, exposure table)     no scene requirement
 #   2  full register snapshot via au-snapshot-vendor.sh            no scene requirement
 #   3  dpc payload banks                                           no scene requirement
-#   4  ladder breath (i2c gain+exposure, rnr, blc, lnr, de3d)      run once per light level
+#   4  ladder breath (i2c gain+exposure, rnr, blc, lnr, de3d,      run once per light level
+#      cfa, cnf, acm, qgg, cm/cm2)
 #   5  LTM page and statistics buffers, same scene                 no scene requirement
 #   6  saturated point: breath plus heap dump                      needs the lens covered
 #   7  AE convergence trace                                        needs lens cover then uncover
@@ -40,7 +41,12 @@ BREATH='I=/tmp/ml-i2cprobe; R=/tmp/ml-regdump
 	echo "--- isp rnr 0x1808";         $R 0x08c01808 16
 	echo "--- cvisp blc 0x4200";       $R 0x08e04200 32
 	echo "--- isp lnr 0x3cc8";         $R 0x08c03cc8 88
-	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56'
+	echo "--- isp de3d 0x2e00";        $R 0x08c02e00 56
+	echo "--- isp cfa 0x0800";         $R 0x08c00800 54
+	echo "--- isp cnf 0x3c64";         $R 0x08c03c64 16
+	echo "--- isp acm 0x7600";         $R 0x08c07600 16
+	echo "--- isp qgg 0x7230";         $R 0x08c07230 16
+	echo "--- isp cm2 0x4800";         $R 0x08c04800 32'
 
 mkdir -p "$OUT"
 

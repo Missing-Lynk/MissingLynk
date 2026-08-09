@@ -227,13 +227,41 @@ check-python: lint test
 SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0
 SHELLCHECK ?=
 
+# Excluded from the sweep. missinglynk/templates/ per the note above; android/gradlew is upstream
+# Gradle's generated wrapper, not ours to style.
+SHELLCHECK_SKIP ?= ^missinglynk/templates/|^android/gradlew$$
+
+# --recurse-submodules because a plain `git ls-files` from the superproject reports kernel/,
+# rootfs/ and userspace/ as single gitlink entries, so everything shipped inside them - including
+# every script that runs on the device - was silently outside the gate. Extensionless scripts are
+# picked up by shebang for the same reason: the init scripts and /usr/local/bin helpers have no
+# .sh suffix, and they are the ones whose bugs reach hardware.
+#
+# init.d scripts are a second pass with two openrc idioms suppressed: SC2034 because openrc-run
+# consumes `description`/`command`/`pidfile` from the script's environment rather than the script
+# using them, and SC3043 because `local` is undefined in POSIX sh but supported by busybox ash,
+# which is what runs them on the device. Everything else stays enabled for them.
 check-shell:
-	@files=$$(git ls-files '*.sh' | grep -v '^missinglynk/templates/'); \
-	if [ -n "$(SHELLCHECK)" ]; then \
-	    $(SHELLCHECK) $$files; \
-	else \
-	    docker run --rm -v "$(CURDIR):/mnt" -w /mnt $(SHELLCHECK_IMAGE) $$files; \
-	fi
+	@run() { \
+	    if [ -n "$(SHELLCHECK)" ]; then \
+	        $(SHELLCHECK) "$$@"; \
+	    else \
+	        docker run --rm -v "$(CURDIR):/mnt" -w /mnt $(SHELLCHECK_IMAGE) "$$@"; \
+	    fi; \
+	}; \
+	all=$$(git ls-files --recurse-submodules | grep -vE '$(SHELLCHECK_SKIP)'); \
+	files=$$(printf '%s\n' "$$all" | while read -r f; do \
+	    case "$$f" in \
+	      */init.d/*) continue ;; \
+	      *.sh) echo "$$f" ;; \
+	      *) head -1 "$$f" 2>/dev/null | grep -qE '^#!.*\b(ba|da|a)?sh( |$$)' && echo "$$f" ;; \
+	    esac; \
+	done); \
+	initd=$$(printf '%s\n' "$$all" | grep -E '/init\.d/' || true); \
+	rc=0; \
+	run $$files || rc=1; \
+	if [ -n "$$initd" ]; then run -s sh -e SC2034,SC3043 $$initd || rc=1; fi; \
+	exit $$rc
 
 check: check-python check-shell
 
