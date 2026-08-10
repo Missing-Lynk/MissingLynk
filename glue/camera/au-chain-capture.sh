@@ -50,12 +50,18 @@ if [ "$SLOT" = b ]; then
 	device_push "$KD/ar-csi2.ko"
 	device_push "$KD/ar-vif.ko"
 	device_push "$KD/ar-isp.ko"
+	device_push "$KD/ar-cvisp.ko"
 	device_push "$REPO/native/build/ml-v4l2grab"
 	# One at a time and in dependency order: busybox rmmod aborts the whole command on the
 	# first name it cannot remove, and ar_isp is not loaded at boot. A failed rmmod leaves the
 	# modules probed, so the CGU prologue lands after probe and the front end comes up dead.
-	sshg "for m in ar_isp ar_vif ar_csi2 nt99235; do rmmod \$m 2>/dev/null || true; done"
-	sshg "lsmod | grep -qE '^(ar_vif|ar_csi2|nt99235) ' && { echo 'ABORT: capture modules still loaded'; exit 1; } || true"
+	#
+	# ar_cvisp must go first and must be in the check. It holds a reference on ar_isp, so with
+	# it loaded the rmmod of ar_isp fails, the check never looked at ar_isp, and the capture
+	# ran against the module already on the device while reporting success - the whole point
+	# of the run, replacing ar-isp.ko, silently did not happen.
+	sshg "for m in ar_cvisp ar_isp ar_vif ar_csi2 nt99235; do rmmod \$m 2>/dev/null || true; done"
+	sshg "lsmod | grep -qE '^(ar_cvisp|ar_isp|ar_vif|ar_csi2|nt99235) ' && { echo 'ABORT: capture modules still loaded'; exit 1; } || true"
 	sshg "true
 	    /tmp/ml-regdump -w 0x0a10400c 0x13001300 >/dev/null
 	    V=\$(/tmp/ml-regdump 0x0a104010 4 | awk '{print \$2}')
@@ -63,7 +69,8 @@ if [ "$SLOT" = b ]; then
 	    P=\$(/tmp/ml-regdump 0x0a104020 4 | awk '{print \$2}')
 	    /tmp/ml-regdump -w 0x0a104020 \$(printf '0x%08x' \$(( (0x\$P & 0xffff0000) | 0x1103 ))) >/dev/null
 	    insmod /tmp/nt99235.ko; insmod /tmp/ar-csi2.ko; insmod /tmp/ar-vif.ko; insmod /tmp/ar-isp.ko
-	    sleep 1; ls -l /dev/video2 >/dev/null"
+	    insmod /tmp/ar-cvisp.ko
+	    sleep 1"
 fi
 
 # The capture runs entirely on the device and writes a file there, so a dropped ssh session
@@ -74,10 +81,15 @@ OUT=/tmp/cap.txt
 : > \$OUT
 
 if [ '$SLOT' = b ]; then
-  /tmp/ml-v4l2grab -d /dev/video2 -o /tmp/f.raw -n 400 -t 120 >/tmp/g.out 2>&1 &
+  # The capture node number is not fixed: it depends on which drivers registered first, so
+  # a fresh module load can put wave5-enc where cvisp was. cvisp names its own node on probe.
+  VID=\$(dmesg | sed -n 's/.*cvisp.*capture on video\([0-9]*\).*/\1/p' | tail -1)
+  [ -n \"\$VID\" ] || { echo 'ABORT: no cvisp capture node announced in dmesg'; exit 1; }
+  /tmp/ml-v4l2grab -d /dev/video\$VID -o /tmp/f.raw -n 400 -t 120 >/tmp/g.out 2>&1 &
   echo \$! > /tmp/grab.pid
   sleep 3
-  kill -0 \$(cat /tmp/grab.pid) 2>/dev/null || { echo 'ABORT: grab died'; exit 1; }
+  kill -0 \$(cat /tmp/grab.pid) 2>/dev/null || {
+    echo 'ABORT: grab died'; head -3 /tmp/g.out; exit 1; }
   echo 1 > /sys/kernel/debug/ar-isp/configure
   sleep 1
 fi
