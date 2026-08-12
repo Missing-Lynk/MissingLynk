@@ -1,15 +1,15 @@
 # ml-flasher - host-side open-firmware flasher
 
-A native-window GUI (Go + Fyne) that flashes the MissingLynk open firmware onto a supported Artosyn device over its USB gadget network and SSH. It drives the on-device `mlflash` binary (`native/mlflash/`), which owns every byte-level decision; this tool orchestrates and never touches partitions, GPT, or UBI directly. It writes only the inactive slot, so the stock firmware in the other slot stays intact. Runs on Linux and Windows; ships as one self-contained binary (links only the ubiquitous `libGL`/`libX11` at runtime).
+A native-window GUI (Go + Fyne) that flashes a validated MissingLynk release image onto a supported Artosyn device over its USB gadget network and SSH. It drives the on-device `mlflash` binary (`native/mlflash/`), which owns every byte-level decision; this tool orchestrates and never touches partitions, GPT, or UBI directly. It writes only the inactive slot, so the firmware in the running slot stays intact. Runs on Linux and Windows; ships as one self-contained binary (links only the ubiquitous `libGL`/`libX11` at runtime).
 
 ## How it works
 
 1. Detects the connected device over the USB-ethernet gadget (device at `192.168.3.100`; host takes `192.168.3.222/24`, assigned by the tool since stock firmware serves no DHCP).
 2. Reads `sdk_version.json` and gates on the firmware whitelist (see Supported devices).
-3. Streams the embedded `mlflash` to `/tmp` and the chosen `.mlimg` to the device's SD card over the SSH channel. The image is staged on the SD card rather than the tmpfs `/tmp` because on a low-memory unit a ~45 MiB image held in RAM starves the system and the low-memory killer reaps the flasher mid-write. Flashing therefore requires an SD card and reports an error if none is inserted.
+3. Streams the embedded `mlflash` to `/tmp` and the chosen `.mlimg` to the device over the SSH channel. A mounted SD card is preferred for the image, because it keeps a large bundle out of RAM on the goggle; devices without an SD card path fall back to `/tmp` only when enough free tmpfs space is available.
 4. Runs `mlflash`: `--inspect` (verify hashes) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
 
-The Flash button offers two modes. "Flash and switch" runs the full sequence above. "Flash only" stops after `--flash`: the inactive slot is written but not activated, and the device stays on its current slot. Use it to write a slot without committing to it (for example to prove the new slot by RAM-boot first); activate it later with the Switch slot button.
+The GUI is the end-user path: it is intended for release `.mlimg` bundles that were already proven on matching hardware, so "Flash and switch" activates the newly written slot after readback verification. Users do not need a serial adapter or RAM-boot setup. "Flash only" stops after `--flash`: the inactive slot is written but not activated, and the device stays on its current slot. Use it for development images, lab verification, or any bundle whose bootability has not already been signed off; activate it later with the Switch slot button or the manual flash ladder.
 
 ## Switching slots without reflashing
 
