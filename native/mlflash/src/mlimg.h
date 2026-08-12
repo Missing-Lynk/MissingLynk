@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#define MLIMG_FORMAT_VERSION 1
 #define MAX_COMPONENTS 16
 
 /** @brief One flashable payload described by the manifest. */

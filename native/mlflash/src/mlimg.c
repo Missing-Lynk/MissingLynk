@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "mlimg.h"
 #include "cJSON.h"     /* native/vendor (shared), on the -I path */
@@ -14,6 +15,81 @@
 #define TAR_NAME_LEN      100         /* name field at offset 0 */
 #define TAR_SIZE_OFF      124
 #define TAR_SIZE_LEN      12          /* octal ASCII */
+
+struct component_spec {
+    const char *name;
+    const char *role;
+    const char *target;
+    const char *method;
+    const char *file;
+};
+
+static const struct component_spec COMPONENT_SPECS[] = {
+    { "uboot",  "vendor", "uboot",   "mtdtool-raw", "uboot.bin" },
+    { "env",    "vendor", "env",     "mtdtool-raw", "env.bin" },
+    { "kernel", "open",   "kernel",  "mtdtool-raw", "kernel.otra" },
+    { "dtb",    "open",   "dtb",     "mtdtool-raw", "dtb.dtb" },
+    { "rootfs", "open",   "userapp", "ubiformat",   "rootfs.ubi" },
+};
+
+static const struct component_spec *find_component_spec(const char *target)
+{
+    for (unsigned i = 0; i < sizeof COMPONENT_SPECS / sizeof COMPONENT_SPECS[0]; i++) {
+        if (strcmp(COMPONENT_SPECS[i].target, target) == 0) {
+            return &COMPONENT_SPECS[i];
+        }
+    }
+
+    return NULL;
+}
+
+static int is_sha256_hex(const char *s)
+{
+    for (int i = 0; i < 64; i++) {
+        if (!isxdigit((unsigned char)s[i])) {
+            return 0;
+        }
+    }
+
+    return s[64] == 0;
+}
+
+static int validate_component(const struct component *comp, unsigned *seen_targets)
+{
+    const struct component_spec *spec = find_component_spec(comp->target);
+    if (!spec) {
+        fprintf(stderr, "manifest: component %s targets unsupported partition '%s'\n",
+                comp->name, comp->target);
+        return -1;
+    }
+
+    unsigned bit = 1u << (unsigned)(spec - COMPONENT_SPECS);
+    if (*seen_targets & bit) {
+        fprintf(stderr, "manifest: duplicate target '%s'\n", comp->target);
+        return -1;
+    }
+    *seen_targets |= bit;
+
+    if (strcmp(comp->name, spec->name) || strcmp(comp->role, spec->role) ||
+        strcmp(comp->method, spec->method) || strcmp(comp->file, spec->file)) {
+        fprintf(stderr, "manifest: component for target '%s' has unexpected metadata\n",
+                comp->target);
+        return -1;
+    }
+
+    if (comp->bytes <= 0) {
+        fprintf(stderr, "manifest: component %s has invalid byte length %lld\n",
+                comp->name, comp->bytes);
+        return -1;
+    }
+
+    if (!is_sha256_hex(comp->sha256)) {
+        fprintf(stderr, "manifest: component %s has invalid sha256\n", comp->name);
+        return -1;
+    }
+
+    return 0;
+}
 
 int tar_find(const unsigned char *img, size_t img_len, const char *name,
              const unsigned char **out, size_t *out_len)
@@ -93,8 +169,22 @@ int manifest_parse(const unsigned char *data, size_t len, struct manifest *m)
     }
 
     m->format_version = (long long)format_version->valuedouble;
+    if (m->format_version != MLIMG_FORMAT_VERSION) {
+        fprintf(stderr, "manifest: unsupported format_version %lld (expected %d)\n",
+                m->format_version, MLIMG_FORMAT_VERSION);
+        cJSON_Delete(root);
+
+        return -1;
+    }
+
     json_copy_string(root, "target_device", m->target_device, sizeof m->target_device);
     json_copy_string(root, "version", m->version, sizeof m->version);
+    if (!m->target_device[0] || !m->version[0]) {
+        fprintf(stderr, "manifest: missing target_device or version\n");
+        cJSON_Delete(root);
+
+        return -1;
+    }
 
     const cJSON *components = cJSON_GetObjectItemCaseSensitive(root, "components");
     if (!cJSON_IsArray(components)) {
@@ -105,6 +195,7 @@ int manifest_parse(const unsigned char *data, size_t len, struct manifest *m)
     }
 
     const cJSON *item = NULL;
+    unsigned seen_targets = 0;
     cJSON_ArrayForEach(item, components) {
         if (m->ncomp >= MAX_COMPONENTS) {
             fprintf(stderr, "manifest: too many components\n");
@@ -133,6 +224,12 @@ int manifest_parse(const unsigned char *data, size_t len, struct manifest *m)
             return -1;
         }
 
+        if (validate_component(comp, &seen_targets) != 0) {
+            cJSON_Delete(root);
+
+            return -1;
+        }
+
         m->ncomp++;
     }
 
@@ -140,6 +237,12 @@ int manifest_parse(const unsigned char *data, size_t len, struct manifest *m)
 
     if (m->ncomp == 0) {
         fprintf(stderr, "manifest: no components\n");
+        return -1;
+    }
+
+    unsigned want_targets = (1u << (sizeof COMPONENT_SPECS / sizeof COMPONENT_SPECS[0])) - 1u;
+    if (seen_targets != want_targets) {
+        fprintf(stderr, "manifest: expected uboot, env, kernel, dtb and rootfs components\n");
         return -1;
     }
 
