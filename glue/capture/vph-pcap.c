@@ -53,16 +53,19 @@ int main(int argc, char **argv)
     const char *out = NULL;
     int seconds = 3;
     long max_bytes = 8 * 1024 * 1024;
+    int port = 0;
     int opt;
 
-    while ((opt = getopt(argc, argv, "i:s:b:w:")) != -1) {
+    while ((opt = getopt(argc, argv, "i:s:b:p:w:")) != -1) {
         switch (opt) {
         case 'i': iface = optarg; break;
         case 's': seconds = atoi(optarg); break;
         case 'b': max_bytes = atol(optarg); break;
+        case 'p': port = atoi(optarg); break;
         case 'w': out = optarg; break;
         default:
-            fprintf(stderr, "usage: %s [-i iface] [-s seconds] [-b bytes] -w out.pcap\n", argv[0]);
+            fprintf(stderr, "usage: %s [-i iface] [-s seconds] [-b bytes] [-p port]"
+                            " -w out.pcap\n", argv[0]);
             return 2;
         }
     }
@@ -123,6 +126,28 @@ int main(int argc, char **argv)
         ssize_t n = recv(fd, buf, sizeof buf, 0);
         if (n <= 0) {
             continue;
+        }
+
+        /* Port filter, so a control-plane capture is not drowned by the video stream: keep only
+         * unfragmented IPv4 UDP with a matching source or destination port. Fragmented datagrams
+         * are dropped outright - the control plane fits one packet, and video is what we are
+         * excluding. */
+        if (port != 0) {
+            if (n < 28 || (buf[0] >> 4) != 4 || buf[9] != 17) {
+                continue;
+            }
+
+            unsigned ihl = (unsigned)(buf[0] & 0x0f) * 4;
+            unsigned frag = (unsigned)((buf[6] << 8) | buf[7]);
+            if (ihl < 20 || (size_t)n < ihl + 8 || (frag & 0x3fff) != 0) {
+                continue;
+            }
+
+            unsigned sport = (unsigned)((buf[ihl] << 8) | buf[ihl + 1]);
+            unsigned dport = (unsigned)((buf[ihl + 2] << 8) | buf[ihl + 3]);
+            if (sport != (unsigned)port && dport != (unsigned)port) {
+                continue;
+            }
         }
 
         struct pcap_rec rec = { (uint32_t)now.tv_sec, (uint32_t)now.tv_usec,
