@@ -48,6 +48,9 @@ echo "isp_tables=$(dmesg | grep -m1 "isp: tables:" | sed "s/.*tables: //")"
 echo "enc_opens=$(dmesg | grep -c "enc instance open")"
 echo "vpu_faults=$(dmesg | grep -E "video-codec" | grep -ciE "watchdog|syserr|fail")"
 echo "sdio_addr=$(ip -o -4 addr show sdio0 2>/dev/null | awk "{print \$4}")"
+echo "rf_attempts=$(tail -n 1 /usrdata/missinglynk/rf-bringup.log 2>/dev/null | grep -o "attempts=[0-9]*" | cut -d= -f2)"
+echo "rf_retried_boots=$(grep -c "attempts=[2-9]" /usrdata/missinglynk/rf-bringup.log 2>/dev/null || echo 0)"
+echo "rf_ledger_boots=$(grep -c "result=" /usrdata/missinglynk/rf-bringup.log 2>/dev/null || echo 0)"
 echo "linkd_banners=$(grep -c "role=air" /var/log/ml-linkd.log 2>/dev/null || echo 0)"
 echo "linkd_procs=$(grep -lx ml-linkd /proc/[0-9]*/comm 2>/dev/null | wc -l)"
 echo "video_procs=$(grep -lx ml-air-video /proc/[0-9]*/comm 2>/dev/null | wc -l)"
@@ -183,6 +186,25 @@ then
     check PASS "sdio0 up" "$addr"
 else
     check FAIL "sdio0 up" "no address - RF bring-up did not complete"
+fi
+
+# The bring-up has failed at boot and then succeeded on an identical manual run, so a boot that
+# needed its retry is the signal worth counting: it looks healthy afterwards and leaves no other
+# trace. The ledger is per boot and persistent (/usrdata), unlike /var/log.
+attempts="$(field rf_attempts)"
+retried="$(field rf_retried_boots)"
+ledger="$(field rf_ledger_boots)"
+if [ -z "$ledger" ] || [ "${ledger:-0}" -eq 0 ]
+then
+    check INFO "RF bring-up ledger" "empty - predates this rootfs, or /usrdata is not mounted"
+elif [ "${attempts:-1}" -gt 1 ]
+then
+    check FAIL "RF bring-up first try" "THIS boot needed $attempts attempts ($retried of $ledger boots)"
+elif [ "${retried:-0}" -gt 0 ]
+then
+    check INFO "RF bring-up first try" "this boot ok; $retried of $ledger boots needed a retry"
+else
+    check PASS "RF bring-up first try" "$ledger boots, none retried"
 fi
 
 # Two ml-linkd on /dev/artosyn_sdio wedge the chip permanently, and a restart nobody asked for has
