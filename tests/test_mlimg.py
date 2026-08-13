@@ -6,6 +6,7 @@ goggle blobs present would silently ship goggle uboot/env in a P1_SKY bundle.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -14,7 +15,29 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "glue" / "flash"))
 
-from mlimg import resolve_blob  # noqa: E402
+from mlimg import FORMAT_VERSION, MLIMG_COMPONENTS, resolve_blob  # noqa: E402
+
+
+def test_python_bundle_layout_matches_native_flasher_allowlist() -> None:
+    source = (REPO / "native" / "mlflash" / "src" / "mlimg.c").read_text()
+    rows = re.findall(
+        r'\{\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\s*\}',
+        source,
+    )
+
+    assert rows == [
+        (component["name"], component["role"], component["target"], component["method"],
+         component["file"])
+        for component in MLIMG_COMPONENTS
+    ]
+
+
+def test_python_format_version_matches_native_flasher() -> None:
+    header = (REPO / "native" / "mlflash" / "src" / "mlimg.h").read_text()
+    match = re.search(r"^#define\s+MLIMG_FORMAT_VERSION\s+(\d+)$", header, re.MULTILINE)
+
+    assert match is not None
+    assert int(match.group(1)) == FORMAT_VERSION
 
 
 def test_resolve_blob_prefers_explicit_path(tmp_path: Path) -> None:

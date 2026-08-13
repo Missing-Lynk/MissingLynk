@@ -80,6 +80,19 @@ ROOTFS_FILE = "rootfs.ubi"
 UBOOT_FILE = "uboot.bin"
 ENV_FILE = "env.bin"
 
+MLIMG_COMPONENTS: tuple[dict[str, str], ...] = (
+    {"name": "uboot", "role": "vendor", "target": "uboot", "method": "mtdtool-raw",
+     "file": UBOOT_FILE},
+    {"name": "env", "role": "vendor", "target": "env", "method": "mtdtool-raw",
+     "file": ENV_FILE},
+    {"name": "kernel", "role": "open", "target": "kernel", "method": "mtdtool-raw",
+     "file": KERNEL_FILE},
+    {"name": "dtb", "role": "open", "target": "dtb", "method": "mtdtool-raw",
+     "file": DTB_FILE},
+    {"name": "rootfs", "role": "open", "target": "userapp", "method": "ubiformat",
+     "file": ROOTFS_FILE},
+)
+
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -221,17 +234,17 @@ def build(args: argparse.Namespace) -> int:
         "build_time": int(time.time()),
     }
 
+    payloads: dict[str, bytes] = {
+        UBOOT_FILE: uboot_bytes,
+        ENV_FILE: env_bytes,
+        KERNEL_FILE: kernel_bytes,
+        DTB_FILE: dtb_bytes,
+        ROOTFS_FILE: rootfs_bytes,
+    }
     components: list[Component] = [
-        {"name": "uboot", "role": "vendor", "target": "uboot", "method": "mtdtool-raw",
-         "file": UBOOT_FILE, "sha256": sha256_bytes(uboot_bytes), "bytes": len(uboot_bytes)},
-        {"name": "env", "role": "vendor", "target": "env", "method": "mtdtool-raw",
-         "file": ENV_FILE, "sha256": sha256_bytes(env_bytes), "bytes": len(env_bytes)},
-        {"name": "kernel", "role": "open", "target": "kernel", "method": "mtdtool-raw",
-         "file": KERNEL_FILE, "sha256": sha256_bytes(kernel_bytes), "bytes": len(kernel_bytes)},
-        {"name": "dtb", "role": "open", "target": "dtb", "method": "mtdtool-raw",
-         "file": DTB_FILE, "sha256": sha256_bytes(dtb_bytes), "bytes": len(dtb_bytes)},
-        {"name": "rootfs", "role": "open", "target": "userapp", "method": "ubiformat",
-         "file": ROOTFS_FILE, "sha256": sha256_bytes(rootfs_bytes), "bytes": len(rootfs_bytes)},
+        {**component, "sha256": sha256_bytes(payloads[component["file"]]),
+         "bytes": len(payloads[component["file"]])}
+        for component in MLIMG_COMPONENTS
     ]
 
     device = args.device
@@ -245,13 +258,6 @@ def build(args: argparse.Namespace) -> int:
     }
 
     out_path = args.output or os.path.join(REPO, f"mlimg-{device}-{version}.tar")
-    payloads: dict[str, bytes] = {
-        UBOOT_FILE: uboot_bytes,
-        ENV_FILE: env_bytes,
-        KERNEL_FILE: kernel_bytes,
-        DTB_FILE: dtb_bytes,
-        ROOTFS_FILE: rootfs_bytes,
-    }
     write_tar(out_path, manifest, payloads)
 
     total_bytes = sum(component["bytes"] for component in components)
