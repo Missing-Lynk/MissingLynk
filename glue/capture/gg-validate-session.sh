@@ -118,6 +118,7 @@ sshg "$PCAP -i sdio0 -p 10000 -s 30 -w /tmp/p2a.pcap 2>&1 | tail -1"
 pull_and_count /tmp/p2a.pcap p2a.pcap | tee "$OUT/p2a-counts.txt"
 
 note "restarting ml-linkd under its pidfile"
+# shellcheck disable=SC2016  # single-quoted on purpose: every $() here must run on the device
 sshg 'set -e
 CH=$(cat /usrdata/missinglynk/rf-channel 2>/dev/null)
 start-stop-daemon --stop --pidfile /run/ml-linkd.pid 2>/dev/null || true
@@ -150,6 +151,7 @@ say "phase 3: liveness gate with the video source stopped (item 7)"
 note "ml-linkd is not verbose, so read the gate from the wire and the pipeline, not the log"
 prompt "stop ONLY the video source on the air unit, leaving it powered and its telemetry flowing"
 note "watching for the video-stall watch (MEDIA_STALL_MS = 6 s) for 40 s"
+# shellcheck disable=SC2016  # single-quoted on purpose: every $() here must run on the device
 sshg 'for i in $(seq 8); do
     echo "t=$((i*5))s rx_bytes=$(cat /sys/class/net/sdio0/statistics/rx_bytes)"
     sleep 5
