@@ -167,3 +167,125 @@ def test_fetch_full_reads_every_page(fb_goggle: FakeGoggle) -> None:
 def test_fetch_rejects_a_page_outside_the_buffer(fb_goggle: FakeGoggle) -> None:
     with pytest.raises(ValueError, match="page must be"):
         framebuffer.fetch(fb_goggle, page=framebuffer.PAGE_COUNT, progress=False)
+
+
+# --- DRM plane path (open stack) ---
+
+PLANE_LIST = (
+    b"plane=33 crtc=35 kind=primary fb=58 format=YU12 width=4 height=2 size=12 "
+    b"pitch0=4 offset0=0 pitch1=2 offset1=8 pitch2=2 offset2=10\n"
+    b"plane=38 crtc=35 kind=overlay fb=49 format=AR12 width=4 height=2 size=16 "
+    b"pitch0=8 offset0=0\n"
+)
+
+
+@pytest.fixture
+def drm_goggle(goggle: FakeGoggle) -> FakeGoggle:
+    """A device driven through DRM, with ml-fbdump already staged."""
+    goggle.add_file("/dev/dri/card0", b"")
+    goggle.add_file(framebuffer.FBDUMP_REMOTE, b"binary")
+    goggle.canned("--list", PLANE_LIST)
+    return goggle
+
+
+def test_plane_line_parses_every_plane_of_a_multi_planar_format() -> None:
+    plane = framebuffer._parse_plane_line(PLANE_LIST.decode().splitlines()[0])
+
+    assert plane is not None
+    assert (plane.plane_id, plane.kind, plane.fourcc) == (33, "primary", "YU12")
+    assert plane.pitches == {0: 4, 1: 2, 2: 2}
+    assert plane.offsets == {0: 0, 1: 8, 2: 10}
+
+
+def test_plane_line_ignores_noise() -> None:
+    assert framebuffer._parse_plane_line("ml-fbdump: universal planes unavailable") is None
+
+
+def test_list_planes_returns_them_in_scanout_order(drm_goggle: FakeGoggle) -> None:
+    planes = framebuffer.list_planes(drm_goggle)
+
+    assert [p.kind for p in planes] == ["primary", "overlay"]
+
+
+def test_yuv420_decodes_a_known_colour() -> None:
+    """Y=81 U=90 V=240 is BT.601 red; a swapped U/V plane would come back blue."""
+    raw = bytes([81] * 8) + bytes([90] * 2) + bytes([240] * 2)
+    rgb = framebuffer.decode_yuv420(raw, 4, 2, (4, 2, 2), (0, 8, 10))
+
+    assert rgb.shape == (2, 4, 3)
+    assert rgb[0, 0][0] > 200
+    assert rgb[0, 0][1] < 60
+    assert rgb[0, 0][2] < 60
+
+
+def test_yuv420_rejects_a_short_buffer() -> None:
+    with pytest.raises(ValueError, match="short plane"):
+        framebuffer.decode_yuv420(b"\x00" * 4, 4, 2, (4, 2, 2), (0, 8, 10))
+
+
+def test_argb4444_keeps_alpha_when_asked() -> None:
+    """The overlay's alpha is the blend mask; dropping it would paste a black box over video."""
+    rgba = decode_argb4444(make_raw([0xF00F, 0x000F], 2, 1), width=2, height=1, stride_px=2,
+                           with_alpha=True)
+
+    assert rgba.shape == (1, 2, 4)
+    assert rgba[0, 0][3] == 255
+    assert rgba[0, 1][3] == 0
+
+
+def test_compose_leaves_the_base_where_the_overlay_is_transparent() -> None:
+    base = np.full((1, 2, 3), 10, dtype=np.uint8)
+    overlay = np.zeros((1, 2, 4), dtype=np.uint8)
+    overlay[0, 0] = [255, 255, 255, 255]      # opaque white
+    overlay[0, 1] = [255, 255, 255, 0]        # fully transparent
+
+    composed = framebuffer.compose_over(base, overlay)
+
+    assert list(composed[0, 0]) == [255, 255, 255]
+    assert list(composed[0, 1]) == [10, 10, 10]
+
+
+def test_fetch_composes_the_overlay_onto_the_primary(drm_goggle: FakeGoggle) -> None:
+    drm_goggle.canned("--dump 33", bytes([81] * 8) + bytes([90] * 2) + bytes([240] * 2))
+    # an overlay that is opaque white in its first pixel and transparent everywhere else
+    overlay = np.zeros(8, dtype="<u2")
+    overlay[0] = 0xFFFF
+    drm_goggle.canned("--dump 38", overlay.tobytes())
+
+    rgb = framebuffer.fetch(drm_goggle, progress=False)
+
+    assert rgb.shape == (2, 4, 3)
+    assert list(rgb[0, 0]) == [255, 255, 255]     # overlay won here
+    assert rgb[0, 1][0] > 200                     # video shows through here
+
+
+def test_fetch_prefers_drm_even_when_fbdev_emulation_exists(drm_goggle: FakeGoggle) -> None:
+    """The open kernel grows an emulated fb0 that is not the scanout; DRM must still win."""
+    drm_goggle.add_file("/sys/class/graphics/fb0/virtual_size", b"1920,1080\n")
+    drm_goggle.add_file("/sys/class/graphics/fb0/bits_per_pixel", b"32\n")
+    drm_goggle.add_file("/sys/class/graphics/fb0/stride", b"8192\n")
+    drm_goggle.canned("--dump 33", bytes([81] * 8) + bytes([90] * 2) + bytes([240] * 2))
+    drm_goggle.canned("--dump 38", b"\x00" * 16)
+
+    framebuffer.fetch(drm_goggle, progress=False)
+
+    assert not any(command.startswith("dd ") for command in drm_goggle.commands)
+
+
+def test_fetch_falls_back_to_fb0_without_a_drm_node(fb_goggle: FakeGoggle) -> None:
+    """Vendor firmware has no card0, so the capture must go through the OSD framebuffer."""
+    fb_goggle.canned("dd if=/dev/fb0", b"\x00" * (4096 * PAGE_HEIGHT))
+
+    framebuffer.fetch(fb_goggle, progress=False)
+
+    assert any(command.startswith("dd ") for command in fb_goggle.commands)
+
+
+def test_fb0_path_refuses_a_buffer_that_is_not_the_vendor_osd(goggle: FakeGoggle) -> None:
+    """A 32-bpp fb0 is the emulated one; decoding it as ARGB4444 would return garbage."""
+    goggle.add_file("/sys/class/graphics/fb0/virtual_size", b"1920,1080\n")
+    goggle.add_file("/sys/class/graphics/fb0/bits_per_pixel", b"32\n")
+    goggle.add_file("/sys/class/graphics/fb0/stride", b"8192\n")
+
+    with pytest.raises(RuntimeError, match="bpp"):
+        framebuffer.fetch_fb0(goggle, progress=False)

@@ -59,7 +59,7 @@ vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/l
 # spelled out in the container script below.
 DEVICE_TOOLS="air-qpower ml-rfcmd"
 BRINGUP_TOOLS="ml-regdump ml-mmioreplay ml-i2cprobe ml-camtest ml-v4l2grab ml-cam2enc ml-3a:-lm
-ml-isploop ml-lutfill"
+ml-isploop ml-lutfill ml-fbdump"
 
 # Same shape plus the JSON config pair every one of them reads. Both ship.
 JSON_TOOLS="ml-rf-persist ml-boot-record"

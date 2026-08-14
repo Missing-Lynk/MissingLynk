@@ -175,6 +175,8 @@ class FakeGoggle:
                 return b"", 0 if path in self.dirs else 1
             if flag == "-f":
                 return b"", 0 if path in self.files else 1
+            if flag in ("-e", "-x"):
+                return b"", 0 if path in self.files or path in self.dirs else 1
 
         raise AssertionError(f"FakeGoggle got an uninterpreted command: {tokens!r}. "
                              "Register it with canned() or teach the fake the verb.")

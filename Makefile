@@ -31,9 +31,10 @@
 #   make flashboot    RAM-boot slot B's flashed kernel1/dtb1 to prove the on-flash copy boots
 #
 # Host-side checks (no device needed):
-#   make check-python lint + unit-test the Python CLI (missinglynk/); also: make lint, make test
-#   make check-shell  shellcheck the host-side shell scripts (glue/, native/)
-#   make check        both of the above
+#   make check-python    lint + unit-test the Python CLI (missinglynk/); also: make lint, make test
+#   make check-shell     shellcheck the host-side shell scripts (glue/, native/)
+#   make check-userspace build + run the userspace submodule's host tests (make -C userspace check)
+#   make check           all three of the above
 #
 # Clean:
 #   make clean        remove component build outputs (keeps the pinned kernel tree)
@@ -49,6 +50,11 @@ SHELL := /bin/bash
 # no device set.
 DEVICE ?= $(shell cat .device 2>/dev/null)
 -include devices/$(DEVICE)/device.mk
+
+# The short unit id inside DEV_PRODUCT (P1_GND_VR04 -> P1_GND, P1_SKY -> P1_SKY): the first two
+# underscore-separated fields. `missinglynk dump-partitions` names its output directory after this,
+# so it is the key the vendor-blob paths below resolve under.
+DEV_BLOBS_ID = $(word 1,$(subst _, ,$(DEV_PRODUCT)))_$(word 2,$(subst _, ,$(DEV_PRODUCT)))
 
 all: require-device
 	$(MAKE) native
@@ -150,15 +156,16 @@ rootfs-dev: require-device
 image: require-device all image-blobs
 	@source kernel/scripts/pin.env && \
 	uv run python glue/flash/mlimg.py build --device $(DEV_MLIMG_TARGET) \
-	  --blobs-dir firmware/bin/$(DEV_MLIMG_TARGET) \
+	  --blobs-dir firmware/bin/$(DEV_BLOBS_ID) \
 	  --dtb "$$KERNEL_BUILD_DEFAULT/linux/arch/arm64/boot/$(DEV_DTB)" \
 	  --rootfs rootfs/build/rootfs-$(DEVICE).ubi
 
 # Raw slot partitions the mlimg's vendor components need (stock uboot + env + an OTRA template).
-# Captured from a connected device into firmware/bin/<DEV_MLIMG_TARGET>/; skipped when already present.
+# Captured from a connected device into firmware/bin/<DEV_BLOBS_ID>/, the short unit id
+# dump-partitions names its output after; skipped when already present.
 image-blobs:
-	@if [ -n "$$(find firmware/bin/$(DEV_MLIMG_TARGET) -name '*uboot0.bin' 2>/dev/null | head -1)" ]; then \
-	  echo "[image] vendor slot blobs already in firmware/bin/$(DEV_MLIMG_TARGET) (skipping dump)"; \
+	@if [ -n "$$(find firmware/bin/$(DEV_BLOBS_ID) -name '*uboot0.bin' 2>/dev/null | head -1)" ]; then \
+	  echo "[image] vendor slot blobs already in firmware/bin/$(DEV_BLOBS_ID) (skipping dump)"; \
 	else \
 	  echo "[image] capturing vendor slot blobs from the connected device..."; \
 	  uv run missinglynk dump-partitions --dest firmware/bin; \
@@ -263,7 +270,17 @@ check-shell:
 	if [ -n "$$initd" ]; then run -s sh -e SC2034,SC3043 $$initd || rc=1; fi; \
 	exit $$rc
 
-check: check-python check-shell
+# The userspace submodule's own host tests: the :10000 frame builders, the MSP canvas encoder and
+# the air's power/standby state machine, linked against checked-in captures and run on the host.
+# Delegated rather than reimplemented, so `make -C userspace check` and this target cannot disagree.
+#
+# CI does NOT run this from here. The submodules are pinned over SSH URLs a runner has no key for,
+# so every workflow in this repo sets submodules: false; the equivalent job lives in ml-userspace
+# and fires on the commit that breaks a test rather than on the pointer bump that imports it.
+check-userspace:
+	$(MAKE) -C userspace check
+
+check: check-python check-shell check-userspace
 
 clean:
 	-$(MAKE) -C userspace clean
@@ -275,4 +292,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check-userspace check clean distclean
