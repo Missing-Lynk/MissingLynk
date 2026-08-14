@@ -73,8 +73,9 @@ type ui struct {
 	flashing      bool
 	scanning      bool
 	switchable    bool
-	switchToOpen  bool   // switch direction: true = activate the open slot, false = back to stock
-	provenNote    string // boot-proof sentence for the open switch target (empty if unknown)
+	switchTarget  flow.SwitchTarget // the slot a switch activates and what it holds
+	flashboot     bool              // the running slot is not the active one
+	provenNote    string            // boot-proof sentence for an open switch target (empty if unknown)
 	switching     bool
 }
 
@@ -163,7 +164,7 @@ func (u *ui) scan() {
 		u.logView.SetText("")
 		u.setBusy(true)
 		u.flashable = false
-		u.switchable = false
+		u.clearSwitch()
 		u.refresh()
 	})
 
@@ -177,8 +178,7 @@ func (u *ui) scan() {
 			u.deviceState.SetText("No device found")
 			u.deviceStatus.SetText("Connect one device over USB, power it on, then Re-scan.")
 			u.flashable = false
-			u.switchable = false
-			u.provenNote = ""
+			u.clearSwitch()
 
 		case info.AlreadyOpen:
 			name := info.Name
@@ -188,10 +188,7 @@ func (u *ui) scan() {
 			u.deviceState.SetText(name)
 			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
 			u.flashable = false
-			u.switchable = info.Switchable
-			u.switchToOpen = false
-			// Switching back to the untouched stock slot needs no boot proof.
-			u.provenNote = ""
+			u.setSwitch(info)
 
 		default:
 			title := info.Product
@@ -204,13 +201,31 @@ func (u *ui) scan() {
 			u.deviceState.SetText(title)
 			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
 			u.flashable = info.Flashable
-			u.switchable = info.Switchable
-			u.switchToOpen = true
-			u.provenNote = info.ProvenNote
+			u.setSwitch(info)
 		}
 
 		u.refresh()
 	})
+}
+
+// setSwitch records the switch a scan found: which slot it activates, what that
+// slot holds, and whether the device is in a flash-boot (running slot != active
+// slot). The direction comes from the device's real active slot, so it is whatever
+// the scan reported rather than an assumption from the running firmware.
+func (u *ui) setSwitch(info *flow.DeviceInfo) {
+	u.switchable = info.Switchable
+	u.switchTarget = info.SwitchTarget()
+	u.flashboot = info.RunningSlot != "" && info.ActiveSlot != "" && info.RunningSlot != info.ActiveSlot
+	u.provenNote = info.ProvenNote
+}
+
+// clearSwitch drops the recorded switch, for when no device (or no usable slot
+// state) was found.
+func (u *ui) clearSwitch() {
+	u.switchable = false
+	u.switchTarget = flow.SwitchTarget{}
+	u.flashboot = false
+	u.provenNote = ""
 }
 
 // --- flash -----------------------------------------------------------------
@@ -267,7 +282,7 @@ func (u *ui) setImage(path string) {
 // confirmFlash offers the two flash modes. "Flash and switch" (default) writes the
 // inactive slot, activates it, and reboots. "Flash only" writes the inactive slot
 // and stops, leaving the device on its current slot; the written slot can be
-// activated later with Switch slot (after proving it, e.g. by RAM-boot). The
+// activated later with the switch button (after proving it, e.g. by RAM-boot). The
 // confirm button for each mode is a distinct button so the choice is explicit.
 func (u *ui) confirmFlash() {
 	if u.selectedImage == "" || u.flashing {
@@ -279,7 +294,7 @@ func (u *ui) confirmFlash() {
 			"other slot is left untouched.\n\n" +
 			"Flash and switch: activate the newly written slot and reboot into it now.\n\n" +
 			"Flash only: leave the device on its current slot. The new slot is written but not " +
-			"activated; use Switch slot to boot it once you are ready.")
+			"activated; use the switch button to boot it once you are ready.")
 	message.Wrapping = fyne.TextWrapWord
 
 	var confirmDialog *dialog.CustomDialog
@@ -317,10 +332,10 @@ func (u *ui) startFlash(flashOnly bool) {
 			if err == nil {
 				if flashOnly {
 					// The device is still on its old slot; the new slot is written
-					// but not active. Re-scan so the card offers Switch slot.
+					// but not active. Re-scan so the card offers the switch.
 					dialog.ShowInformation("Flash complete",
 						"The open firmware is written to the inactive slot. The device is still "+
-							"running its current slot; use Switch slot to activate it.", u.win)
+							"running its current slot; use the switch button to activate it.", u.win)
 				} else {
 					// Flash already waited for the device to reboot onto the open
 					// firmware; confirm it.
@@ -337,20 +352,29 @@ func (u *ui) startFlash(flashOnly bool) {
 
 // confirmSwitch shows the switch-slot confirmation. The confirm button stays
 // disabled until the understanding checkbox is ticked, so a reflexive click
-// cannot pass it; the wording spells out the direction-specific risk.
+// cannot pass it; the wording names the slot being activated and spells out the
+// direction-specific risk.
 func (u *ui) confirmSwitch() {
 	if !u.switchable || u.flashing || u.switching {
 		return
 	}
 
-	text := "This makes the other slot (stock firmware) the active boot slot and reboots into it. " +
-		"That slot is the untouched factory install, so this is the low-risk direction. " +
-		"You can switch back to the MissingLynk firmware the same way afterwards."
-	if u.switchToOpen {
-		text = "This makes the other slot (MissingLynk open firmware) the active boot slot and reboots " +
-			"into it, WITHOUT rewriting or re-verifying it. If that slot no longer boots, the device " +
-			"will not start until the boot slot is recovered. Only proceed if this tool flashed the " +
-			"open firmware onto this device before and it booted."
+	text := fmt.Sprintf("This makes slot %s (stock firmware) the active boot slot and reboots into it. "+
+		"That slot is the untouched factory install, so this is the low-risk direction. "+
+		"You can switch back to the MissingLynk firmware the same way afterwards.", u.switchTarget.Slot)
+	if u.switchTarget.Content == "open" {
+		text = fmt.Sprintf("This makes slot %s (MissingLynk open firmware) the active boot slot and reboots "+
+			"into it, WITHOUT rewriting or re-verifying it. If that slot no longer boots, the device "+
+			"will not start until the boot slot is recovered. Only proceed if this tool flashed the "+
+			"open firmware onto this device before and it booted.", u.switchTarget.Slot)
+		if u.flashboot {
+			text = fmt.Sprintf("This makes slot %s (MissingLynk open firmware) the active boot slot and "+
+				"reboots into it. This boot is already running slot %s while the other slot is still the "+
+				"active one (as after a flash-boot), so the firmware being activated is the one running "+
+				"right now - but that does not exercise slot %s's own bootloader, which the reboot will.",
+				u.switchTarget.Slot, u.switchTarget.Slot, u.switchTarget.Slot)
+		}
+
 		if u.provenNote != "" {
 			text += "\n\n" + u.provenNote
 		}
@@ -370,7 +394,7 @@ func (u *ui) confirmSwitch() {
 	acknowledge.OnChanged = func(checked bool) { setEnabled(confirmButton, checked) }
 	cancelButton := widget.NewButton("Cancel", func() { confirmDialog.Hide() })
 
-	confirmDialog = dialog.NewCustomWithoutButtons("Switch boot slot?",
+	confirmDialog = dialog.NewCustomWithoutButtons(fmt.Sprintf("Switch to slot %s?", u.switchTarget.Slot),
 		container.NewVBox(message, acknowledge), u.win)
 	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, confirmButton})
 	confirmDialog.Show()
@@ -384,18 +408,18 @@ func (u *ui) startSwitch() {
 	u.logView.SetText("")
 	u.setBusy(true)
 
-	switchToOpen := u.switchToOpen
+	target := u.switchTarget
 	go func() {
-		err := flow.SwitchSlot(context.Background(), flow.Options{}, switchToOpen, u.onEvent)
+		err := flow.SwitchSlot(context.Background(), flow.Options{}, target, u.onEvent)
 		fyne.Do(func() {
 			u.switching = false
 			u.setBusy(false)
 			u.refresh()
 			if err == nil {
-				// SwitchSlot already waited for the device to reboot onto the other
+				// SwitchSlot already waited for the device to reboot onto the activated
 				// slot; confirm it and re-scan to refresh the device card.
 				dialog.ShowInformation("Switch complete",
-					"The device is now running the firmware from the other slot.", u.win)
+					fmt.Sprintf("The device is now running the firmware from slot %s.", target.Slot), u.win)
 				go u.scan()
 			}
 		})
@@ -432,7 +456,9 @@ func (u *ui) appendLog(line string) {
 	u.logScroll.ScrollToBottom()
 }
 
-// refresh updates the enabled state of the action buttons from the current flags.
+// refresh updates the action buttons from the current flags: their enabled state,
+// and the switch button's label, which names the slot the switch would activate
+// (that slot follows the device's active slot, so it is not always the same one).
 // Must run on the UI thread.
 func (u *ui) refresh() {
 	busy := u.scanning || u.flashing || u.switching
@@ -440,6 +466,12 @@ func (u *ui) refresh() {
 	setEnabled(u.chooseButton, u.flashable && !busy)
 	setEnabled(u.flashButton, u.flashable && !busy && u.selectedImage != "")
 	setEnabled(u.switchButton, u.switchable && !busy)
+
+	label := "Switch slot"
+	if u.switchTarget.Slot != "" {
+		label = "Switch to slot " + u.switchTarget.Slot
+	}
+	u.switchButton.SetText(label)
 }
 
 // withDetail appends an optional follow-on line below the summary, so the status

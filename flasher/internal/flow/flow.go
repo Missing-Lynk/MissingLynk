@@ -189,13 +189,19 @@ type DeviceInfo struct {
 	Note        string `json:"note"`        // one-sentence status summary
 	Detail      string `json:"detail"`      // optional follow-on line (e.g. the switch-slot hint)
 
-	// The inactive slot's contents (from mlflash --slots), for the switch-slot
-	// feature. OtherContent is "open", "vendor", "empty", or "unknown"; Switchable
-	// is true only when that slot holds a complete recognized image the device can
-	// be switched to.
-	OtherSlot    string `json:"otherSlot"`
-	OtherContent string `json:"otherContent"`
-	Switchable   bool   `json:"switchable"`
+	// The A/B slot state (from mlflash --slots), for the switch-slot feature.
+	// ActiveSlot is the slot the device actually boots (the GPT active bit) and
+	// RunningSlot is the slot this boot is running from; they differ in a flash-boot,
+	// where the flashed slot runs from a host-loaded kernel while the other slot is
+	// still the active one. TargetSlot is the slot a switch would activate - always
+	// the complement of ActiveSlot, never of RunningSlot - and TargetContent is what
+	// it holds ("open", "vendor", "empty", "unknown"). Switchable is true only when
+	// the target holds a complete recognized image.
+	ActiveSlot    string `json:"activeSlot"`
+	RunningSlot   string `json:"runningSlot"`
+	TargetSlot    string `json:"targetSlot"`
+	TargetContent string `json:"targetContent"`
+	Switchable    bool   `json:"switchable"`
 
 	// ProvenNote is a ready-to-show sentence about whether the OPEN switch-target
 	// slot has proven it boots, from the per-unit device.json record (mlflash
@@ -203,6 +209,21 @@ type DeviceInfo struct {
 	// what is known about that slot. Empty when no record could be read (then the
 	// caller keeps the plain caution).
 	ProvenNote string `json:"provenNote"`
+}
+
+// SwitchTarget names the slot a switch activates and what the scan found in it.
+// The user consents to exactly this pair (the dialog names both), and SwitchSlot
+// re-verifies both against a fresh probe right before the flip, so what the user
+// confirmed is always what happens.
+type SwitchTarget struct {
+	Slot    string // "A" or "B"
+	Content string // "open" or "vendor"
+}
+
+// SwitchTarget is the slot switch this scan found, for the caller to hand back to
+// SwitchSlot.
+func (i *DeviceInfo) SwitchTarget() SwitchTarget {
+	return SwitchTarget{Slot: i.TargetSlot, Content: i.TargetContent}
 }
 
 // recordReport captures the fields of the mlflash --record JSON that the boot-proof
@@ -218,23 +239,29 @@ type recordReport struct {
 	Verified        bool `json:"verified"`
 }
 
-// slotState mirrors the JSON object mlflash --slots prints.
+// slotState mirrors the JSON object mlflash --slots prints. Target* describes the
+// slot a flip would activate: the complement of the GPT-active slot, which is not
+// the complement of the running slot during a flash-boot. Consistent reports
+// whether the running and active slots agree (false = flash-boot).
 type slotState struct {
-	Running       string `json:"running"`
-	GptActive     string `json:"gpt_active"`
-	Consistent    bool   `json:"consistent"`
-	OtherSlot     string `json:"other_slot"`
-	OtherContent  string `json:"other_content"`
-	OtherModel    string `json:"other_model"`
-	OtherComplete bool   `json:"other_complete"`
+	Running        string `json:"running"`
+	GptActive      string `json:"gpt_active"`
+	Consistent     bool   `json:"consistent"`
+	TargetSlot     string `json:"target_slot"`
+	TargetContent  string `json:"target_content"`
+	TargetModel    string `json:"target_model"`
+	TargetComplete bool   `json:"target_complete"`
 }
 
-// isSwitchTarget reports whether the inactive slot holds a complete recognized
-// image (ours or the vendor's) and the slot bookkeeping is sane, so flipping to
-// it is offerable.
+// isSwitchTarget reports whether the slot a flip would activate holds a complete
+// recognized image (ours or the vendor's), so offering the switch makes sense. It
+// deliberately does not require Consistent: a flash-boot is exactly the state the
+// flip step of flash -> flashboot -> flip runs in. mlflash only names a target slot
+// when it could read the GPT active bit, so a resolved TargetSlot is the guarantee
+// that the flip has a defined direction.
 func (s *slotState) isSwitchTarget() bool {
-	return s.Consistent && s.OtherComplete &&
-		(s.OtherContent == "open" || s.OtherContent == "vendor")
+	return s.TargetSlot != "" && s.TargetSlot != "unknown" && s.TargetComplete &&
+		(s.TargetContent == "open" || s.TargetContent == "vendor")
 }
 
 func (o *Options) applyDefaults() {
@@ -276,11 +303,7 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 			Note: "This device is already running the MissingLynk firmware.",
 		}
 
-		fillOtherSlot(client, info, "vendor", emit)
-		if info.Switchable {
-			info.Detail = "The stock firmware is on the other slot; it can be switched back."
-		}
-
+		fillSwitchTarget(client, info, emit)
 		emitSummary(emit, info)
 		return info, nil
 	}
@@ -311,14 +334,10 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		info.Note = "Ready to flash."
 	}
 
-	// A previously flashed open image may still be intact on the inactive slot; if
+	// A previously flashed open image may still be intact on the non-active slot; if
 	// it is, the device can be switched to it without reflashing.
 	if info.Flashable {
-		fillOtherSlot(client, info, "open", emit)
-		if info.Switchable {
-			info.Detail = "The MissingLynk firmware is on the other slot; it can be switched to directly."
-			fillProof(client, info, emit)
-		}
+		fillSwitchTarget(client, info, emit)
 	}
 
 	// Close out the scan log with the outcome, so it does not just stop.
@@ -345,30 +364,64 @@ func emitSummary(emit Emit, info *DeviceInfo) {
 	}
 }
 
-// fillOtherSlot probes the inactive slot and records what it holds on info.
-// Switchable is set only when that slot carries a complete image of the expected
-// kind (wantContent), i.e. the opposite of what is running. A failed probe is a
-// warning, not an error: the device card just shows no other-slot line.
-func fillOtherSlot(client *device.Client, info *DeviceInfo, wantContent string, emit Emit) {
+// fillSwitchTarget probes the slot state and records the offered switch on info:
+// which slot is active, which slot this boot runs from, and what the slot a flip
+// would activate holds. The direction follows the device's real active slot, so it
+// is offered from whichever slot is running - including a flash-boot, where the
+// running slot is not the active one. A failed probe is a warning, not an error:
+// the device card just shows no switch line. Filling the target also fills the
+// detail line and, for an open target, the boot-proof note.
+func fillSwitchTarget(client *device.Client, info *DeviceInfo, emit Emit) {
 	state, err := probeSlots(client, emit)
 	if err != nil {
-		emit(Event{Level: LevelWarn, Msg: fmt.Sprintf("inactive-slot probe failed: %v", err)})
+		emit(Event{Level: LevelWarn, Msg: fmt.Sprintf("slot probe failed: %v", err)})
 		return
 	}
 
-	info.OtherSlot = state.OtherSlot
-	info.OtherContent = state.OtherContent
-	info.Switchable = state.isSwitchTarget() && state.OtherContent == wantContent
+	info.ActiveSlot = state.GptActive
+	info.RunningSlot = state.Running
+	info.TargetSlot = state.TargetSlot
+	info.TargetContent = state.TargetContent
+	info.Switchable = state.isSwitchTarget()
+	if !info.Switchable {
+		return
+	}
+
+	info.Detail = switchDetail(info)
+	// Only the open slot needs a boot proof: the stock slot is the untouched factory
+	// install this tool never writes.
+	if info.TargetContent == "open" {
+		fillProof(client, info, emit)
+	}
+}
+
+// switchDetail is the device-card line for an offered switch: which slot is active
+// now, which slot the switch activates, and what that slot holds. A running slot
+// that is not the active one is called out, because it is why the offered direction
+// can look inverted (the firmware that is running is the one on the slot being
+// activated). Its usual cause is a flash-boot, which is named as an example rather
+// than asserted - the same split shows up whenever a boot lands somewhere other than
+// the active slot.
+func switchDetail(info *DeviceInfo) string {
+	content := SlotContentDescription(info.TargetContent)
+	if info.RunningSlot != "" && info.ActiveSlot != "" && info.RunningSlot != info.ActiveSlot {
+		return fmt.Sprintf("This boot is running slot %s while slot %s is still the active one "+
+			"(as after a flash-boot); switching activates slot %s, which holds %s.",
+			info.RunningSlot, info.ActiveSlot, info.TargetSlot, content)
+	}
+
+	return fmt.Sprintf("Slot %s is active; slot %s holds %s and can be switched to.",
+		info.ActiveSlot, info.TargetSlot, content)
 }
 
 // fillProof annotates info with the boot-proof verdict of the open switch-target
-// slot (info.OtherSlot), from the per-unit device.json record. Advisory only: it
+// slot (info.TargetSlot), from the per-unit device.json record. Advisory only: it
 // never changes Switchable, it just tells the user whether that slot has proven it
 // boots. The summary is appended to the device-card detail and exposed on info for
 // the switch-confirm dialog. A missing/unreadable record degrades to the plain
 // caution (empty note), never an error.
 func fillProof(client *device.Client, info *DeviceInfo, emit Emit) {
-	info.ProvenNote = provenSummary(probeRecord(client, info.OtherSlot))
+	info.ProvenNote = provenSummary(probeRecord(client, info.TargetSlot))
 	if info.ProvenNote != "" {
 		info.Detail = strings.TrimSpace(info.Detail + " " + info.ProvenNote)
 	}
@@ -393,23 +446,23 @@ func probeRecord(client *device.Client, slot string) recordReport {
 // digest mismatch. Only the last describes bytes that actually changed.
 func provenSummary(rec recordReport) string {
 	if !rec.Present {
-		return "This tool has no install record for this device, so it cannot confirm the other slot has ever booted."
+		return "This tool has no install record for this device, so it cannot confirm the target slot has ever booted."
 	}
 
 	if rec.Verified {
-		return fmt.Sprintf("The other slot booted cleanly %s and its bytes still verify.", bootCount(rec.Boots))
+		return fmt.Sprintf("The target slot booted cleanly %s and its bytes still verify.", bootCount(rec.Boots))
 	}
 
 	if rec.Boots == 0 {
-		return "The other slot has an install record but has never booted successfully; it is unproven."
+		return "The target slot has an install record but has never booted successfully; it is unproven."
 	}
 
 	if !rec.DigestsRecorded {
-		return fmt.Sprintf("The other slot booted cleanly %s, but it was not installed by this tool, "+
+		return fmt.Sprintf("The target slot booted cleanly %s, but it was not installed by this tool, "+
 			"so there are no recorded digests to verify its contents against.", bootCount(rec.Boots))
 	}
 
-	return "The other slot's recorded bytes no longer match what is on it (re-flashed outside this tool, or degraded); treat it as unproven."
+	return "The target slot's recorded bytes no longer match what is on it (re-flashed outside this tool, or degraded); treat it as unproven."
 }
 
 // bootCount renders a healthy-boot count for a sentence ("once", "25 times").
@@ -443,9 +496,9 @@ func probeSlots(client *device.Client, emit Emit) (*slotState, error) {
 	return &state, nil
 }
 
-// OtherSlotDescription is the human name of an inactive-slot classification, for
+// SlotContentDescription is the human name of a slot-content classification, for
 // the GUI's device card and dialogs.
-func OtherSlotDescription(content string) string {
+func SlotContentDescription(content string) string {
 	switch content {
 	case "open":
 		return "the MissingLynk open firmware"
@@ -461,14 +514,18 @@ func OtherSlotDescription(content string) string {
 	}
 }
 
-// SwitchSlot makes the inactive slot the active boot slot without writing any
-// image data (gpt0 is the only partition written) and reboots into it. Detect
-// must have reported Switchable; the slot state is re-verified here right before
-// the flip (defence in depth, mirroring how Flash re-verifies identity).
-// switchToOpen is the direction the user consented to (true = activate the open
-// slot); if the device's actual state implies the other direction, the switch is
-// refused, so the consent dialog the user saw always matches what happens.
-func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) error {
+// SwitchSlot makes the device's non-active slot the active boot slot without
+// writing any image data (gpt0 is the only partition written) and reboots into it.
+// Detect must have reported Switchable; the slot state is re-verified here right
+// before the flip (defence in depth, mirroring how Flash re-verifies identity).
+//
+// target is the slot and content the user consented to. The direction follows the
+// device's real active slot rather than the firmware that happens to be running, so
+// the switch works from either slot and from a flash-boot (where the running slot is
+// not the active one). If a fresh probe no longer names that slot and content as the
+// target, the switch is refused, so the dialog the user saw always matches what
+// happens.
+func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit) error {
 	opt.applyDefaults()
 
 	emit(Event{Level: LevelStep, Msg: "Preparing"})
@@ -482,10 +539,6 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 	}
 
 	defer client.Close()
-	if runningOpen == switchToOpen {
-		return fail(emit, fmt.Errorf("the device's firmware changed since the scan "+
-			"(the confirmed switch direction no longer applies); re-scan and try again"))
-	}
 
 	// The open slot has no sdk_version.json, so infer the product from its IP.
 	product := productFromOpenIP(connectedIP)
@@ -503,38 +556,56 @@ func SwitchSlot(ctx context.Context, opt Options, switchToOpen bool, emit Emit) 
 		return fail(emit, err)
 	}
 
-	wantContent := "open"
-	if runningOpen {
-		wantContent = "vendor"
+	if !state.isSwitchTarget() {
+		return fail(emit, fmt.Errorf("slot %s does not hold a complete recognized image (found: %s); "+
+			"refusing to switch", state.TargetSlot, SlotContentDescription(state.TargetContent)))
 	}
 
-	if !state.isSwitchTarget() || state.OtherContent != wantContent {
-		return fail(emit, fmt.Errorf("slot %s does not hold a complete image of %s (found: %s); refusing to switch",
-			state.OtherSlot, OtherSlotDescription(wantContent), OtherSlotDescription(state.OtherContent)))
+	if !strings.EqualFold(state.TargetSlot, target.Slot) || state.TargetContent != target.Content {
+		return fail(emit, fmt.Errorf("the device's slot state changed since the scan (the switch is now "+
+			"slot %s holding %s, not slot %s holding %s as confirmed); re-scan and try again",
+			state.TargetSlot, SlotContentDescription(state.TargetContent),
+			target.Slot, SlotContentDescription(target.Content)))
 	}
 
-	emit(Event{Level: LevelStep, Msg: fmt.Sprintf("Making slot %s the active boot slot", state.OtherSlot)})
+	emit(Event{Level: LevelStep, Msg: fmt.Sprintf("Making slot %s the active boot slot", state.TargetSlot)})
 	if err := runMlflash(client, emit, "--flip"); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	// The reboot mechanism and the password of the firmware we land on differ by
-	// direction. The open slot answers at the device's fixed open IP with the open
-	// password; the stock slot answers at the stock IP with the stock password.
-	openIP := devconf.OpenIP[product]
-	if openIP == "" {
-		openIP = connectedIP
-	}
-	rebootCmd, targetPassword, targetIP := stockRebootCmd, device.OpenPassword, openIP
-	doneMsg := "Done - the device is now running the MissingLynk open firmware."
+	// The reboot command belongs to the firmware that is RUNNING (the vendor slot has
+	// ar_wdt_service, the open slot ships wdt-reset), while the address, password and
+	// DHCP behaviour belong to the slot being ACTIVATED. Those two are the same slot in
+	// a normal switch and different ones out of a flash-boot, so they are decided apart.
+	rebootCmd := stockRebootCmd
 	if runningOpen {
-		rebootCmd, targetPassword, targetIP = openRebootCmd, device.StockPassword, opt.DeviceIP
-		doneMsg = "Done - the device is now running the stock firmware."
+		rebootCmd = openRebootCmd
 	}
 
-	// The open slot serves DHCP; the vendor slot does not. runningOpen means we are
-	// switching to the vendor slot, so the target serves DHCP only when NOT runningOpen.
-	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, targetIP, !runningOpen, emit); err != nil {
+	targetOpen := state.TargetContent == "open"
+	targetPassword, targetIP := device.StockPassword, opt.DeviceIP
+	doneMsg := "Done - the device is now running the stock firmware."
+	if targetOpen {
+		targetIP = devconf.OpenIP[product]
+		if targetIP == "" && runningOpen {
+			// Already on an open slot: both open slots answer at the same fixed address.
+			targetIP = connectedIP
+		}
+
+		if targetIP == "" {
+			return fail(emit, fmt.Errorf("no open-slot IP configured for product %s", product))
+		}
+
+		targetPassword = device.OpenPassword
+		doneMsg = "Done - the device is now running the MissingLynk open firmware."
+	}
+
+	// The open slot serves DHCP; the vendor slot does not. When the activated slot
+	// answers at the address we are already connected to (an open slot activated out of
+	// a flash-boot), reachability alone cannot tell the old session from the new one, so
+	// the reconnect additionally has to see a rebooted uptime.
+	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, targetIP,
+		targetOpen, targetIP == connectedIP, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -617,7 +688,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 
 	if opt.FlashOnly {
 		emit(Event{Level: LevelDone, Msg: "Done - the open firmware is written to the inactive slot. " +
-			"The device is still running its current slot; use Switch slot to activate the new firmware " +
+			"The device is still running its current slot; use the switch button to activate the new firmware " +
 			"once you are ready."})
 		return nil
 	}
@@ -632,7 +703,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	if openIP == "" {
 		return fail(emit, fmt.Errorf("no open-slot IP configured for product %s", sdk.ProductVersion))
 	}
-	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, openIP, true, emit); err != nil {
+	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, openIP, true, false, emit); err != nil {
 		return fail(emit, err)
 	}
 
@@ -925,7 +996,15 @@ func runMlflash(client *device.Client, emit Emit, args ...string) error {
 // open slot at the unit's fixed board.conf address (.101 goggle, .102 air). The
 // slots live at different addresses, so waiting on the wrong one would never see
 // the reboot complete.
-func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword, ip string, targetServesDHCP bool, emit Emit) error {
+//
+// verifyUptime is for the one case where the firmware being booted answers at the
+// address we are connected to right now (an open slot activated out of a flash-boot):
+// there, an SSH answer at ip is not by itself proof of a reboot, so the session that
+// answers must also report an uptime shorter than the time since the reboot command
+// went out. An unreadable uptime is accepted, so this can only delay a false positive,
+// never turn a real reboot into a timeout.
+func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebootCmd, targetPassword, ip string,
+	targetServesDHCP, verifyUptime bool, emit Emit) error {
 	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
 
 	// The reboot command tears the SoC down mid-session, so this SSH call never
@@ -935,6 +1014,7 @@ func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebo
 	// in the background and move straight to the wait loop. The command is delivered
 	// before the SoC resets; the deferred client.Close eventually unblocks the call.
 	go func() { _, _ = client.Run(rebootCmd) }()
+	issued := time.Now()
 
 	emit(Event{Level: LevelInfo, Msg: "Waiting for the device to come back (this can take a minute)"})
 
@@ -957,12 +1037,17 @@ func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebo
 	for time.Now().Before(deadline) {
 		if device.Reachable(ip, 2*time.Second) {
 			if c, err := device.Dial(ip, "root", targetPassword, 5*time.Second); err == nil {
+				rebooted := !verifyUptime || hasRebooted(c, time.Since(issued))
 				_ = c.Close()
-				emit(Event{Level: LevelInfo, Msg: "The device is back up and reachable"})
-				return nil
-			}
+				if rebooted {
+					emit(Event{Level: LevelInfo, Msg: "The device is back up and reachable"})
+					return nil
+				}
 
-			emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s answers but SSH is not ready yet", ip)})
+				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s still answers from the pre-reboot session", ip)})
+			} else {
+				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s answers but SSH is not ready yet", ip)})
+			}
 		} else if time.Now().After(reattachAfter) {
 			// Not reachable and no DHCP took hold: reattach the host IP to the
 			// re-enumerated gadget interface. Each interface name is assigned once,
@@ -1001,6 +1086,33 @@ func rebootAndWait(ctx context.Context, opt Options, client *device.Client, rebo
 	return fmt.Errorf("the device did not come back on the newly activated firmware within the timeout; " +
 		"the slot flip itself is already committed, so power-cycle the device to (re)try booting " +
 		"the newly activated slot (the stock firmware slot is never modified)")
+}
+
+// hasRebooted reports whether the session on the far end of client came up after the
+// reboot command went out, by comparing /proc/uptime with how long ago that was. A
+// device that ignored the reboot has been up for its whole pre-reboot session, which
+// is longer than sinceReboot; a rebooted one has not. slack absorbs the reboot command's
+// own delay and the poll interval. An unreadable or unparseable uptime counts as
+// rebooted: this check only exists to catch a device that is still the old session, and
+// must never strand a reconnect that has genuinely succeeded.
+func hasRebooted(client *device.Client, sinceReboot time.Duration) bool {
+	out, err := client.Run("cat /proc/uptime")
+	if err != nil {
+		return true
+	}
+
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) == 0 {
+		return true
+	}
+
+	uptime, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return true
+	}
+
+	const slack = 15 * time.Second
+	return time.Duration(uptime*float64(time.Second)) < sinceReboot+slack
 }
 
 // candidateNames returns the names of every USB gadget interface currently

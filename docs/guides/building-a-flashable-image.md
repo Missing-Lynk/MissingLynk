@@ -69,4 +69,4 @@ The bundle is written on-device by `mlflash`, the standalone slot flasher. It ru
 2. `mlflash --dry-run <image.mlimg>` — the on-device preflight (running-vs-GPT slot agreement, board identity, component hashes). No writes.
 3. `mlflash --flash <image.mlimg>` — writes the inactive slot and reads it back to verify. Does not flip the active slot.
 4. `make flashboot` — prove the flashed slot boots (SPL aside) by booting its kernel/dtb/rootfs with the current slot still active.
-5. `mlflash --flip` — only after the flashboot proves the slot boots, set it active. Making an unproven slot active is HARD RULE 2; slot A stays the untouched BootROM-recovery keystone until then.
+5. `mlflash --flip` — only after the flashboot proves the slot boots, set it active. It targets the complement of the GPT-active slot, so it can be run from inside the flashboot itself. Making an unproven slot active is HARD RULE 2; slot A stays the untouched BootROM-recovery keystone until then.

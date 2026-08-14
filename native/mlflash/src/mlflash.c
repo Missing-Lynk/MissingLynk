@@ -22,10 +22,10 @@
  *   mlflash --flash   <image.mlimg>    flash every component to the inactive slot (raw partitions
  *                                      readback-verified, userapp via ubiformat), behind the full
  *                                      preflight; flips the active slot only with --flip
- *   mlflash --flip                     standalone: set the inactive slot active (gpt0 write +
+ *   mlflash --flip                     standalone: make the non-active slot active (gpt0 write +
  *                                      readback), no component writes
  *   mlflash --slots                    print the A/B slot state and a read-only classification
- *                                      of the inactive slot's contents as one JSON object
+ *                                      of the flip target's contents as one JSON object
  *   mlflash --record [--slot a|b]      read device.json and re-hash the target slot's kernel/dtb
  *                                      to print the boot-proof verdict as one JSON object
  *
@@ -54,26 +54,29 @@ static const char *slot_letter(int slot)
 
 /*
  * Report the A/B slot state as one JSON object on stdout: the running slot, the GPT-active slot,
- * whether they agree, and a read-only classification of the inactive slot's contents. This is the
- * host flasher's input for offering a switch to the other slot; nothing is written. Returns 0 when
- * the running slot and the inactive-slot probe both resolved, 1 otherwise.
+ * whether they agree, and a read-only classification of the slot a flip would activate. That
+ * target is the complement of the GPT-ACTIVE slot, not of the running one: the two differ during
+ * a flashboot (the flashed slot runs from a host-loaded kernel while the other slot is still
+ * active), and it is the active bit a flip moves. `consistent` reports whether they agree, so the
+ * host can name the flashboot state. This is the host flasher's input for offering a slot switch;
+ * nothing is written. Returns 0 when the target slot resolved and probed, 1 otherwise.
  */
 static int cmd_slots(void)
 {
     int running = running_slot();
     int gpt = gpt_active_slot();
     int consistent = (running >= 0 && gpt >= 0 && running == gpt);
-    int other = (running >= 0) ? !running : -1;
+    int target = (gpt >= 0) ? !gpt : -1;
 
     struct slot_probe probe;
-    int probed = (other >= 0 && probe_slot(other, &probe) == 0);
+    int probed = (target >= 0 && probe_slot(target, &probe) == 0);
 
     printf("{\"running\":\"%s\",\"gpt_active\":\"%s\",\"consistent\":%s",
            slot_letter(running), slot_letter(gpt), consistent ? "true" : "false");
     if (probed) {
-        printf(",\"other_slot\":\"%s\",\"other_content\":\"%s\",\"other_model\":\"%s\","
-               "\"other_kernel\":%s,\"other_rootfs\":%s,\"other_complete\":%s",
-               slot_letter(other), slot_content_name(probe.content), probe.model,
+        printf(",\"target_slot\":\"%s\",\"target_content\":\"%s\",\"target_model\":\"%s\","
+               "\"target_kernel\":%s,\"target_rootfs\":%s,\"target_complete\":%s",
+               slot_letter(target), slot_content_name(probe.content), probe.model,
                probe.has_kernel ? "true" : "false",
                probe.has_rootfs ? "true" : "false",
                probe.is_complete ? "true" : "false");
@@ -96,12 +99,15 @@ static int cmd_record(const char *want_slot)
     if (want_slot) {
         slot = (want_slot[0] == 'b' || want_slot[0] == 'B') ? 1 : 0;
     } else {
-        int running = running_slot();
-        if (running < 0) {
-            fprintf(stderr, "record: cannot determine the running slot; pass --slot a|b.\n");
+        /* The switch target is the complement of the GPT-ACTIVE slot (see cmd_slots); the running
+         * slot is only the fallback for a unreadable gpt0. */
+        int gpt = gpt_active_slot();
+        int running = (gpt >= 0) ? -1 : running_slot();
+        if (gpt < 0 && running < 0) {
+            fprintf(stderr, "record: cannot determine the active or running slot; pass --slot a|b.\n");
             return 2;
         }
-        slot = !running;
+        slot = (gpt >= 0) ? !gpt : !running;
     }
 
     return device_record_report(slot);
@@ -506,31 +512,36 @@ static int cmd_flash(const char *path, const char *want_slot, int want_flip, int
 }
 
 /*
- * Standalone flip (no image write): confirm the running/GPT slots agree, pick the inactive target
- * (or --slot), and flip it active via the same gpt_set_active + post-flip readback as --flash
- * --flip. This is the flip step of the flash -> flashboot -> flip workflow, so the slot was
- * already written and proven separately; it never touches partition data, only gpt0.
+ * Standalone flip (no image write): pick the target as the complement of the GPT-ACTIVE slot (or
+ * --slot) and flip it active via the same gpt_set_active + post-flip readback as --flash --flip.
+ * This is the flip step of the flash -> flashboot -> flip workflow, so the slot was already
+ * written and proven separately; it never touches partition data, only gpt0.
+ *
+ * The active bit is the only thing a flip moves, so the RUNNING slot does not gate it: during a
+ * flashboot the flashed slot runs from a host-loaded kernel while the other slot is still active,
+ * and flipping right there is the point of that workflow (the target is the slot that is provably
+ * running). A flip is refused only when gpt0 cannot be read or the target is already active.
  */
 static int cmd_flip(const char *want_slot)
 {
-    int running = running_slot();
     int gpt = gpt_active_slot();
-    if (running < 0) {
-        fprintf(stderr, "flip: cannot determine the running slot; refusing.\n");
+    int running = running_slot();
+    if (gpt < 0) {
+        fprintf(stderr, "flip: cannot determine the GPT-active slot; refusing.\n");
         return 1;
     }
 
-    if (gpt >= 0 && gpt != running) {
-        fprintf(stderr, "flip: GPT-active and running slot disagree (still in a flashboot? reboot "
-                "to the active slot first); refusing.\n");
-        return 1;
-    }
-
-    int target = want_slot ? ((want_slot[0] == 'b' || want_slot[0] == 'B') ? 1 : 0) : !running;
-    if (target == running) {
-        fprintf(stderr, "flip: slot %s is already the running slot; nothing to flip.\n",
+    int target = want_slot ? ((want_slot[0] == 'b' || want_slot[0] == 'B') ? 1 : 0) : !gpt;
+    if (target == gpt) {
+        fprintf(stderr, "flip: slot %s is already the ACTIVE slot; nothing to flip.\n",
                 target ? "B" : "A");
         return 1;
+    }
+
+    if (running >= 0 && running != gpt) {
+        printf("flip: running slot is %s, active slot is %s (flashboot); flipping the ACTIVE bit "
+               "to %s%s.\n", running ? "B" : "A", gpt ? "B" : "A", target ? "B" : "A",
+               target == running ? " - the slot this boot is running from" : "");
     }
 
     return flash_flip(target);
@@ -544,9 +555,9 @@ static void usage(void)
             "  mlflash --dry-run <image.mlimg> [--slot a|b] device preflight, no writes\n"
             "  mlflash --flash   <image.mlimg> [--slot a|b] [--flip] [--force-a]\n"
             "                                               flash the inactive slot, verify\n"
-            "  mlflash --flip                  [--slot a|b] set the inactive slot active, no write\n"
-            "  mlflash --slots                              print the A/B slot state + inactive-\n"
-            "                                               slot classification as JSON, no write\n"
+            "  mlflash --flip                  [--slot a|b] make the non-active slot active, no write\n"
+            "  mlflash --slots                              print the A/B slot state + flip-target\n"
+            "                                               classification as JSON, no write\n"
             "  mlflash --record                [--slot a|b] print the device.json boot-proof\n"
             "                                               verdict for a slot as JSON, no write\n"
             "    --flip     (with --flash) after a verified flash, set it active; or standalone\n"
