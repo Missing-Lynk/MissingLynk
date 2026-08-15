@@ -1,0 +1,51 @@
+# Vet and unit-test the host flasher's Go packages (flasher/).
+
+name: go
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "flasher/**"
+      - "scripts/gen-flasher-devconf.py"
+      - "rootfs/devices/**/board.conf"
+      - "devices/**/device.mk"
+      - "Makefile"
+      - ".github/workflows/go.yml"
+
+  pull_request:
+    paths:
+      - "flasher/**"
+      - "scripts/gen-flasher-devconf.py"
+      - "rootfs/devices/**/board.conf"
+      - "devices/**/device.mk"
+      - "Makefile"
+      - ".github/workflows/go.yml"
+
+  workflow_dispatch:
+
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: flasher/go.sum
+
+      # setup-uv publishes no floating major tag past v7, so this pins the exact release.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Vet and test
+        run: make check-go

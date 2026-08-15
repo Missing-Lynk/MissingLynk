@@ -7,45 +7,18 @@
 package gui
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"image/color"
-	"path/filepath"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"github.com/ncruces/zenity"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/flow"
 )
-
-// appID is the unique application identifier Fyne needs for its preferences and
-// lifecycle APIs.
-const appID = "com.missinglynk.flasher"
-
-// Run opens the window and blocks until it is closed.
-func Run() {
-	application := app.NewWithID(appID)
-	window := application.NewWindow("MissingLynk Flasher")
-
-	u := newUI(window)
-	window.SetContent(u.root)
-	// Wide enough that the normal progress lines do not wrap.
-	window.Resize(fyne.NewSize(720, 480))
-
-	// Scan once the event loop is running, so fyne.Do always reaches a live UI thread.
-	application.Lifecycle().SetOnStarted(func() { go u.scan() })
-	window.ShowAndRun()
-}
 
 // ui holds the widgets and the shared state. Every field is touched only on the
 // UI thread (background work marshals back via fyne.Do).
@@ -67,7 +40,12 @@ type ui struct {
 	logScroll  *container.Scroll
 	copyButton *widget.Button
 
-	logBuilder    strings.Builder
+	// The log backlog, capped at maxLogLines, plus the coalesced-repaint state.
+	// logTrimmed records that lines were dropped, so the rendered log says so.
+	logLines   []string
+	logTrimmed bool
+	logPending bool
+
 	selectedImage string
 	flashable     bool
 	flashing      bool
@@ -77,6 +55,26 @@ type ui struct {
 	flashboot     bool              // the running slot is not the active one
 	provenNote    string            // boot-proof sentence for an open switch target (empty if unknown)
 	switching     bool
+}
+
+// appID is the unique application identifier Fyne needs for its preferences and
+// lifecycle APIs.
+const appID = "com.missinglynk.flasher"
+
+// Run opens the window and blocks until it is closed.
+func Run() {
+	application := app.NewWithID(appID)
+	window := application.NewWindow("MissingLynk Flasher")
+
+	u := newUI(window)
+	window.SetContent(u.root)
+
+	// Wide enough that the normal progress lines do not wrap.
+	window.Resize(fyne.NewSize(720, 480))
+
+	// Scan once the event loop is running, so fyne.Do always reaches a live UI thread.
+	application.Lifecycle().SetOnStarted(func() { go u.scan() })
+	window.ShowAndRun()
 }
 
 func newUI(win fyne.Window) *ui {
@@ -105,7 +103,7 @@ func newUI(win fyne.Window) *ui {
 	u.logView.TextStyle = fyne.TextStyle{Monospace: true}
 	u.logScroll = container.NewVScroll(u.logView)
 	u.copyButton = widget.NewButtonWithIcon("Copy log", theme.ContentCopyIcon(), func() {
-		fyne.CurrentApp().Clipboard().SetContent(u.logBuilder.String())
+		fyne.CurrentApp().Clipboard().SetContent(u.logText())
 	})
 
 	// The status section is a fixed two-line-high slot: a transparent spacer pins
@@ -119,6 +117,7 @@ func newUI(win fyne.Window) *ui {
 	if h := u.activity.MinSize().Height; h > slotHeight {
 		slotHeight = h
 	}
+
 	spacer := canvas.NewRectangle(color.Transparent)
 	spacer.SetMinSize(fyne.NewSize(0, slotHeight))
 	activityOverlay := container.NewVBox(layout.NewSpacer(), u.activity, layout.NewSpacer())
@@ -145,315 +144,12 @@ func (u *ui) setBusy(busy bool) {
 	if busy {
 		u.deviceStatus.Hide()
 		u.activity.Show()
-	} else {
-		u.activity.Hide()
-		u.deviceStatus.Show()
-	}
-}
 
-// --- device scan -----------------------------------------------------------
-
-// scan runs the detection phase, streaming progress to the log and summarising
-// the result in the status area. Runs in a goroutine.
-func (u *ui) scan() {
-	fyne.Do(func() {
-		u.scanning = true
-		u.deviceState.SetText("Scanning for devices...")
-		u.deviceStatus.SetText("")
-		u.logBuilder.Reset()
-		u.logView.SetText("")
-		u.setBusy(true)
-		u.flashable = false
-		u.clearSwitch()
-		u.refresh()
-	})
-
-	info, err := flow.Detect(context.Background(), flow.Options{}, u.onEvent)
-
-	fyne.Do(func() {
-		u.scanning = false
-		u.setBusy(false)
-		switch {
-		case err != nil:
-			u.deviceState.SetText("No device found")
-			u.deviceStatus.SetText("Connect one device over USB, power it on, then Re-scan.")
-			u.flashable = false
-			u.clearSwitch()
-
-		case info.AlreadyOpen:
-			name := info.Name
-			if name == "" {
-				name = "Device"
-			}
-			u.deviceState.SetText(name)
-			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
-			u.flashable = false
-			u.setSwitch(info)
-
-		default:
-			title := info.Product
-			if title == "" {
-				title = info.Unit
-			}
-			if info.Firmware != "" || info.Hardware != "" {
-				title = fmt.Sprintf("%s   (firmware %s, hardware %s)", title, info.Firmware, info.Hardware)
-			}
-			u.deviceState.SetText(title)
-			u.deviceStatus.SetText(withDetail(info.Note, info.Detail))
-			u.flashable = info.Flashable
-			u.setSwitch(info)
-		}
-
-		u.refresh()
-	})
-}
-
-// setSwitch records the switch a scan found: which slot it activates, what that
-// slot holds, and whether the device is in a flash-boot (running slot != active
-// slot). The direction comes from the device's real active slot, so it is whatever
-// the scan reported rather than an assumption from the running firmware.
-func (u *ui) setSwitch(info *flow.DeviceInfo) {
-	u.switchable = info.Switchable
-	u.switchTarget = info.SwitchTarget()
-	u.flashboot = info.RunningSlot != "" && info.ActiveSlot != "" && info.RunningSlot != info.ActiveSlot
-	u.provenNote = info.ProvenNote
-}
-
-// clearSwitch drops the recorded switch, for when no device (or no usable slot
-// state) was found.
-func (u *ui) clearSwitch() {
-	u.switchable = false
-	u.switchTarget = flow.SwitchTarget{}
-	u.flashboot = false
-	u.provenNote = ""
-}
-
-// --- flash -----------------------------------------------------------------
-
-// chooseImage opens the native OS file picker (zenity: the real GTK/KDE dialog on
-// Linux, the Win32 dialog on Windows). It runs off the UI thread and marshals the
-// result back. If no native picker is available it falls back to Fyne's in-app one.
-func (u *ui) chooseImage() {
-	go func() {
-		path, err := zenity.SelectFile(
-			zenity.Title("Select the MissingLynk firmware image"),
-			zenity.FileFilters{{Name: "Firmware image", Patterns: []string{"*.mlimg", "*.tar"}, CaseFold: true}},
-		)
-
-		switch {
-		case errors.Is(err, zenity.ErrCanceled):
-			return
-
-		case err != nil:
-			fyne.Do(u.chooseImageFallback)
-
-		default:
-			fyne.Do(func() { u.setImage(path) })
-		}
-	}()
-}
-
-// chooseImageFallback is Fyne's in-app file dialog, used when the native picker is
-// unavailable.
-func (u *ui) chooseImageFallback() {
-	fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil || reader == nil {
-			return
-		}
-
-		defer reader.Close()
-		u.setImage(reader.URI().Path())
-	}, u.win)
-	fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".mlimg", ".tar"}))
-
-	// Resize must come after Show: the dialog's widgets are not built until then,
-	// so resizing earlier dereferences a nil internal (Fyne v2.8).
-	fileDialog.Show()
-	fileDialog.Resize(fyne.NewSize(760, 540))
-}
-
-// setImage records the chosen image and updates the UI (UI thread only).
-func (u *ui) setImage(path string) {
-	u.selectedImage = path
-	u.selectedLabel.SetText(filepath.Base(path))
-	u.refresh()
-}
-
-// confirmFlash offers the two flash modes. "Flash and switch" (default) writes the
-// inactive slot, activates it, and reboots. "Flash only" writes the inactive slot
-// and stops, leaving the device on its current slot; the written slot can be
-// activated later with the switch button (after proving it, e.g. by RAM-boot). The
-// confirm button for each mode is a distinct button so the choice is explicit.
-func (u *ui) confirmFlash() {
-	if u.selectedImage == "" || u.flashing {
 		return
 	}
 
-	message := widget.NewLabel(
-		"This writes the open firmware to the device's inactive slot. The stock firmware on the " +
-			"other slot is left untouched.\n\n" +
-			"Flash and switch: activate the newly written slot and reboot into it now.\n\n" +
-			"Flash only: leave the device on its current slot. The new slot is written but not " +
-			"activated; use the switch button to boot it once you are ready.")
-	message.Wrapping = fyne.TextWrapWord
-
-	var confirmDialog *dialog.CustomDialog
-	cancelButton := widget.NewButton("Cancel", func() { confirmDialog.Hide() })
-	flashOnlyButton := widget.NewButton("Flash only", func() {
-		confirmDialog.Hide()
-		u.startFlash(true)
-	})
-	flashAndSwitchButton := widget.NewButtonWithIcon("Flash and switch", theme.DownloadIcon(), func() {
-		confirmDialog.Hide()
-		u.startFlash(false)
-	})
-	flashAndSwitchButton.Importance = widget.HighImportance
-
-	confirmDialog = dialog.NewCustomWithoutButtons("Flash open firmware?", message, u.win)
-	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, flashOnlyButton, flashAndSwitchButton})
-	confirmDialog.Show()
-	confirmDialog.Resize(fyne.NewSize(520, 0))
-}
-
-func (u *ui) startFlash(flashOnly bool) {
-	u.flashing = true
-	u.refresh()
-	u.logBuilder.Reset()
-	u.logView.SetText("")
-	u.setBusy(true)
-
-	image := u.selectedImage
-	go func() {
-		err := flow.Flash(context.Background(), flow.Options{ImagePath: image, FlashOnly: flashOnly}, u.onEvent)
-		fyne.Do(func() {
-			u.flashing = false
-			u.setBusy(false)
-			u.refresh()
-			if err == nil {
-				if flashOnly {
-					// The device is still on its old slot; the new slot is written
-					// but not active. Re-scan so the card offers the switch.
-					dialog.ShowInformation("Flash complete",
-						"The open firmware is written to the inactive slot. The device is still "+
-							"running its current slot; use the switch button to activate it.", u.win)
-				} else {
-					// Flash already waited for the device to reboot onto the open
-					// firmware; confirm it.
-					dialog.ShowInformation("Flash complete",
-						"The device is now running the MissingLynk open firmware.", u.win)
-				}
-				go u.scan()
-			}
-		})
-	}()
-}
-
-// --- switch slot -----------------------------------------------------------
-
-// confirmSwitch shows the switch-slot confirmation. The confirm button stays
-// disabled until the understanding checkbox is ticked, so a reflexive click
-// cannot pass it; the wording names the slot being activated and spells out the
-// direction-specific risk.
-func (u *ui) confirmSwitch() {
-	if !u.switchable || u.flashing || u.switching {
-		return
-	}
-
-	text := fmt.Sprintf("This makes slot %s (stock firmware) the active boot slot and reboots into it. "+
-		"That slot is the untouched factory install, so this is the low-risk direction. "+
-		"You can switch back to the MissingLynk firmware the same way afterwards.", u.switchTarget.Slot)
-	if u.switchTarget.Content == "open" {
-		text = fmt.Sprintf("This makes slot %s (MissingLynk open firmware) the active boot slot and reboots "+
-			"into it, WITHOUT rewriting or re-verifying it. If that slot no longer boots, the device "+
-			"will not start until the boot slot is recovered. Only proceed if this tool flashed the "+
-			"open firmware onto this device before and it booted.", u.switchTarget.Slot)
-		if u.flashboot {
-			text = fmt.Sprintf("This makes slot %s (MissingLynk open firmware) the active boot slot and "+
-				"reboots into it. This boot is already running slot %s while the other slot is still the "+
-				"active one (as after a flash-boot), so the firmware being activated is the one running "+
-				"right now - but that does not exercise slot %s's own bootloader, which the reboot will.",
-				u.switchTarget.Slot, u.switchTarget.Slot, u.switchTarget.Slot)
-		}
-
-		if u.provenNote != "" {
-			text += "\n\n" + u.provenNote
-		}
-	}
-
-	message := widget.NewLabel(text)
-	message.Wrapping = fyne.TextWrapWord
-	acknowledge := widget.NewCheck("I understand what switching the boot slot does", nil)
-
-	var confirmDialog *dialog.CustomDialog
-	confirmButton := widget.NewButtonWithIcon("Switch", theme.ConfirmIcon(), func() {
-		confirmDialog.Hide()
-		u.startSwitch()
-	})
-	confirmButton.Importance = widget.HighImportance
-	confirmButton.Disable()
-	acknowledge.OnChanged = func(checked bool) { setEnabled(confirmButton, checked) }
-	cancelButton := widget.NewButton("Cancel", func() { confirmDialog.Hide() })
-
-	confirmDialog = dialog.NewCustomWithoutButtons(fmt.Sprintf("Switch to slot %s?", u.switchTarget.Slot),
-		container.NewVBox(message, acknowledge), u.win)
-	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, confirmButton})
-	confirmDialog.Show()
-	confirmDialog.Resize(fyne.NewSize(520, 0))
-}
-
-func (u *ui) startSwitch() {
-	u.switching = true
-	u.refresh()
-	u.logBuilder.Reset()
-	u.logView.SetText("")
-	u.setBusy(true)
-
-	target := u.switchTarget
-	go func() {
-		err := flow.SwitchSlot(context.Background(), flow.Options{}, target, u.onEvent)
-		fyne.Do(func() {
-			u.switching = false
-			u.setBusy(false)
-			u.refresh()
-			if err == nil {
-				// SwitchSlot already waited for the device to reboot onto the activated
-				// slot; confirm it and re-scan to refresh the device card.
-				dialog.ShowInformation("Switch complete",
-					fmt.Sprintf("The device is now running the firmware from slot %s.", target.Slot), u.win)
-				go u.scan()
-			}
-		})
-	}()
-}
-
-// onEvent appends a flow event to the log (marshalled onto the UI thread). Used
-// by both the scan and flash phases.
-func (u *ui) onEvent(e flow.Event) {
-	fyne.Do(func() {
-		switch e.Level {
-		case flow.LevelStep:
-			u.appendLog("-> " + e.Msg)
-
-		case flow.LevelWarn:
-			u.appendLog("warning: " + e.Msg)
-
-		case flow.LevelError:
-			u.appendLog("error: " + e.Msg)
-
-		case flow.LevelDone:
-			u.appendLog(e.Msg)
-
-		default:
-			u.appendLog("   " + e.Msg)
-		}
-	})
-}
-
-func (u *ui) appendLog(line string) {
-	u.logBuilder.WriteString(line)
-	u.logBuilder.WriteByte('\n')
-	u.logView.SetText(u.logBuilder.String())
-	u.logScroll.ScrollToBottom()
+	u.activity.Hide()
+	u.deviceStatus.Show()
 }
 
 // refresh updates the action buttons from the current flags: their enabled state,
@@ -488,7 +184,9 @@ func withDetail(summary, detail string) string {
 func setEnabled(button *widget.Button, enabled bool) {
 	if enabled {
 		button.Enable()
-	} else {
-		button.Disable()
+
+		return
 	}
+
+	button.Disable()
 }

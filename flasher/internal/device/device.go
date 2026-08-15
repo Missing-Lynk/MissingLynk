@@ -6,6 +6,7 @@ package device
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,29 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+)
+
+// Client is a connected SSH session factory to one device.
+type Client struct {
+	IP  string
+	ssh *ssh.Client
+}
+
+// SDKVersion mirrors /usr/usrdata/sdk_version.json on the device.
+type SDKVersion struct {
+	HardwareVersion string `json:"hardware_version"`
+	SoftwareVersion string `json:"software_version"`
+	SequenceNumber  string `json:"sequence_number"`
+	ProductVersion  string `json:"product_version"`
+}
+
+// Unit is the coarse identity: goggle, air unit, or unrecognized.
+type Unit string
+
+const (
+	UnitGoggle  Unit = "P1_GND"
+	UnitAir     Unit = "P1_SKY"
+	UnitUnknown Unit = "unknown"
 )
 
 // SSH port and the well-known device coordinates. The stock/unflashed unit answers
@@ -28,12 +52,6 @@ const (
 	StockPassword = "artosyn"       // vendor slot A (and the air unit)
 	OpenPassword  = "libre"         // our open slot B
 )
-
-// Client is a connected SSH session factory to one device.
-type Client struct {
-	IP  string
-	ssh *ssh.Client
-}
 
 // legacyConfig re-enables the ancient algorithms the vendor Dropbear speaks,
 // alongside the modern ones our open slot B uses, so one config talks to either
@@ -65,18 +83,70 @@ func legacyConfig(user, password string, timeout time.Duration) *ssh.ClientConfi
 
 // Dial opens a connection. user is normally "root"; password differs per slot.
 func Dial(ip, user, password string, timeout time.Duration) (*Client, error) {
-	conn, err := ssh.Dial("tcp", net.JoinHostPort(ip, Port), legacyConfig(user, password, timeout))
+	return DialContext(context.Background(), ip, user, password, timeout)
+}
+
+// DialContext is Dial, abandoned when ctx is cancelled. ssh.Dial has no context form
+// and its Timeout covers only the TCP connect, so the halves are done apart: connect
+// via net.Dialer.DialContext, then the handshake under a write deadline, interrupted
+// by closing the raw connection. The deadline must be cleared afterwards or every
+// later session on the connection inherits it and dies.
+func DialContext(ctx context.Context, ip, user, password string, timeout time.Duration) (*Client, error) {
+	addr := net.JoinHostPort(ip, Port)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{IP: ip, ssh: conn}, nil
+	// Closing conn is what aborts a handshake in progress. done stops the watchdog on
+	// return, so it never touches a connection we hand back.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+
+		case <-done:
+		}
+	}()
+
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, legacyConfig(user, password, timeout))
+	if err != nil {
+		_ = conn.Close()
+		// The close surfaces as "use of closed connection"; report the real cause.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+
+		return nil, err
+	}
+
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = sshConn.Close()
+		return nil, err
+	}
+
+	return &Client{IP: ip, ssh: ssh.NewClient(sshConn, chans, reqs)}, nil
 }
 
 // Reachable reports whether the SSH port answers within timeout, without
 // authenticating. Used by discovery to probe a candidate interface cheaply.
 func Reachable(ip string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, Port), timeout)
+	return ReachableContext(context.Background(), ip, timeout)
+}
+
+// ReachableContext is Reachable, abandoned when ctx is cancelled. Discovery probes
+// several addresses in a row, so a cancelled scan need not wait out the rest.
+func ReachableContext(ctx context.Context, ip string, timeout time.Duration) bool {
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, Port))
 	if err != nil {
 		return false
 	}
@@ -165,14 +235,6 @@ func (client *Client) Push(content io.Reader, remotePath, mode string) error {
 	return sess.Run(cmd)
 }
 
-// SDKVersion mirrors /usr/usrdata/sdk_version.json on the device.
-type SDKVersion struct {
-	HardwareVersion string `json:"hardware_version"`
-	SoftwareVersion string `json:"software_version"`
-	SequenceNumber  string `json:"sequence_number"`
-	ProductVersion  string `json:"product_version"`
-}
-
 // ReadSDKVersion parses the device's sdk_version.json.
 func (client *Client) ReadSDKVersion() (*SDKVersion, error) {
 	out, err := client.Run("cat /usr/usrdata/sdk_version.json")
@@ -187,15 +249,6 @@ func (client *Client) ReadSDKVersion() (*SDKVersion, error) {
 
 	return &version, nil
 }
-
-// Unit is the coarse identity: goggle, air unit, or unrecognized.
-type Unit string
-
-const (
-	UnitGoggle  Unit = "P1_GND"
-	UnitAir     Unit = "P1_SKY"
-	UnitUnknown Unit = "unknown"
-)
 
 // Identify names the connected unit from its product_version (the same signal
 // the Python CLI and mlflash's board check use).

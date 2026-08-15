@@ -7,13 +7,19 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
+type linux struct{}
+
+// What may appear in the privileged /bin/sh command line Assign builds. Names come
+// from the kernel, so this is a backstop, not a live injection vector. Dots and
+// colons are allowed: VLAN ("eth0.100") and alias ("eth0:1") names are legitimate.
+var ifaceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,15}$`)
+
 // New returns the Linux backend.
 func New() Backend { return linux{} }
-
-type linux struct{}
 
 // Candidates enumerates non-loopback USB-ethernet interfaces. The stock gadget
 // is RNDIS with a boot-randomized MAC (so it cannot be matched by OUI); the
@@ -47,6 +53,14 @@ func (linux) Candidates() ([]Candidate, error) {
 // go in one privileged invocation (one prompt); `addr replace` is idempotent, so a
 // re-run or a pre-configured interface is not an error.
 func (linux) Assign(iface, hostCIDR string) (func() error, error) {
+	if !ifaceNamePattern.MatchString(iface) {
+		return nil, fmt.Errorf("refusing to configure interface name %q: unexpected characters", iface)
+	}
+
+	if _, _, err := net.ParseCIDR(hostCIDR); err != nil {
+		return nil, fmt.Errorf("host address %q is not a valid CIDR: %w", hostCIDR, err)
+	}
+
 	ipCmd, err := exec.LookPath("ip")
 	if err != nil {
 		return nil, fmt.Errorf("`ip` command not found: %w", err)

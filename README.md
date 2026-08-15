@@ -6,6 +6,8 @@
 
 MissingLynk replaces the closed vendor stack on ArtLynk-based FPV devices with an open, reproducible one: **mainline kernel, Alpine rootfs, GStreamer video pipeline, RF link daemon, and on-screen HUD**. Hardware-validated end to end. Fully reversible: the stock firmware remains untouched in slot A. Project overview: [organization README](https://github.com/Missing-Lynk).
 
+Some hardware still consumes proprietary bytes fetched from your own device. The open runtime needs the AR8030 RF firmware/configs and the Wave521C codec firmware; the air-unit camera ISP also derives tables from the local NT99235 tuning blob and fixed data recovered from the vendor media library. Those blobs stay under `firmware/bin/`, are git-ignored, and are never distributed. For the ISP, a new vendor tuning blob is meant to be swapped in as an input: blob-fed stages regenerate from it, library-fed static tables regenerate from `libmpp_service.so`, and the provenance audit catches any value that falls back to capture-only state. The current ISP ownership/audit status is in [`kernel/STATUS.md`](kernel/STATUS.md) and [`kernel/docs/camera-stack.md`](kernel/docs/camera-stack.md).
+
 The platform (Proxima-9311 SoC + AR8030 RF link) spans both ends of the link across many brands: **receivers** (goggles, HDMI-out receiver boxes) and **transmitters** (air units / VTXs). Reference devices are the BetaFPV VR04 HD goggle and its matching air unit; most of the stack should carry over to other ArtLynk-based hardware.
 
 This repo is the **entry point**: the `missinglynk` CLI, host-side device tooling (flash, RAM-boot, recovery), and every component repo pinned as a git submodule. A tag here reproduces the exact state of the whole system.
@@ -123,13 +125,13 @@ missinglynk identify
 
 Details: [`glue/docs/host-network-setup.md`](glue/docs/host-network-setup.md).
 
-**Step 4, fetch the vendor blobs from your device.** The open stack needs the AR8030 RF firmware + configs and the Wave521C codec firmware (`chagall`). The device must be booted on **stock slot A**.
+**Step 4, fetch the vendor blobs from your device.** The open stack needs the AR8030 RF firmware + configs, the Wave521C codec firmware (`chagall`), and, for air-unit camera work, the local camera tuning/vendor-library inputs used to regenerate ISP tables. The device must be booted on **stock slot A**.
 
 ```sh
 missinglynk fetch-blobs
 ```
 
-The blobs land in `firmware/bin/slot-a/` and stay local. `fetch-blobs` selects the right manifest per unit (goggle `gnd` vs air-unit `sky`), md5-verifies every transfer, and stages `chagall` where the wave5 driver expects it. `--all` additionally fetches dev/RE extras (vendor MPI libs) the open runtime does not need.
+The blobs land in `firmware/bin/slot-a/` and stay local. `fetch-blobs` selects the right manifest per unit (goggle `gnd` vs air-unit `sky`), md5-verifies every transfer, and stages `chagall` where the wave5 driver expects it. `--all` additionally fetches dev/RE extras, including vendor media libraries used to audit and regenerate ISP tables.
 
 **Step 5, build everything.** The repo-root `Makefile` is the single front door; nothing here touches the device. `make` builds native tools, userspace programs, kernel + modules, and the slot-B rootfs, in that order.
 
@@ -155,7 +157,8 @@ Notes:
 - `mtdtool` (from `make native`) is the on-device raw-NAND writer / slot flipper used in Part 2.
 - `make flasher` builds the host-side flashing GUI; `make umtprd` builds the MTP-over-USB recordings gadget. Both are kept out of `make all` (they need Docker + network).
 - `make check-python` lints the Python code (`missinglynk/`, `tests/`, `glue/`) and unit-tests the CLI. No device, no Docker; run it before sending a change that touches any of them, and CI runs the identical pair on push and PR ([python-tooling.md](docs/guides/python-tooling.md)).
-- `make check-shell` shellchecks every tracked `.sh` using a pinned container image, the same one CI uses, so the two cannot disagree about what counts as a finding. `make check` runs both gates. CI runs each on push and PR.
+- `make check-shell` shellchecks every tracked `.sh` using a pinned container image, the same one CI uses, so the two cannot disagree about what counts as a finding.
+- `make check-go` gofmt-checks, vets and unit-tests the host flasher's Go packages. It uses a host `go` if one is installed and the pinned `golang` image otherwise, and skips the cgo GUI package (built by `make flasher`). `make check` runs every gate. CI runs each on push and PR.
 - Per-part details: [`kernel/`](kernel/), [`rootfs/`](rootfs/), [`userspace/gstreamer/`](userspace/gstreamer/).
 
 **Checkpoint.** Built + fetched: `firmware/bin/slot-a/`, kernel `Image` + dtb + modules, `rootfs/build/rootfs-<device>.ubi`, native tools, the static `ml-pipeline`. This is as far as a machine without serial access goes.

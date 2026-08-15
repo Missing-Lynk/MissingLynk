@@ -13,9 +13,6 @@ import (
 	"unicode/utf16"
 )
 
-// New returns the Windows backend.
-func New() Backend { return windows{} }
-
 type windows struct{}
 
 // adapter mirrors the Get-NetAdapter fields we care about.
@@ -24,6 +21,9 @@ type adapter struct {
 	InterfaceDescription string
 	MacAddress           string
 }
+
+// New returns the Windows backend.
+func New() Backend { return windows{} }
 
 // Candidates lists network adapters whose driver description marks them as a USB
 // gadget (RNDIS on stock, CDC-Ethernet on the open slot). The stock gadget shows
@@ -122,11 +122,20 @@ func cidrToIPMask(cidr string) (ip, mask string, err error) {
 
 // netshElevated runs `netsh <args>` elevated. Start-Process -Verb RunAs shows the
 // UAC prompt; -Wait -PassThru lets us surface netsh's exit code as this process's.
+//
+// args carries the adapter name, which is user-renamable and may contain an
+// apostrophe ("Chris's USB"). Spaces need no handling: -ArgumentList gets one string,
+// passed through verbatim, and the name already carries the double quotes netsh wants.
 func netshElevated(args string) (string, error) {
 	script := fmt.Sprintf(
 		`$p = Start-Process -FilePath 'netsh' -Verb RunAs -PassThru -Wait -ArgumentList '%s'; exit $p.ExitCode`,
-		args)
+		psQuote(args))
 	return powershell(script)
+}
+
+// psQuote escapes a value for a single-quoted PowerShell string: apostrophes double.
+func psQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // powershell runs a script via -EncodedCommand (base64 of UTF-16LE), which avoids
