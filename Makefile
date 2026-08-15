@@ -34,7 +34,8 @@
 #   make check-python    lint + unit-test the Python CLI (missinglynk/); also: make lint, make test
 #   make check-shell     shellcheck the host-side shell scripts (glue/, native/)
 #   make check-userspace build + run the userspace submodule's host tests (make -C userspace check)
-#   make check           all three of the above
+#   make check-native    build + run native/'s host tests (the .mlimg rootfs inflate writer)
+#   make check           all four of the above
 #
 # Clean:
 #   make clean        remove component build outputs (keeps the pinned kernel tree)
@@ -280,7 +281,18 @@ check-shell:
 check-userspace:
 	$(MAKE) -C userspace check
 
-check: check-python check-shell check-userspace
+# native/'s host tests: built with the host compiler and run here, not cross-built, because they
+# exercise logic that is the same on either architecture. They need no device, no docker and no
+# hardware. The device tools themselves still cross-build in the container (make native).
+NATIVE_CHECK_CFLAGS := -O1 -Wall -Wextra -Werror
+
+check-native:
+	@mkdir -p native/build
+	gcc $(NATIVE_CHECK_CFLAGS) -o native/build/ubi-inflate \
+	  native/tests/ubi-inflate.c native/mlflash/src/ubi.c -lz
+	native/build/ubi-inflate
+
+check: check-python check-shell check-userspace check-native
 
 clean:
 	-$(MAKE) -C userspace clean
@@ -292,4 +304,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check-userspace check clean distclean
+.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check-userspace check-native check clean distclean

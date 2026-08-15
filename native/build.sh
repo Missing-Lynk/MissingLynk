@@ -83,7 +83,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
         mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c \
         mlflash/src/probe.c mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
         mlflash/src/device_record.c common/mlfile.c \
-        vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto &&
+        vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto -lz &&
     for spec in $DEVICE_TOOLS $BRINGUP_TOOLS; do
         name=${spec%%:*}
         extra=${spec#"$name"}

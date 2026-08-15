@@ -20,8 +20,14 @@
  * bytes themselves is already verified against the manifest in preflight; correctness on-flash
  * is ubiformat's own per-eraseblock write path (torture + mark-bad on write error).
  *
+ * @param data,len the tar member bytes, gzip-compressed when `gzipped` is set.
+ * @param out_len the length ubiformat is told to expect, i.e. the inflated image length; equal
+ *        to `len` when the member is stored verbatim.
+ * @param gzipped inflate `data` into the pipe rather than copying it. gzip's CRC-32 and length
+ *        trailer are checked as the stream ends, so a corrupt member fails the write.
  * @return 0 on success; -1 on any error (message already printed).
  */
-int ubi_write(const char *dev_path, const unsigned char *data, size_t len);
+int ubi_write(const char *dev_path, const unsigned char *data, size_t len, size_t out_len,
+              int gzipped);
 
 #endif

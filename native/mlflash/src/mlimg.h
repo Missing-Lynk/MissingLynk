@@ -10,16 +10,29 @@
 #define MLIMG_FORMAT_VERSION 1
 #define MAX_COMPONENTS 16
 
-/** @brief One flashable payload described by the manifest. */
+/**
+ * @brief One flashable payload described by the manifest.
+ *
+ * `bytes`/`sha256` always describe the payload as it lands on flash. The ubiformat component is
+ * stored gzip-compressed, so its member holds `stored_bytes` bytes digesting to `stored_sha256`
+ * instead; for the raw components, stored verbatim, the stored pair mirrors the flash pair.
+ * Which is which follows from `method` (see component_is_gzipped), the same rule the builder
+ * applies, so there is no separate flag that could contradict it.
+ */
 struct component {
-    char name[32];      /**< logical name (uboot/env/kernel/dtb/rootfs) */
-    char role[16];      /**< "open" or "vendor" */
-    char target[32];    /**< slot-relative partition, resolved to the 0/1 slot at flash time */
-    char method[24];    /**< "mtdtool-raw" | "ubiformat" */
-    char file[64];      /**< member name inside the tar */
-    char sha256[65];    /**< hex digest of the member bytes */
-    long long bytes;    /**< member byte length */
+    char name[32];           /**< logical name (uboot/env/kernel/dtb/rootfs) */
+    char role[16];           /**< "open" or "vendor" */
+    char target[32];         /**< slot-relative partition, resolved to the 0/1 slot at flash time */
+    char method[24];         /**< "mtdtool-raw" | "ubiformat" */
+    char file[64];           /**< member name inside the tar */
+    char sha256[65];         /**< hex digest of the payload written to flash */
+    long long bytes;         /**< byte length of the payload written to flash */
+    char stored_sha256[65];  /**< hex digest of the tar member bytes */
+    long long stored_bytes;  /**< tar member byte length */
 };
+
+/** @brief Whether a component is stored gzip-compressed in the tar. */
+int component_is_gzipped(const struct component *comp);
 
 /** @brief Parsed manifest.json. */
 struct manifest {

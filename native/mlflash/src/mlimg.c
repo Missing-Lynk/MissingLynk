@@ -43,6 +43,17 @@ static const struct component_spec *find_component_spec(const char *target)
     return NULL;
 }
 
+/*
+ * Only the component streamed into ubiformat's stdin can be inflated on the way past. The raw
+ * partitions are written from the mapped pointer and read back against their digest through that
+ * same pointer, so inflating one would mean holding the whole payload in RAM on a device that has
+ * little of it. The builder compresses by this same rule.
+ */
+int component_is_gzipped(const struct component *comp)
+{
+    return strcmp(comp->method, "ubiformat") == 0;
+}
+
 static int is_sha256_hex(const char *s)
 {
     for (int i = 0; i < 64; i++) {
@@ -85,6 +96,25 @@ static int validate_component(const struct component *comp, unsigned *seen_targe
 
     if (!is_sha256_hex(comp->sha256)) {
         fprintf(stderr, "manifest: component %s has invalid sha256\n", comp->name);
+        return -1;
+    }
+
+    if (comp->stored_bytes <= 0) {
+        fprintf(stderr, "manifest: component %s has invalid stored byte length %lld\n",
+                comp->name, comp->stored_bytes);
+        return -1;
+    }
+
+    if (!is_sha256_hex(comp->stored_sha256)) {
+        fprintf(stderr, "manifest: component %s has invalid stored sha256\n", comp->name);
+        return -1;
+    }
+
+    /* A verbatim component's two digests describe the same bytes, so they have to agree. */
+    if (!component_is_gzipped(comp) &&
+        (comp->stored_bytes != comp->bytes || strcmp(comp->stored_sha256, comp->sha256) != 0)) {
+        fprintf(stderr, "manifest: uncompressed component %s disagrees with its stored digest\n",
+                comp->name);
         return -1;
     }
 
@@ -215,6 +245,13 @@ int manifest_parse(const unsigned char *data, size_t len, struct manifest *m)
         const cJSON *bytes = cJSON_GetObjectItemCaseSensitive(item, "bytes");
         if (cJSON_IsNumber(bytes)) {
             comp->bytes = (long long)bytes->valuedouble;
+        }
+
+        json_copy_string(item, "stored_sha256", comp->stored_sha256, sizeof comp->stored_sha256);
+
+        const cJSON *stored_bytes = cJSON_GetObjectItemCaseSensitive(item, "stored_bytes");
+        if (cJSON_IsNumber(stored_bytes)) {
+            comp->stored_bytes = (long long)stored_bytes->valuedouble;
         }
 
         if (!comp->name[0] || !comp->file[0] || !comp->target[0] || !comp->sha256[0]) {

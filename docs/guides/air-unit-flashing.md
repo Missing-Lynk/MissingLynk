@@ -74,7 +74,7 @@ Confirm:
 The GUI now recognizes the air unit and will:
 
 - connect at `192.168.3.100` (stock) or `192.168.3.102` (open slot B)
-- stage the image on an SD card if one is inserted, or fall back to `/tmp` if the air unit has no SD card and enough free RAM
+- stage the image on a card if one is mounted, otherwise in `/tmp`, which it accepts only when the free space there covers the image plus a 20 MiB margin. The air unit stages in `/tmp`, and the bundle is stored compressed to fit: about 19 MB against the roughly 53 MiB free, where an uncompressed bundle was refused.
 - flash slot B, then reboot to `192.168.3.102`
 
 ## Recovery
@@ -89,4 +89,5 @@ Slot A is never written by any of these steps. If the open slot B does not boot:
 - `glue/flash/mlimg.py` scopes vendor-blob search to `firmware/bin/<device>/`.
 - `Makefile` passes `--blobs-dir firmware/bin/$(DEV_MLIMG_TARGET)` and only skips `image-blobs` when the current device's blobs exist.
 - `flasher/internal/whitelist/whitelist.go` whitelists `P1_SKY`.
-- `flasher/internal/flow/flow.go` no longer hardcodes goggle-only checks; it probes all known open-slot IPs and falls back to `/tmp` staging when no SD card is present.
+- `flasher/internal/flow/flow.go` no longer hardcodes goggle-only checks; it probes all known open-slot IPs and falls back to `/tmp` staging when no card is mounted.
+- `glue/flash/mlimg.py` stores the rootfs component gzip-compressed and `native/mlflash` inflates it as it streams into `ubiformat`, which is what brings the bundle inside the air unit's `/tmp`.

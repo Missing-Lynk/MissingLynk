@@ -77,9 +77,12 @@ func imageSize(path string) int64 {
 }
 
 // stageDir returns a writable directory on the device large enough to hold the
-// flash image. It prefers a removable SD card (goggle path) and falls back to
-// /tmp when no card is inserted and free memory permits. The air unit has no SD
-// slot, so the fallback is required for air-unit flashing.
+// flash image. It prefers a removable card when one is mounted, because /tmp is
+// tmpfs and staging there spends RAM the flash itself needs. Where no card is
+// mounted it falls back to /tmp, which is accepted only when the free space
+// there covers the image plus a margin. Both branches are reached on any device;
+// which one a given unit takes is a property of that unit and its card, so it is
+// decided here by looking rather than by knowing the model.
 func stageDir(client *device.Client, imagePath string, emit Emit) (string, error) {
 	if sd, err := sdCardDir(client); err != nil {
 		return "", err
@@ -98,7 +101,7 @@ func stageDir(client *device.Client, imagePath string, emit Emit) (string, error
 	dir, err := tmpStageDir(client, needed)
 	if err == nil {
 		emit(Event{Level: LevelWarn,
-			Msg: "No SD card found; staging the image in /tmp. " +
+			Msg: "No card mounted; staging the image in /tmp. " +
 				"Make sure the device has enough free RAM or the flash may fail mid-write."})
 	}
 
@@ -131,8 +134,8 @@ func tmpStageDir(client *device.Client, minBytes int64) (string, error) {
 
 	available := kb * 1024
 	if available < minBytes {
-		return "", fmt.Errorf("/tmp has only %d MiB free; need %d MiB. Insert an SD card or free RAM",
-			available/(1024*1024), minBytes/(1024*1024))
+		return "", fmt.Errorf("/tmp has only %d MiB free; need %d MiB. Free RAM on the device, "+
+			"or mount a card for the image to stage on", available/(1024*1024), minBytes/(1024*1024))
 	}
 
 	return "/tmp", nil
@@ -658,9 +661,9 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 			sdk.SoftwareVersion, sdk.HardwareVersion))
 	}
 
-	// Stage the image on the SD card when available (goggle), otherwise fall back
-	// to /tmp (air unit). The image must not live in RAM on low-memory units, so
-	// /tmp is only accepted when it has enough free space.
+	// Stage on a mounted card where there is one, otherwise in /tmp. The image must
+	// not live in RAM on low-memory units, so /tmp is only accepted when it has
+	// enough free space.
 	stage, err := stageDir(client, opt.ImagePath, emit)
 	if err != nil {
 		return fail(emit, err)

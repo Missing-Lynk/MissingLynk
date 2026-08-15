@@ -9,7 +9,15 @@ An .mlimg holds five components plus a manifest:
   env.bin       stock vendor env bytes   (role=vendor, from the user's own dump)
   kernel.otra   our kernel Image ALREADY packed into the OTRA+uImage+LZ4 container (role=open)
   dtb.dtb       our raw dtb, written as-is (role=open)
-  rootfs.ubi    the open Alpine rootfs UBI image (role=open)
+  rootfs.ubi    the open Alpine rootfs UBI image (role=open), gzip-compressed in the tar
+
+The rootfs is stored compressed, which is what keeps a bundle small enough to sit on a unit that
+stages it in a tmpfs /tmp; it roughly halves the whole bundle. The flasher inflates it as it
+streams into ubiformat, so the inflated image exists only as it is written. A component's
+`sha256`/`bytes` always describe the payload as it lands on flash, with `stored_sha256`/
+`stored_bytes` describing the tar member; the two pairs are equal for the raw components, which
+are stored verbatim. Which components are compressed follows from the write method, so there is
+no per-component compression flag in the manifest for the flasher to disagree with.
 
 Manifest targets are slot-RELATIVE names (uboot/env/kernel/dtb/userapp); the flasher resolves
 them to the *0/*1 partition of the chosen slot at flash time. This tool never touches a device
@@ -28,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import gzip
 import hashlib
 import io
 import json
@@ -51,8 +60,10 @@ class Component(TypedDict):
     target: str        # slot-relative partition; the flasher resolves it to *0/*1 at flash time
     method: str        # how the flasher writes it ("mtdtool-raw" | "ubiformat")
     file: str          # member name inside the tar
-    sha256: str        # hex digest of the member bytes
-    bytes: int         # member byte length
+    sha256: str        # hex digest of the payload written to flash
+    bytes: int         # byte length of the payload written to flash
+    stored_sha256: str  # hex digest of the tar member bytes
+    stored_bytes: int  # tar member byte length
 
 
 class Manifest(TypedDict):
@@ -92,6 +103,19 @@ MLIMG_COMPONENTS: tuple[dict[str, str], ...] = (
     {"name": "rootfs", "role": "open", "target": "userapp", "method": "ubiformat",
      "file": ROOTFS_FILE},
 )
+
+
+def is_gzipped(component: dict[str, object]) -> bool:
+    """
+    Whether a component is stored gzip-compressed in the tar, which the write method decides.
+
+    The ubiformat component is streamed into ubiformat's stdin, so the flasher can inflate it on
+    the way past and the image never exists whole on the device. The raw partitions are written
+    from a mapped pointer and read back against their digest through that same pointer, which an
+    inflate would have to break by buffering the payload. mlflash applies the same rule, so the
+    bundle carries no per-component compression flag to disagree with it.
+    """
+    return component["method"] == "ubiformat"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -241,11 +265,20 @@ def build(args: argparse.Namespace) -> int:
         DTB_FILE: dtb_bytes,
         ROOTFS_FILE: rootfs_bytes,
     }
-    components: list[Component] = [
-        {**component, "sha256": sha256_bytes(payloads[component["file"]]),
-         "bytes": len(payloads[component["file"]])}
-        for component in MLIMG_COMPONENTS
-    ]
+    components: list[Component] = []
+    stored: dict[str, bytes] = {}
+    for component in MLIMG_COMPONENTS:
+        payload = payloads[component["file"]]
+        # mtime=0 keeps the member reproducible for identical input.
+        member = gzip.compress(payload, 9, mtime=0) if is_gzipped(component) else payload
+        stored[component["file"]] = member
+        components.append({
+            **component,
+            "sha256": sha256_bytes(payload),
+            "bytes": len(payload),
+            "stored_sha256": sha256_bytes(member),
+            "stored_bytes": len(member),
+        })
 
     device = args.device
     version = args.version or provenance["kernel_git"] or kernel_ver or "dev"
@@ -258,14 +291,18 @@ def build(args: argparse.Namespace) -> int:
     }
 
     out_path = args.output or os.path.join(REPO, f"mlimg-{device}-{version}.tar")
-    write_tar(out_path, manifest, payloads)
+    write_tar(out_path, manifest, stored)
 
     total_bytes = sum(component["bytes"] for component in components)
-    print(f"[+] wrote {out_path} ({total_bytes:,} B across {len(components)} components)")
-    print(f"    device {device}, version {version}")
+    stored_bytes = sum(component["stored_bytes"] for component in components)
+    print(f"[+] wrote {out_path} ({stored_bytes:,} B stored, {total_bytes:,} B flashed, "
+          f"across {len(components)} components)")
+    print(f"    device {device}, version {version}, format {manifest['format_version']}")
     for component in components:
+        note = (f"  ({component['method']}, gzip {component['stored_bytes']:,} B)"
+                if is_gzipped(component) else f"  ({component['method']})")
         print(f"    {component['name']:7s} {component['role']:6s} -> {component['target']:8s} "
-              f"{component['bytes']:>12,} B  {component['sha256'][:16]}  ({component['method']})")
+              f"{component['bytes']:>12,} B  {component['sha256'][:16]}{note}")
 
     return 0
 
@@ -323,16 +360,25 @@ def inspect(args: argparse.Namespace) -> int:
                 all_ok = False
                 continue
 
+            gzipped = is_gzipped(component)
             digest = sha256_bytes(data)
-            size_ok = len(data) == component["bytes"]
-            hash_ok = digest == component["sha256"]
+            size_ok = len(data) == component["stored_bytes"]
+            hash_ok = digest == component["stored_sha256"]
+
+            if gzipped and size_ok and hash_ok:
+                # Inflate to confirm the member really carries the payload the manifest promises,
+                # which is the digest the device readback and ubiformat are judged against.
+                payload = gzip.decompress(data)
+                size_ok = len(payload) == component["bytes"]
+                hash_ok = sha256_bytes(payload) == component["sha256"]
 
             status = "OK" if (size_ok and hash_ok) else "FAIL"
             if status != "OK":
                 all_ok = False
 
-            print(f"    {component['name']:7s} {component['role']:6s} -> {component['target']:8s} "
-                  f"{len(data):>12,} B  {digest[:16]}  [{status}]")
+            note = f" gzip {len(data):,} B ->" if gzipped else ""
+            print(f"    {component['name']:7s} {component['role']:6s} -> {component['target']:8s}"
+                  f"{note} {component['bytes']:>12,} B  {digest[:16]}  [{status}]")
 
         # Kernel container sanity: OTRA + uImage magic + data CRC, without unpacking to disk.
         kernel_comp = next((c for c in manifest.get("components", []) if c["name"] == "kernel"), None)

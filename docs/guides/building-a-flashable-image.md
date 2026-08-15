@@ -61,6 +61,8 @@ mlflash --inspect mlimg-<device>-<version>.tar                    # on-device (s
 
 `mlimg-<device>-<version>.tar` at the repo root, git-ignored (it embeds vendor bytes and is not redistributable). Given the same device dump and the same component builds, the bundle is content-reproducible; only the manifest's `build_time` varies.
 
+The `rootfs.ubi` member holds a gzip stream rather than the UBI image directly, which roughly halves the bundle and is what lets a unit with no card stage it in `/tmp`. `mlflash` inflates it while streaming into `ubiformat`; extracting that member by hand gives the gzip, so pipe it through `gunzip` to get the UBI image. The manifest records both digests: `sha256`/`bytes` for the payload as it lands on flash, `stored_sha256`/`stored_bytes` for the member. The other four components are stored verbatim.
+
 ## Flashing it onto a slot
 
 The bundle is written on-device by `mlflash`, the standalone slot flasher. It runs on the goggle itself under either userspace, writes only the inactive slot, and re-verifies every component. Full command reference, the preflight checks, and the slot-safety guarantees are in [`native/mlflash/README.md`](../../native/mlflash/README.md); the safe order is:

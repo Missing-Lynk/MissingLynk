@@ -153,14 +153,21 @@ static int cmd_inspect(const char *path)
 
         char hex[65];
         sha256_hex(data, data_len, hex);
-        int size_ok = ((long long)data_len == comp->bytes);
-        int hash_ok = (strcmp(hex, comp->sha256) == 0);
+        int size_ok = ((long long)data_len == comp->stored_bytes);
+        int hash_ok = (strcmp(hex, comp->stored_sha256) == 0);
         const char *status = (size_ok && hash_ok) ? "OK" : "FAIL";
         if (!size_ok || !hash_ok) {
             ok = 0;
         }
-        printf("    %-7s %-6s -> %-8s %12zu B  %.16s  [%s]\n",
-               comp->name, comp->role, comp->target, data_len, hex, status);
+
+        if (component_is_gzipped(comp)) {
+            printf("    %-7s %-6s -> %-8s %12zu B gzip -> %lld B  %.16s  [%s]\n",
+                   comp->name, comp->role, comp->target, data_len,
+                   comp->bytes, hex, status);
+        } else {
+            printf("    %-7s %-6s -> %-8s %12zu B  %.16s  [%s]\n",
+                   comp->name, comp->role, comp->target, data_len, hex, status);
+        }
     }
 
     printf("  => %s\n", ok ? "all components verified" : "VERIFICATION FAILED");
@@ -260,7 +267,8 @@ static int cmd_dry_run(const char *path, const char *want_slot)
         int hash_ok = 0;
         if (have) {
             sha256_hex(data, data_len, hex);
-            hash_ok = (strcmp(hex, comp->sha256) == 0) && ((long long)data_len == comp->bytes);
+            hash_ok = (strcmp(hex, comp->stored_sha256) == 0) &&
+                      ((long long)data_len == comp->stored_bytes);
         }
 
         if (resolved == 0) {
@@ -363,8 +371,15 @@ static int flash_preflight(const unsigned char *img, size_t img_len, const char 
             return 1;
         }
 
+        /*
+         * Hash the member as stored, so a compressed component is verified without inflating it
+         * and every component is still checked before any of them is written. What lands on
+         * flash is covered downstream: gzip's CRC-32 and length trailer as the stream inflates,
+         * then ubiformat's own per-eraseblock verification.
+         */
         sha256_hex(data, data_len, hex);
-        if ((long long)data_len != comp->bytes || strcmp(hex, comp->sha256) != 0) {
+        if ((long long)data_len != comp->stored_bytes ||
+            strcmp(hex, comp->stored_sha256) != 0) {
             fprintf(stderr, "flash: %s image hash/size mismatch; refusing.\n", comp->name);
             return 1;
         }
@@ -376,7 +391,8 @@ static int flash_preflight(const unsigned char *img, size_t img_len, const char 
             return 1;
         }
 
-        if (slot_resolve_target(comp->target, tgt, (unsigned long)data_len,
+        /* The partition has to hold the payload, which is the inflated length. */
+        if (slot_resolve_target(comp->target, tgt, (unsigned long)comp->bytes,
                                 devpath[i], sizeof devpath[i]) != 0) {
             return 1;
         }
@@ -403,11 +419,17 @@ static int flash_commit(const unsigned char *img, size_t img_len, const struct m
         size_t data_len;
 
         tar_find(img, img_len, comp->file, &data, &data_len);
-        printf("  %-7s -> %s (%zu B, %s)\n", comp->name, devpath[i], data_len, comp->method);
+        int gzipped = component_is_gzipped(comp);
+        if (gzipped) {
+            printf("  %-7s -> %s (%zu B gzip -> %lld B, %s)\n", comp->name, devpath[i],
+                   data_len, comp->bytes, comp->method);
+        } else {
+            printf("  %-7s -> %s (%zu B, %s)\n", comp->name, devpath[i], data_len, comp->method);
+        }
 
         int wr;
         if (strcmp(comp->method, "ubiformat") == 0) {
-            wr = ubi_write(devpath[i], data, data_len);
+            wr = ubi_write(devpath[i], data, data_len, (size_t)comp->bytes, gzipped);
         } else {
             wr = mtd_write_verify(devpath[i], data, data_len, comp->sha256);
         }
