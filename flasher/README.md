@@ -26,6 +26,12 @@ make native      # produces native/build/mlflash (once), which the flasher embed
 make flasher     # builds in golang:1.26-bookworm, extracts flasher/build/ml-flasher
 ```
 
+## CI builds and releases
+
+`.github/workflows/flasher-linux.yml` and `.github/workflows/flasher-windows.yml` build one binary each through the same make targets as above and keep it as a workflow artifact. Neither runs automatically: dispatch one from the Actions tab, picking the branch to build, or pass a `ref` (`refs/pull/<n>/head`) to build a PR that lives in a fork. The artifact zip drops the executable bit, so a downloaded Linux build needs a `chmod +x`.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls both build workflows at the tagged commit and publishes a GitHub release with `ml-flasher-<tag>-linux-amd64`, `ml-flasher-<tag>-windows-amd64.exe` and a `SHA256SUMS` attached. A tag carrying a suffix (`v1.2.0-rc1`) is published as a prerelease.
+
 ## Running
 
 ```

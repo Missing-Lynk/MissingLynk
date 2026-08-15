@@ -35,7 +35,8 @@
 #   make check-shell     shellcheck the host-side shell scripts (glue/, native/)
 #   make check-userspace build + run the userspace submodule's host tests (make -C userspace check)
 #   make check-native    build + run native/'s host tests (the .mlimg rootfs inflate writer)
-#   make check           all four of the above
+#   make check-go        vet + unit-test the host flasher's Go packages (flasher/, minus the GUI)
+#   make check           all five of the above
 #
 # Clean:
 #   make clean        remove component build outputs (keeps the pinned kernel tree)
@@ -102,6 +103,11 @@ endif
 
 native:
 	./native/build.sh
+
+# Just native/build/mlflash, the one native binary the host flasher embeds. Every compile in
+# native/ runs under arm64 emulation, so the release workflow builds this instead of `native`.
+native-mlflash:
+	./native/build.sh mlflash
 
 # uMTP-Responder for the MTP-over-USB recordings gadget. Kept out of `native`/`all`: it clones a
 # pinned upstream from the network, so it must not break the offline-cacheable common build.
@@ -292,7 +298,51 @@ check-native:
 	  native/tests/ubi-inflate.c native/mlflash/src/ubi.c -lz
 	native/build/ubi-inflate
 
-check: check-python check-shell check-userspace check-native
+# The host flasher's Go packages: gofmt, vet and unit tests. Two things make this less direct than
+# `go test ./...`:
+#
+#   - internal/devconf/devices.json is generated (gen-flasher-devconf.py) and git-ignored, so the
+#     module does not compile from a clean checkout until it is written. It is regenerated here
+#     rather than assumed, the same as `make flasher` does.
+#   - internal/gui is cgo over OpenGL/X11/Wayland headers, which the host is not required to have.
+#     The GUI is compiled by the container build (make flasher); this target covers the packages
+#     that hold the logic and need no display stack. GOFLAGS keeps the tags aligned with that
+#     build so vet sees the same code.
+GO_CHECK_PKGS := ./internal/device/... ./internal/devconf/... ./internal/flow/... \
+                 ./internal/manifest/... ./internal/netcfg/... ./internal/whitelist/...
+
+# The toolchain: a host `go` is used when present, otherwise the same pinned image flasher/Dockerfile
+# builds with, so a machine with only Docker can still run this. Keep the tag in step with the
+# Dockerfile's FROM, or vet here and the release build can disagree about the standard library.
+GO_IMAGE ?= golang:1.26-bookworm
+GO ?= $(shell command -v go 2>/dev/null)
+
+check-go:
+	uv run python scripts/gen-flasher-devconf.py
+	@# internal/payload embeds native/build/mlflash, also git-ignored and only present after
+	@# `make native-mlflash`. The embed has to resolve for vet to run, but its contents do not
+	@# matter here, so a placeholder stands in when the native build has not happened - and is
+	@# removed again afterwards, so a later local `go build` still fails loudly instead of
+	@# silently embedding an empty flasher.
+	@placeholder=; \
+	if [ ! -f flasher/internal/payload/mlflash ]; then \
+	    : > flasher/internal/payload/mlflash; placeholder=1; \
+	fi; \
+	script='cd flasher && \
+	    unformatted=$$(gofmt -l .) && \
+	    { [ -z "$$unformatted" ] || { echo "gofmt needed:"; echo "$$unformatted"; exit 1; }; } && \
+	    go vet $(GO_CHECK_PKGS) && go test $(GO_CHECK_PKGS)'; \
+	rc=0; \
+	if [ -n "$(GO)" ]; then \
+	    sh -c "$$script" || rc=$$?; \
+	else \
+	    docker run --rm -v "$(CURDIR):/src" -v "$(HOME)/go:/go" -w /src \
+	        $(GO_IMAGE) sh -c "$$script" || rc=$$?; \
+	fi; \
+	[ -z "$$placeholder" ] || rm -f flasher/internal/payload/mlflash; \
+	exit $$rc
+
+check: check-python check-shell check-userspace check-native check-go
 
 clean:
 	-$(MAKE) -C userspace clean
@@ -304,4 +354,4 @@ clean:
 distclean: clean
 	rm -rf kernel/build
 
-.PHONY: all setup native umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check-userspace check-native check clean distclean
+.PHONY: all setup native native-mlflash umtprd userspace flasher flasher-windows kernel fetch-blobs net-install rootfs rootfs-dev image image-blobs flash-rootfs ramboot flash-kernel flashboot require-kernel-build lint test check-python check-shell check-userspace check-native check-go check clean distclean

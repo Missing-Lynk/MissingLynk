@@ -1,0 +1,65 @@
+# Build the host flasher for Linux (x86-64) and keep it as a workflow artifact.
+
+name: flasher-linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to build. Blank uses the branch selected above; refs/pull/<n>/head builds a PR from a fork."
+        required: false
+        type: string
+
+  workflow_call:
+    inputs:
+      ref:
+        description: "Ref to build. Blank uses the ref the caller is running on."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Blank = the ref the run started from: the dispatch form's branch, or release.yml's tag.
+          ref: ${{ inputs.ref }}
+          submodules: false
+
+      # make flasher needs rootfs/devices/<name>/board.conf. .gitmodules gives SSH URLs a runner
+      # has no key for; the rewrite fetches the (public) submodule over HTTPS instead.
+      - name: Check out the rootfs submodule
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 rootfs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # native/build.sh compiles in an arm64 gcc:7 container.
+      - name: Set up arm64 emulation
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      # Only mlflash: the other device tools are not embedded in the flasher.
+      - name: Build mlflash (aarch64)
+        run: make native-mlflash
+
+      - name: Build ml-flasher
+        run: make flasher
+
+      # The artifact zip drops the executable bit; a downloaded binary needs chmod +x.
+      - name: Upload ml-flasher
+        uses: actions/upload-artifact@v7
+        with:
+          name: ml-flasher-linux
+          path: flasher/build/ml-flasher
+          if-no-files-found: error

@@ -2,8 +2,21 @@
 # Build the native on-device tools for the goggle/air (aarch64) inside an arm64 gcc:7 container
 # (Debian stretch = glibc 2.24, <= the goggle's 2.25, so the binaries run there).
 # Needs docker with arm64 emulation (binfmt). Outputs land in native/build/ (gitignored).
+#
+# Usage: build.sh [mlflash]
+#   no argument   every tool (the default; `make native`)
+#   mlflash       only build/mlflash, the binary the host ml-flasher embeds
+#
+# The mlflash-only mode exists for the release workflow: every compile here runs under arm64
+# emulation, so building the other tools to reach the one the flasher needs costs minutes.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+ONLY="${1:-all}"
+case "$ONLY" in
+    all|mlflash) ;;
+    *) echo "usage: $(basename "$0") [mlflash]" >&2; exit 2 ;;
+esac
 
 # Outputs land in native/build/ (gitignored). mtdtool + air-qpower are static (standalone, run in any
 # device state / on the air unit).
@@ -66,35 +79,44 @@ JSON_TOOLS="ml-rf-persist ml-boot-record"
 
 # mlflash links vendored mtd-utils. Compile the upstream units with -w (their warnings are not
 # ours to fix) and -Dmain=ubiformat_main so ubiformat's main() links in as a callable function.
+#
+# mlflash is built first so ONLY=mlflash can leave the container after it.
 docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
     -e MTDUTILS_VERSION="$MTDUTILS_VERSION" -e MTDUTILS_INC="$MTDUTILS_INC" \
-    -e MTDUTILS_LIB="$MTDUTILS_LIB" \
+    -e MTDUTILS_LIB="$MTDUTILS_LIB" -e ONLY="$ONLY" \
     -e DEVICE_TOOLS="$DEVICE_TOOLS" -e BRINGUP_TOOLS="$BRINGUP_TOOLS" \
     -e JSON_TOOLS="$JSON_TOOLS" gcc:7 sh -c '
-    gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm &&
-    gcc -O2 -Wall minidhcpd.c -o build/minidhcpd &&
-    gcc -O2 -Wall -static -Imtdtool mtdtool/main.c mtdtool/mtd.c mtdtool/gpt.c \
-        mtdtool/slot.c mtdtool/io.c mtdtool/ubi.c -o build/mtdtool &&
+    set -e
     for f in $MTDUTILS_LIB vendor/mtd-utils/ubi-utils/ubiformat.c; do
         gcc -O2 -w -static -DVERSION=\"mtd-utils-$MTDUTILS_VERSION\" -Dmain=ubiformat_main \
-            $MTDUTILS_INC -c "$f" -o "build/mtdu-$(basename "$f" .c).o" || exit 1
-    done &&
+            $MTDUTILS_INC -c "$f" -o "build/mtdu-$(basename "$f" .c).o"
+    done
     gcc -O2 -Wall -static -Ivendor -Icommon $MTDUTILS_INC \
         mlflash/src/mlflash.c mlflash/src/util.c mlflash/src/mlimg.c mlflash/src/slot.c \
         mlflash/src/probe.c mlflash/src/mtd.c mlflash/src/ubi.c mlflash/src/board.c \
         mlflash/src/device_record.c common/mlfile.c \
-        vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto -lz &&
+        vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto -lz
+    if [ "$ONLY" = mlflash ]; then exit 0; fi
+    gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm
+    gcc -O2 -Wall minidhcpd.c -o build/minidhcpd
+    gcc -O2 -Wall -static -Imtdtool mtdtool/main.c mtdtool/mtd.c mtdtool/gpt.c \
+        mtdtool/slot.c mtdtool/io.c mtdtool/ubi.c -o build/mtdtool
     for spec in $DEVICE_TOOLS $BRINGUP_TOOLS; do
         name=${spec%%:*}
         extra=${spec#"$name"}
-        gcc -O2 -Wall -static "$name.c" -o "build/$name" ${extra#:} || exit 1
-    done &&
+        gcc -O2 -Wall -static "$name.c" -o "build/$name" ${extra#:}
+    done
     for name in $JSON_TOOLS; do
         gcc -O2 -Wall -static -Ivendor -Icommon "$name.c" common/mlfile.c vendor/cJSON.c \
-            -o "build/$name" || exit 1
-    done &&
-    gcc -O2 -Wall -fPIC -shared mmiotrace.c -o build/mmiotrace.so -ldl &&
+            -o "build/$name"
+    done
+    gcc -O2 -Wall -fPIC -shared mmiotrace.c -o build/mmiotrace.so -ldl
     gcc -O2 -I. -Icommon mlmenu/draw.c mlmenu/config.c mlmenu/menu.c common/mlfile.c -o build/mlmenu -lm'
+
+if [ "$ONLY" = mlflash ]; then
+    file build/mlflash
+    exit 0
+fi
 
 # minidhcpd-musl: static musl build for the open slot-B rootfs (staged by rootfs/build.sh into
 # /usr/local/bin/minidhcpd, started by the usb-gadget service). The glibc build above stays the

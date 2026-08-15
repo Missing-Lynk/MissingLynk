@@ -52,8 +52,12 @@ jobs:
           submodules: false
 
       # setup-uv publishes no floating major tag past v7, so this pins the exact release.
+      #
+      # enable-cache is set explicitly rather than left at its "auto" default: v10 turns the cache
+      # off under auto for pull_request_target, workflow_run and release, none of which trigger
+      # this job, and stating the value keeps that policy from silently applying if one ever does.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 

@@ -1,0 +1,74 @@
+# Publish a GitHub release for a pushed version tag, with the flasher binaries attached.
+# The only automatic trigger of the flasher builds; a branch or PR build is a manual dispatch of
+# flasher-linux.yml / flasher-windows.yml.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Not cancel-in-progress: a half-uploaded release is worse than a duplicated build.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    uses: ./.github/workflows/flasher-linux.yml
+    with:
+      ref: ${{ github.ref }}
+
+  windows:
+    uses: ./.github/workflows/flasher-windows.yml
+    with:
+      ref: ${{ github.ref }}
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the built binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ml-flasher-*
+          path: artifacts
+          merge-multiple: true
+
+      # Assets carry the version and platform: "ml-flasher" says nothing in a downloads folder.
+      # The chmod restores the executable bit the artifact zip drops.
+      - name: Stage the release assets
+        run: |
+          mkdir -p dist
+          cp artifacts/ml-flasher "dist/ml-flasher-${GITHUB_REF_NAME}-linux-amd64"
+          cp artifacts/ml-flasher.exe "dist/ml-flasher-${GITHUB_REF_NAME}-windows-amd64.exe"
+          chmod +x "dist/ml-flasher-${GITHUB_REF_NAME}-linux-amd64"
+          cd dist && sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      # A tag with a suffix (v1.2.0-rc1) is published as a prerelease. Re-running a tag whose
+      # release exists replaces its assets instead of failing. GH_REPO stands in for a checkout.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+              echo "release $tag exists; replacing its assets"
+              gh release upload "$tag" dist/* --clobber
+          else
+              prerelease=()
+              case "$tag" in
+                  *-*) prerelease=(--prerelease) ;;
+              esac
+              gh release create "$tag" --title "$tag" --generate-notes "${prerelease[@]}" dist/*
+          fi
