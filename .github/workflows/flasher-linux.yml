@@ -56,10 +56,21 @@ jobs:
       - name: Build ml-flasher
         run: make flasher
 
-      # The artifact zip drops the executable bit; a downloaded binary needs chmod +x.
+      # Named after the tag when there is one, after the commit otherwise, so a downloaded binary
+      # says which build it is. release.yml attaches these names to the release as they are.
+      - name: Stage the binary
+        run: |
+          case "$GITHUB_REF_TYPE" in
+              tag) label="$GITHUB_REF_NAME" ;;
+              *)   label="$(git rev-parse --short HEAD)" ;;
+          esac
+          mkdir -p dist
+          cp flasher/build/ml-flasher "dist/ml-flasher-${label}-linux-amd64"
+
+      # The artifact round-trip does not preserve the executable bit: chmod +x after unpacking.
       - name: Upload ml-flasher
         uses: actions/upload-artifact@v7
         with:
           name: ml-flasher-linux
-          path: flasher/build/ml-flasher
+          path: dist/ml-flasher-*-linux-amd64
           if-no-files-found: error

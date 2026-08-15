@@ -43,14 +43,13 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # Assets carry the version and platform: "ml-flasher" says nothing in a downloads folder.
-      # The chmod restores the executable bit the artifact zip drops.
+      # The build workflows already named the binaries after the tag they were built from. The
+      # chmod is there because the artifact round-trip does not preserve the executable bit.
       - name: Stage the release assets
         run: |
           mkdir -p dist
-          cp artifacts/ml-flasher "dist/ml-flasher-${GITHUB_REF_NAME}-linux-amd64"
-          cp artifacts/ml-flasher.exe "dist/ml-flasher-${GITHUB_REF_NAME}-windows-amd64.exe"
-          chmod +x "dist/ml-flasher-${GITHUB_REF_NAME}-linux-amd64"
+          cp artifacts/ml-flasher-* dist/
+          chmod +x dist/*-linux-amd64
           cd dist && sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 

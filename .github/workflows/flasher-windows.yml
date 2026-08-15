@@ -57,9 +57,20 @@ jobs:
       - name: Build ml-flasher.exe
         run: make flasher-windows
 
+      # Named after the tag when there is one, after the commit otherwise, so a downloaded binary
+      # says which build it is. release.yml attaches these names to the release as they are.
+      - name: Stage the binary
+        run: |
+          case "$GITHUB_REF_TYPE" in
+              tag) label="$GITHUB_REF_NAME" ;;
+              *)   label="$(git rev-parse --short HEAD)" ;;
+          esac
+          mkdir -p dist
+          cp flasher/build/ml-flasher.exe "dist/ml-flasher-${label}-windows-amd64.exe"
+
       - name: Upload ml-flasher.exe
         uses: actions/upload-artifact@v7
         with:
           name: ml-flasher-windows
-          path: flasher/build/ml-flasher.exe
+          path: dist/ml-flasher-*-windows-amd64.exe
           if-no-files-found: error
