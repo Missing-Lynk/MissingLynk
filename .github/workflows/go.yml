@@ -8,7 +8,8 @@ on:
     paths:
       - "flasher/**"
       - "scripts/gen-flasher-devconf.py"
-      - "rootfs/devices/**/board.conf"
+      # rootfs is a submodule: a board.conf edit reaches this repo as a pointer bump on "rootfs".
+      - "rootfs"
       - "devices/**/device.mk"
       - "Makefile"
       - ".github/workflows/go.yml"
@@ -17,7 +18,8 @@ on:
     paths:
       - "flasher/**"
       - "scripts/gen-flasher-devconf.py"
-      - "rootfs/devices/**/board.conf"
+      # rootfs is a submodule: a board.conf edit reaches this repo as a pointer bump on "rootfs".
+      - "rootfs"
       - "devices/**/device.mk"
       - "Makefile"
       - ".github/workflows/go.yml"
@@ -36,6 +38,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: false
+
+      # gen-flasher-devconf.py needs rootfs/devices/<name>/board.conf. .gitmodules gives SSH URLs a
+      # runner has no key for; the rewrite fetches the (public) submodule over HTTPS instead.
+      - name: Check out the rootfs submodule
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 rootfs
 
       - name: Set up Go
         uses: actions/setup-go@v6
