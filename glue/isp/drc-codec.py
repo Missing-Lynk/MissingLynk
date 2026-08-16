@@ -31,9 +31,16 @@ Usage:
                                          replace the two dynamic banks
 """
 
+import pathlib
 import struct
 import sys
 from collections.abc import Sequence
+
+_ISP = pathlib.Path(__file__).resolve().parents[2] / "kernel" / "scripts" / "isp"
+sys.path.insert(0, str(_ISP))
+from blob_layout import Layout  # noqa: E402  (imported after the sys.path bootstrap)
+
+_LAY = Layout.load()
 
 PAGE_SIZE = 0x2000
 BANK_SIZE = 0x800
@@ -44,8 +51,8 @@ DECODED_LANES_PER_BANK = RECORDS * LANES_PER_RECORD
 SOURCE_SAMPLES_PER_BANK = RECORDS * 2 + 1
 SOURCE_BANK_SIZE = SOURCE_SAMPLES_PER_BANK * 4
 LANE_MAX = (1 << 20) - 1
-PROFILE_SIZE = 0xC8C
-PROFILE_TABLE_OFFSET = 0x17B1C
+PROFILE_SIZE = _LAY["drc_profiles"].stride
+PROFILE_TABLE_OFFSET = _LAY["drc_profiles"].offset
 
 
 def _require_exact_length(data: bytes, expected: int, description: str) -> None:

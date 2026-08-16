@@ -32,9 +32,16 @@ Usage:
                                                 generate page 0 from the tuning blob
 """
 
+import pathlib
 import struct
 import sys
 from collections.abc import Sequence
+
+_ISP = pathlib.Path(__file__).resolve().parents[2] / "kernel" / "scripts" / "isp"
+sys.path.insert(0, str(_ISP))
+from blob_layout import Layout  # noqa: E402  (imported after the sys.path bootstrap)
+
+_LAY = Layout.load()
 
 PAGE = 0x800
 RECORDS = 128
@@ -138,7 +145,7 @@ def main() -> int:
         gain = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
 
         blob = data
-        off = 0x26B90 + index * 0x4000
+        off = _LAY["gamma_curves"].offset + index * _LAY["gamma_curves"].stride
         curve = struct.unpack_from("<4096I", blob, off)
         samples = [curve[i * 8] & 0xFFF for i in range(SAMPLES)]
         # Decimation puts the last stored sample at entry 4088, so the sample after the page
