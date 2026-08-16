@@ -28,7 +28,7 @@
 # encoder configuration is vendor parity or the one validated at 60 fps on synthetic content, so
 # the QP floor and the HVS constants are both exonerated. The same tile encodes 1187 frames at a
 # sustained 60 fps as the only instance, so the geometry is fine too. Use ML_AIR_ONLY=0 or =1 to
-# stay single-instance until that is resolved. See plans/air-video-frame-rate-and-latency.md.
+# stay single-instance until that is resolved. See plans/done/air-video-frame-rate-and-latency.md.
 #
 # TX=1 sends to the goggle on 10.0.0.1:10001 and leaves the process running so the panel keeps
 # showing the picture. Without it the run is encode-only and ends after SECS.

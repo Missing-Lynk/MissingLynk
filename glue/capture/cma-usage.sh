@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cma-usage.sh - measure the goggle's real CMA usage floor and itemize the consumers,
 # to derive a safe CONFIG_CMA_SIZE_MBYTES target for the deferred CMA shrink
-# (plans/cma-mmz-composite-heap-rebalance.md).
+# (plans/done/cma-mmz-composite-heap-rebalance.md).
 #
 # Runs a 1 Hz sampler ON the goggle (tiny busybox sh loop appending to /tmp, no host SSH
 # per sample), so the measurement adds no USB/link load. While it runs, walk the full

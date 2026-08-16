@@ -250,7 +250,7 @@ echo "  stage 5 ok: captured $NAME"
 # rebringing anything up.
 #
 # A warm re-bring-up never writes DRAM on this SoC (see the defect note in
-# plans/au-b-pipeline-dead-20260802.md), which is what forced one capture per
+# plans/done/au-b-pipeline-dead-20260802.md), which is what forced one capture per
 # boot and made comparing a pattern against a live scene cost two boots. None of
 # that is necessary: TEST_PATTERN_MODE is a plain 16-bit i2c register, 0x0600
 # high and 0x0601 low, so it can be switched mid-stream. With the output ring

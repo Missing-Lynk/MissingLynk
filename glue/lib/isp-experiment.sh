@@ -16,7 +16,7 @@
 # glue/camera/au-prove-camera.sh, which remains the single entry point. Separating that half
 # means converting the 18 host variables it interpolates at push time into passed environment,
 # which rewrites the text that runs on hardware and needs a bring-up to validate. See
-# plans/merge-cleanup.md section 2.
+# plans/done/merge-cleanup.md section 2.
 
 # stage_isp_experiments <camera script dir> <host output dir>
 stage_isp_experiments() {

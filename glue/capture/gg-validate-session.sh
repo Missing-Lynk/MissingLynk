@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # gg-validate-session.sh - drive the outstanding goggle receive-path checks in one powered window.
 #
-# Closes what plans/goggle-linkd-validation.md still owes after the 2026-08-14 session: the GET_PAIR
-# arm of item 1, the session-start IDR burst of item 4, item 6's SetTranParm re-assert, and item 7's
-# liveness gate. Those four want mutually incompatible link states - two need the link DOWN at the
-# start, two need it up - so the ordering here is the whole point of the script. Running them as
-# separate sessions costs four air-unit power cycles instead of one.
+# Written for four checks from plans/done/goggle-linkd-validation.md: the GET_PAIR arm of item 1,
+# the session-start IDR burst of item 4, item 6's SetTranParm re-assert, and item 7's liveness
+# gate. Those four want mutually incompatible link states - two need the link DOWN at the start,
+# two need it up - so the ordering here is the whole point of the script. Running them as separate
+# sessions costs four air-unit power cycles instead of one.
+#
+# Items 1, 4 and 6 are answered. Only phase 3 (item 7, the liveness gate) is still owed, and it
+# needs the OPEN air unit rather than a vendor one - see plans/open-review-items.md, which is where
+# the two surviving findings live. Phase 2 is redundant; the other phases stay because they are the
+# cheapest way to re-establish a baseline before judging phase 3.
 #
 # Everything the goggle does is read-only except two commands: `ml-rfcmd bind 0`, which is the
 # dry-run form (chip-runtime only, reverted by a power cycle, mlm.h:325), and one ml-linkd restart
@@ -159,7 +164,7 @@ done
 echo "--- link events ---"
 grep -E "stalled|TX LOST|TX unit|no :10000" /var/log/ml-linkd.log | tail -5' | tee "$OUT/p3-liveness.txt"
 note "item 7 verdict: an rx_bytes delta that goes flat and a 'video datagrams stalled' event within"
-note "about 6 s is the PASS. Flat bytes with NO event reproduces the 2026-08-10 state."
+note "about 6 s is the PASS. Flat bytes with NO event is the unreported stall this item exists to catch."
 
 say "done"
 note "artefacts in $OUT/"
