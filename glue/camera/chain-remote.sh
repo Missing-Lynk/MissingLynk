@@ -7,6 +7,10 @@
 # Every knob arrives as an environment variable set by the host at invocation:
 #   EXPO GAIN            sensor exposure and analogue gain
 #   DE3D_GAIN LNR_GAIN RNR_GAIN   ISP ladder abscissas, Q8
+#   GAMMA_CURVE DRC_PROFILE       ISP tone table selectors, pinned
+#   TONE_SCALAR                   AEC trigger scalar in Q8; when set the driver
+#                                 selects and blends both tone pages from it and
+#                                 ignores the two pinned indices. -1 pins.
 #   CVDEPTH              ar-cvisp ring depth; EMPTY means pass no depth= at all, so the run
 #                        tests the driver's own default
 #   FRAMES               how many frames the grabber asks for
@@ -95,7 +99,8 @@ echo -n /tmp/fw > /sys/module/firmware_class/parameters/path 2>/dev/null
 insmod /tmp/nt99235.ko exposure="$EXPO" gain="$GAIN" || fail 'insmod nt99235'
 insmod /tmp/ar-csi2.ko || fail 'insmod ar-csi2'
 insmod /tmp/ar-vif.ko || fail 'insmod ar-vif'
-insmod /tmp/ar-isp.ko de3d_gain="$DE3D_GAIN" lnr_gain="$LNR_GAIN" rnr_gain="$RNR_GAIN" || fail 'insmod ar-isp'
+insmod /tmp/ar-isp.ko de3d_gain="$DE3D_GAIN" lnr_gain="$LNR_GAIN" rnr_gain="$RNR_GAIN" \
+	gamma_curve="$GAMMA_CURVE" drc_profile="$DRC_PROFILE" tone_scalar="$TONE_SCALAR" || fail 'insmod ar-isp'
 insmod /tmp/ar-cvisp.ko ${CVDEPTH:+depth=$CVDEPTH} || fail 'insmod ar-cvisp'
 sleep 1
 echo '  modules loaded'

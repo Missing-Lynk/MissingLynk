@@ -17,7 +17,9 @@
 #   6  saturated point: breath plus heap dump                      needs the lens covered
 #   7  AE convergence trace                                        needs lens cover then uncover
 #
-# Stages 1 to 5 are proven by the 2026-08-02 session. Stages 6 and 7 have never run.
+# Stages 1 to 5 have run and their captures are in out/au-vendor-session. Stage 4's capture
+# predates the shared cfa/cnf/cm/cm2 gate windows it now reads, so rerun it before using those
+# sections as evidence. Stages 6 and 7 have never run.
 #
 # Usage: glue/camera/au-vendor-session.sh [stage ...]        default: 1 2 3 5
 # Env:   TAG (label for stage 4 light levels). Targets stock slot A (192.168.3.100 / artosyn);
