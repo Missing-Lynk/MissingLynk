@@ -17,7 +17,8 @@
 # has touched VIF or the ISP outside the driver's own ordered sequence.
 #
 # Usage: glue/camera/au-v4l2-chain.sh
-# Env: FRAMES (200), EXPO, GAIN. Target: the active device profile, AU_IP / AU_PASS override.
+# Env: FRAMES (200), EXPO, GAIN, GAMMA_CURVE, DRC_PROFILE, TONE_SCALAR. Target: the active device profile,
+#      AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -35,6 +36,13 @@ CVDEPTH="${CVDEPTH:-}"
 DE3D_GAIN="${DE3D_GAIN:-3938}"
 LNR_GAIN="${LNR_GAIN:-3938}"
 RNR_GAIN="${RNR_GAIN:-3938}"
+# Tone table selectors. These are consumed when ar-isp builds its DMA pages at
+# module load; debugfs tone can rebuild the pages later after sysfs changes.
+GAMMA_CURVE="${GAMMA_CURVE:-3}"
+DRC_PROFILE="${DRC_PROFILE:-4}"
+# The vendor path: a Q8 AEC trigger scalar selects and blends both tone pages
+# and the two pinned indices above are ignored. -1 keeps them pinned.
+TONE_SCALAR="${TONE_SCALAR:--1}"
 KD="$REPO/kernel/build/kernel-repro-6.18.36/ml-modules/rootfs/lib/modules/6.18.36/kernel"
 OUT="$REPO/out/au-prove"
 
@@ -46,7 +54,7 @@ for m in nt99235 ar-csi2 ar-vif ar-isp ar-cvisp; do
 done
 device_push "$REPO/native/build/ml-v4l2grab" || exit 1
 device_push "$REPO/native/build/ml-regdump" || exit 1
-device_push "$REPO/native/build/ml-3a" || exit 1
+device_push "$REPO/userspace/build/ml-aed" || exit 1
 
 # The vendor tuning file, verbatim. ar-isp generates its gamma and DRC pages from it.
 TUNING="${TUNING:-$REPO/out/air-gather/vendor-root/usr/usrdata/tunning/nt99235_tuning_preview_fpv.bin}"
@@ -60,7 +68,9 @@ fi
 # interpolated into the script text, so it stays a real file that shellcheck can read.
 device_push_as "$HERE/chain-remote.sh" /tmp/chain.sh || exit 1
 CHAIN_ENV="EXPO=$EXPO GAIN=$GAIN DE3D_GAIN=$DE3D_GAIN LNR_GAIN=$LNR_GAIN"
-CHAIN_ENV="$CHAIN_ENV RNR_GAIN=$RNR_GAIN FRAMES=$FRAMES CVDEPTH='$CVDEPTH'"
+CHAIN_ENV="$CHAIN_ENV RNR_GAIN=$RNR_GAIN GAMMA_CURVE=$GAMMA_CURVE DRC_PROFILE=$DRC_PROFILE"
+CHAIN_ENV="$CHAIN_ENV TONE_SCALAR=$TONE_SCALAR"
+CHAIN_ENV="$CHAIN_ENV FRAMES=$FRAMES CVDEPTH='$CVDEPTH'"
 sshg "$CHAIN_ENV /tmp/chain.sh"
 
 echo

@@ -71,7 +71,7 @@ vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/l
 # are staged by hand when one is being asked. Tools whose compile line is not this shape stay
 # spelled out in the container script below.
 DEVICE_TOOLS="air-qpower ml-rfcmd"
-BRINGUP_TOOLS="ml-regdump ml-mmioreplay ml-i2cprobe ml-camtest ml-v4l2grab ml-cam2enc ml-3a:-lm
+BRINGUP_TOOLS="ml-regdump ml-mmioreplay ml-i2cprobe ml-camtest ml-v4l2grab ml-cam2enc
 ml-isploop ml-lutfill ml-fbdump"
 
 # Same shape plus the JSON config pair every one of them reads. Both ship.
