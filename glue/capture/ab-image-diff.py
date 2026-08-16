@@ -494,10 +494,6 @@ def main() -> int:
                         help="label for our leg in the report and plots")
     args = parser.parse_args()
 
-    for tool in ("ffmpeg", "ffprobe"):
-        if shutil.which(tool) is None:
-            raise SystemExit(f"{tool} is not on PATH")
-
     if args.samples <= 0:
         raise SystemExit("--samples must be positive")
     if args.burst <= 0:
@@ -511,6 +507,10 @@ def main() -> int:
             raise SystemExit(f"{option} must be non-empty and must not contain newlines, ':' or '|'")
     if args.vendor_label == args.open_label:
         raise SystemExit("--vendor-label and --open-label must differ")
+
+    for tool in ("ffmpeg", "ffprobe"):
+        if shutil.which(tool) is None:
+            raise SystemExit(f"{tool} is not on PATH")
 
     vendor_path, open_path = Path(args.vendor), Path(args.open)
     for path in (vendor_path, open_path):
