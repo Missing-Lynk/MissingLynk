@@ -2,10 +2,10 @@
 
 The goggle serves a live RTSP restream of the video feed while the **air unit is transmitting**:
 
-- **URL:** `rtsp://192.168.3.100:554/venc8/stream`
+- **URL:** `rtsp://192.168.3.101:554/venc8/stream` on the **open stack** (slot B, ml-pipeline's built-in gst-rtsp-server); `rtsp://192.168.3.100:554/venc8/stream` on the **patched vendor firmware** (slot A, the enabled mini-RTSP server)
 - **Codec:** H.265 / HEVC by default (matches the DVR codec; see below), up to 1920x1080 60 fps
 
-The same URL works on both stacks: the **open stack** (slot B, ml-pipeline's built-in gst-rtsp-server) and the **patched vendor firmware** (slot A, the enabled mini-RTSP server). The Android app's default URL points here.
+Port and mount path are identical on both stacks; only the address differs, because open-stack slot addressing is `192.168.3.(100+NN)` and `.100` is reserved for stock/unflashed units. The examples below use the open-stack address; substitute `.100` on patched stock. The Android app's default URL points at the open stack.
 
 ## Open stack (slot B)
 
@@ -22,19 +22,19 @@ Enable **DVR > RTSP Stream** in the goggle menu (persists across reboots; the HU
 Grab a single frame as proof, or open a live low-latency view with VLC, GStreamer, or ffplay:
 
 ```sh
-ffmpeg -rtsp_transport tcp -i rtsp://192.168.3.100:554/venc8/stream -frames:v 1 -update 1 frame.png
+ffmpeg -rtsp_transport tcp -i rtsp://192.168.3.101:554/venc8/stream -frames:v 1 -update 1 frame.png
 
-vlc --rtsp-tcp --network-caching=150 rtsp://192.168.3.100:554/venc8/stream
+vlc --rtsp-tcp --network-caching=150 rtsp://192.168.3.101:554/venc8/stream
 
-gst-launch-1.0 rtspsrc location=rtsp://192.168.3.100:554/venc8/stream protocols=tcp latency=50 ! rtph265depay ! h265parse ! avdec_h265 ! autovideosink sync=false
+gst-launch-1.0 rtspsrc location=rtsp://192.168.3.101:554/venc8/stream protocols=tcp latency=50 ! rtph265depay ! h265parse ! avdec_h265 ! autovideosink sync=false
 
-ffplay -fflags nobuffer -flags low_delay -rtsp_transport tcp rtsp://192.168.3.100:554/venc8/stream
+ffplay -fflags nobuffer -flags low_delay -rtsp_transport tcp rtsp://192.168.3.101:554/venc8/stream
 ```
 
 ## Record a clip (no transcode)
 
 ```sh
-ffmpeg -rtsp_transport tcp -use_wallclock_as_timestamps 1 -i rtsp://192.168.3.100:554/venc8/stream -t 10 -c copy clip.mp4
+ffmpeg -rtsp_transport tcp -use_wallclock_as_timestamps 1 -i rtsp://192.168.3.101:554/venc8/stream -t 10 -c copy clip.mp4
 ```
 
 ## Restream to RTMP / YouTube (transcode to H.264)
@@ -42,7 +42,7 @@ ffmpeg -rtsp_transport tcp -use_wallclock_as_timestamps 1 -i rtsp://192.168.3.10
 RTMP/YouTube-RTMP don't accept HEVC, so transcode:
 
 ```sh
-ffmpeg -rtsp_transport tcp -use_wallclock_as_timestamps 1 -i rtsp://192.168.3.100:554/venc8/stream -c:v libx264 -preset veryfast -tune zerolatency -b:v 8M -g 120 -f flv rtmp://YOUR-INGEST/key
+ffmpeg -rtsp_transport tcp -use_wallclock_as_timestamps 1 -i rtsp://192.168.3.101:554/venc8/stream -c:v libx264 -preset veryfast -tune zerolatency -b:v 8M -g 120 -f flv rtmp://YOUR-INGEST/key
 ```
 
 If your target accepts **HEVC** (e.g. YouTube via HLS/RTMPS-HEVC), use `-c:v copy` for near-zero CPU.
