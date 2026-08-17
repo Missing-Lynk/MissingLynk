@@ -18,6 +18,13 @@
 #     evidence is suspect.
 #   - Exactly one ml-linkd. Two on /dev/artosyn_sdio wedge the RF chip permanently, and a restart
 #     nobody asked for has been observed once and never explained.
+#   - Any crashed service, from rc-status. ml-air-ae started and died on every boot for a whole
+#     session while video, OSD, telemetry and every counter above read healthy; exposure was
+#     frozen and nothing else said so.
+#   - Auto exposure, by the hold rate and the EAGAIN signature rather than by the log tail.
+#     ml-aed prints only when the index moves, so a settled loop and a dead one produce the same
+#     last line. Two things that look like faults and are not: a quiet log is convergence, and
+#     sensor exposure pinned at 1125 is the 1080p60 frame-time ceiling with gain doing the work.
 #
 # Usage:
 #   glue/boot/au-health.sh                 # sweep, 5 s counter window
@@ -54,6 +61,10 @@ echo "rf_ledger_boots=$(grep -c "result=" /usrdata/missinglynk/rf-bringup.log 2>
 echo "linkd_banners=$(grep -c "role=air" /var/log/ml-linkd.log 2>/dev/null || echo 0)"
 echo "linkd_procs=$(grep -lx ml-linkd /proc/[0-9]*/comm 2>/dev/null | wc -l)"
 echo "video_procs=$(grep -lx ml-air-video /proc/[0-9]*/comm 2>/dev/null | wc -l)"
+echo "svc_crashed=$(rc-status 2>/dev/null | grep crashed | awk "{printf \"%s \", \$1}")"
+echo "ae_procs=$(grep -lx ml-aed /proc/[0-9]*/comm 2>/dev/null | wc -l)"
+echo "ae_eagain=$(grep -c "Resource temporarily" /var/log/ml-air-ae.log 2>/dev/null || echo 0)"
+echo "ae_err=$(tail -200 /var/log/ml-air-ae.log 2>/dev/null | awk "{d += \$4 - \$6; n++} END {if (n) printf \"%.1f\", d / n}")"
 echo "persist=$([ -x /usr/local/bin/ml-rf-persist ] && echo yes || echo no)"
 echo "cma_free=$(awk "/CmaFree/ {print \$2}" /proc/meminfo)"
 for d in /sys/bus/iio/devices/iio:device*
@@ -67,10 +78,14 @@ done
 echo "vif_a=$(awk "/ar-vif/ {print \$2}" /proc/interrupts)"
 echo "tx_a=$(awk "/sdio0/ {print \$10}" /proc/net/dev)"
 echo "rx_a=$(awk "/sdio0/ {print \$2}" /proc/net/dev)"
+echo "flips_a=$(cat /sys/kernel/debug/ar-isp/stats_flips 2>/dev/null || echo 0)"
+echo "ae_moves_a=$(wc -l < /var/log/ml-air-ae.log 2>/dev/null || echo 0)"
 sleep SAMPLE_WINDOW
 echo "vif_b=$(awk "/ar-vif/ {print \$2}" /proc/interrupts)"
 echo "tx_b=$(awk "/sdio0/ {print \$10}" /proc/net/dev)"
 echo "rx_b=$(awk "/sdio0/ {print \$2}" /proc/net/dev)"
+echo "flips_b=$(cat /sys/kernel/debug/ar-isp/stats_flips 2>/dev/null || echo 0)"
+echo "ae_moves_b=$(wc -l < /var/log/ml-air-ae.log 2>/dev/null || echo 0)"
 '
 
 report="$(device_ssh "$AU_PASS" "$AU_IP" "${REMOTE/SAMPLE_WINDOW/$SAMPLE}")" || {
@@ -155,6 +170,70 @@ then
     fi
 else
     check WARN "capture running at 60 fps" "no ar-vif interrupt line - camera not up"
+fi
+
+# --- crashed services --------------------------------------------------------------------------
+# A service that started and then died leaves every other signal healthy. ml-air-ae did exactly
+# that for a whole session: video, OSD, telemetry and every counter read fine while exposure sat
+# frozen, because nothing here asked OpenRC what it thought.
+crashed="$(field svc_crashed)"
+if [ -z "$crashed" ]
+then
+    check PASS "no crashed services" "rc-status clean"
+else
+    check FAIL "no crashed services" "crashed:$crashed"
+fi
+
+# --- auto exposure ------------------------------------------------------------------------------
+# Judge AE by the actuator and the hold rate, never by the log tail: ml-aed prints only when the
+# index moves, so a converged loop and a dead one look identical from the last line. The specific
+# regression to catch is the daemon exiting on EAGAIN before the first flip.
+ae_procs="$(field ae_procs)"
+ae_eagain="$(field ae_eagain)"
+flips_a="$(field flips_a)"
+flips_b="$(field flips_b)"
+moves_a="$(field ae_moves_a)"
+moves_b="$(field ae_moves_b)"
+ae_err="$(field ae_err)"
+
+if [ "${ae_eagain:-0}" -gt 0 ]
+then
+    check FAIL "ml-aed survived stream-on" "$ae_eagain EAGAIN exit(s) in ml-air-ae.log - AE died at boot"
+else
+    check PASS "ml-aed survived stream-on" "no EAGAIN exits logged"
+fi
+
+case "$ae_procs" in
+    1)
+        check PASS "exactly one ml-aed" ;;
+    0)
+        check FAIL "exactly one ml-aed" "auto exposure is not running - the camera streams at a fixed exposure" ;;
+    *)
+        check FAIL "exactly one ml-aed" "$ae_procs running - they would fight over the operating point" ;;
+esac
+
+# Hold rate: decisions the loop declined to act on, as a share of the frames it saw. A healthy
+# settled loop holds nearly all of them; a loop that moves on every frame is hunting.
+#
+# Only meaningful while a daemon is actually running. A dead ml-aed makes no moves at all, which
+# arithmetically reads as a perfect 100% hold, so the running check has to gate this one or the
+# worst case reports as the best.
+if [ "$ae_procs" != 1 ]
+then
+    check WARN "AE settled" "no single ml-aed running - hold rate would read 100% for a dead loop"
+elif [ -n "$flips_a" ] && [ -n "$flips_b" ] && [ "$flips_b" -gt "$flips_a" ]
+then
+    decisions=$(( flips_b - flips_a ))
+    moves=$(( moves_b - moves_a ))
+    hold=$(( 100 - (moves * 100 / decisions) ))
+    if [ "$hold" -ge 50 ]
+    then
+        check PASS "AE settled" "held ${hold}% of $decisions decisions, mean luma error ${ae_err:-?}"
+    else
+        check WARN "AE settled" "held only ${hold}% of $decisions decisions - hunting, or the scene is moving"
+    fi
+else
+    check WARN "AE settled" "stats_flips not advancing - no statistics, so no decisions to judge"
 fi
 
 # --- encoders --------------------------------------------------------------------------------
