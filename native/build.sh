@@ -98,6 +98,7 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work \
         vendor/cJSON.c build/mtdu-*.o -o build/mlflash -lcrypto -lz
     if [ "$ONLY" = mlflash ]; then exit 0; fi
     gcc -O2 -Wall -Icommon fbtext.c common/mlfile.c -o build/fbtext -lm
+    gcc -O2 -Wall ml-latency-counter.c -o build/ml-latency-counter && strip build/ml-latency-counter
     gcc -O2 -Wall minidhcpd.c -o build/minidhcpd
     gcc -O2 -Wall -static -Imtdtool mtdtool/main.c mtdtool/mtd.c mtdtool/gpt.c \
         mtdtool/slot.c mtdtool/io.c mtdtool/ubi.c -o build/mtdtool
