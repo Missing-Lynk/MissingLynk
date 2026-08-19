@@ -18,9 +18,18 @@
  *
  * Digits are 7-segment bars rather than glyphs from a font: they have to survive the camera, the
  * air-side encoder and the RF link, and a thin antialiased glyph smears into an unreadable blob.
+ * They are flanked by two tracking markers and sat above a sweep bar, for the reasons given at
+ * each below; on a filmed panel the digits alone were not enough.
+ *
+ * The layout is ml-pipeline's, to the pixel, so that glue/capture/latency-read.py reads a capture
+ * from either stack with one set of constants. Anything changed here has to be changed in both.
+ *
+ * What this tool does NOT give you is the reading path: ml-pipeline's counter is recorded
+ * digitally, so the reader knows the live copy's size, while a stock-goggle measurement is
+ * PHOTOGRAPHED, leaving both copies at scales the reader would have to find. That part is unbuilt.
  *
  * Usage: ml-latency-counter [-d /dev/fb0] [-x X] [-y Y] [-s HEIGHT] [-r HZ] [-1]
- *   -x defaults to centring the box, -y to the top of the panel (scanned out first).
+ *   -x defaults to centring the box, -y to the row ml-pipeline uses.
  * Build: native/build.sh (arm64 glibc <= 2.25 container).
  */
 #include <errno.h>
@@ -37,10 +46,15 @@
 
 #include <linux/fb.h>
 
+/* The defaults reproduce ml-pipeline's geometry exactly: at a digit height of 160 every proportion
+ * below lands on the same integer the composite uses, so one reader geometry serves both. Changing
+ * -s or -y is for fitting an unusual panel, and a capture made that way needs the reader's
+ * constants moved to match.
+ */
 #define DEFAULT_DEVICE      "/dev/fb0"
-#define DEFAULT_HEIGHT      96
+#define DEFAULT_HEIGHT      160
 #define DEFAULT_RATE_HZ     60
-#define DEFAULT_TOP         24
+#define DEFAULT_TOP         180
 
 /* The counter wraps every 100 s. Latency is tens of ms, so a wrap is never ambiguous, and a
  * decimal rollover is easier to subtract by eye than a truncated hex or binary one.
@@ -49,8 +63,12 @@
 #define COUNTER_MODULO      100000
 
 /* ARGB4444, opaque. The box is filled so the video layer behind it cannot corrupt the read.
+ *
+ * The ink is grey, not white. The air unit meters for the dark goggle body around the panel, so a
+ * white counter clips in the recording and a clipped digit blooms its gaps shut. Six fifteenths
+ * short of full matches the level ml-pipeline draws in the composite.
  */
-#define COLOR_INK           0xFFFFu
+#define COLOR_INK           0xF999u
 #define COLOR_BOX           0xF000u
 #define COLOR_CLEAR         0x0000u
 
@@ -65,6 +83,29 @@
 #define GAP_DEN             5
 #define PAD_NUM             1
 #define PAD_DEN             6
+
+/* Tracking markers: a solid bar inside each end of the digit row, overhanging it so nothing else
+ * in the box has their shape. A blown-out digit blooms its gaps shut and becomes an anonymous
+ * blob; a solid bar has no gaps to lose, so the pair still carries the box's position and scale.
+ * The gap to the nearest digit is wider than the digit gap so their bloom cannot bridge into it.
+ */
+#define MARK_W_NUM          13
+#define MARK_W_DEN          40
+#define MARK_GAP_NUM        2
+#define MARK_GAP_DEN        5
+#define MARK_OVER_NUM       3
+#define MARK_OVER_DEN       40
+
+/* The sweep bar: fills left to right once per SWEEP_MS and resets, carrying the time the digits
+ * cannot. The panel advances the counter every frame, and a camera exposure spanning two of them
+ * records both values superimposed - the union of two 7-segment glyphs is almost always a legible
+ * WRONG digit, so the digits fail in a way no reader can detect. A bar degrades instead: the part
+ * lit for the whole exposure is bright, the part lit for some of it is proportionally dimmer, and
+ * integrating that returns the mean time across the exposure.
+ */
+#define SWEEP_MS            100
+#define TRACK_H_NUM         11
+#define TRACK_H_DEN         40
 
 /* Segment bits, in the order a, b, c, d, e, f, g (top, top-right, bottom-right, bottom,
  * bottom-left, top-left, middle).
@@ -114,6 +155,13 @@ typedef struct {
     int stroke;
     int gap;
     int pad;
+    int mark_w;
+    int mark_h;
+    int mark_y;
+    int digits_x;            /* first digit's left edge, past the pad and the left marker */
+    int track_w;
+    int track_h;
+    int track_y;
 } Box;
 
 /* command-line parameters */
@@ -318,9 +366,22 @@ static void box_render(Box *box, long long value)
 {
     box_fill(box, 0, 0, box->width, box->height, COLOR_BOX);
 
+    box_fill(box, box->pad, box->mark_y, box->mark_w, box->mark_h, COLOR_INK);
+    box_fill(box, box->width - box->pad - box->mark_w, box->mark_y, box->mark_w, box->mark_h,
+             COLOR_INK);
+
+    /* Rounded down: the bar's right edge is the time it has reached, so rounding up would put the
+     * edge ahead of the value the digits show.
+     */
+    int filled = (int) ((value % SWEEP_MS) * box->track_w / SWEEP_MS);
+
+    if (filled > 0) {
+        box_fill(box, box->pad, box->track_y, filled, box->track_h, COLOR_INK);
+    }
+
     for (int index = COUNTER_DIGITS - 1; index >= 0; index--) {
         int digit = (int) (value % 10);
-        int x = box->pad + index * (box->digit_width + box->gap);
+        int x = box->digits_x + index * (box->digit_width + box->gap);
 
         box_draw_digit(box, x, box->pad, digit);
         value /= 10;
@@ -346,9 +407,34 @@ static int box_init(Box *box, const Framebuffer *fb, const Args *args)
         box->stroke = 1;
     }
 
+    box->mark_w = args->digit_height * MARK_W_NUM / MARK_W_DEN;
+    box->track_h = args->digit_height * TRACK_H_NUM / TRACK_H_DEN;
+
+    int mark_gap = args->digit_height * MARK_GAP_NUM / MARK_GAP_DEN;
+    int mark_over = args->digit_height * MARK_OVER_NUM / MARK_OVER_DEN;
+
+    if (box->mark_w < 1) {
+        box->mark_w = 1;
+    }
+
+    if (box->track_h < 1) {
+        box->track_h = 1;
+    }
+
     box->width = COUNTER_DIGITS * box->digit_width + (COUNTER_DIGITS - 1) * box->gap
-               + 2 * box->pad;
-    box->height = box->digit_height + 2 * box->pad;
+               + 2 * (box->pad + box->mark_w + mark_gap);
+    /* The track sits below the digits, inside the same pad. */
+    box->height = 2 * box->pad + box->digit_height + box->pad + box->track_h;
+
+    box->digits_x = box->pad + box->mark_w + mark_gap;
+    box->mark_y = box->pad - mark_over;
+    box->mark_h = box->digit_height + 2 * mark_over;
+    box->track_w = box->width - 2 * box->pad;
+    box->track_y = box->pad + box->digit_height + box->pad;
+
+    if (box->mark_y < 0) {
+        box->mark_y = 0;
+    }
 
     box->x = (args->x >= 0) ? args->x : ((int) fb->xres - box->width) / 2;
     box->y = args->y;
