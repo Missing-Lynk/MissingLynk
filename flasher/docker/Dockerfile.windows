@@ -3,7 +3,7 @@
 # root (it needs native/build/mlflash to embed). Driven by `make flasher-windows`,
 # which extracts flasher/build/ml-flasher.exe:
 #
-#   DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows \
+#   DOCKER_BUILDKIT=1 docker build -f flasher/docker/Dockerfile.windows \
 #       --output type=local,dest=flasher/build .
 #
 # native/build/mlflash must exist first (make native).

@@ -3,7 +3,7 @@
 # needs native/build/mlflash to embed). Driven by `make flasher`, which extracts
 # the binary to flasher/build/ml-flasher:
 #
-#   DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile \
+#   DOCKER_BUILDKIT=1 docker build -f flasher/docker/Dockerfile \
 #       --output type=local,dest=flasher/build .
 #
 # native/build/mlflash must exist first (make native).

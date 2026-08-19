@@ -81,16 +81,12 @@ func legacyConfig(user, password string, timeout time.Duration) *ssh.ClientConfi
 	}
 }
 
-// Dial opens a connection. user is normally "root"; password differs per slot.
-func Dial(ip, user, password string, timeout time.Duration) (*Client, error) {
-	return DialContext(context.Background(), ip, user, password, timeout)
-}
-
-// DialContext is Dial, abandoned when ctx is cancelled. ssh.Dial has no context form
-// and its Timeout covers only the TCP connect, so the halves are done apart: connect
-// via net.Dialer.DialContext, then the handshake under a write deadline, interrupted
-// by closing the raw connection. The deadline must be cleared afterwards or every
-// later session on the connection inherits it and dies.
+// DialContext opens a connection, abandoned when ctx is cancelled. user is normally
+// "root"; password differs per slot. ssh.Dial has no context form and its Timeout
+// covers only the TCP connect, so the halves are done apart: connect via
+// net.Dialer.DialContext, then the handshake under a write deadline, interrupted by
+// closing the raw connection. The deadline must be cleared afterwards or every later
+// session on the connection inherits it and dies.
 func DialContext(ctx context.Context, ip, user, password string, timeout time.Duration) (*Client, error) {
 	addr := net.JoinHostPort(ip, Port)
 	dialer := net.Dialer{Timeout: timeout}
@@ -136,14 +132,10 @@ func DialContext(ctx context.Context, ip, user, password string, timeout time.Du
 	return &Client{IP: ip, ssh: ssh.NewClient(sshConn, chans, reqs)}, nil
 }
 
-// Reachable reports whether the SSH port answers within timeout, without
-// authenticating. Used by discovery to probe a candidate interface cheaply.
-func Reachable(ip string, timeout time.Duration) bool {
-	return ReachableContext(context.Background(), ip, timeout)
-}
-
-// ReachableContext is Reachable, abandoned when ctx is cancelled. Discovery probes
-// several addresses in a row, so a cancelled scan need not wait out the rest.
+// ReachableContext reports whether the SSH port answers within timeout, without
+// authenticating, abandoned when ctx is cancelled. Discovery uses it to probe a
+// candidate interface cheaply, and probes several addresses in a row, so a
+// cancelled scan need not wait out the rest.
 func ReachableContext(ctx context.Context, ip string, timeout time.Duration) bool {
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, Port))

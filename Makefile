@@ -128,11 +128,11 @@ userspace:
 # flasher/build/ml-flasher. Kept out of `native`/`all` (needs Docker + network).
 flasher:
 	uv run python scripts/gen-flasher-devconf.py
-	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile --output type=local,dest=flasher/build .
+	DOCKER_BUILDKIT=1 docker build -f flasher/docker/Dockerfile --output type=local,dest=flasher/build .
 
 flasher-windows:
 	uv run python scripts/gen-flasher-devconf.py
-	DOCKER_BUILDKIT=1 docker build -f flasher/Dockerfile.windows --output type=local,dest=flasher/build .
+	DOCKER_BUILDKIT=1 docker build -f flasher/docker/Dockerfile.windows --output type=local,dest=flasher/build .
 
 # Image + dtb + the shipped modules, all built in the hermetic container (container-build.sh
 # builds+stages modules via kernel/modules/stage.sh, so the .ko match the Image's toolchain and
@@ -311,9 +311,10 @@ check-native:
 GO_CHECK_PKGS := ./internal/device/... ./internal/devconf/... ./internal/flow/... \
                  ./internal/manifest/... ./internal/netcfg/... ./internal/whitelist/...
 
-# The toolchain: a host `go` is used when present, otherwise the same pinned image flasher/Dockerfile
-# builds with, so a machine with only Docker can still run this. Keep the tag in step with the
-# Dockerfile's FROM, or vet here and the release build can disagree about the standard library.
+# The toolchain: a host `go` is used when present, otherwise the same pinned image
+# flasher/docker/Dockerfile builds with, so a machine with only Docker can still run this. Keep the
+# tag in step with the Dockerfile's FROM, or vet here and the release build can disagree about the
+# standard library.
 GO_IMAGE ?= golang:1.26-bookworm
 GO ?= $(shell command -v go 2>/dev/null)
 

@@ -18,6 +18,32 @@ import (
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/whitelist"
 )
 
+// gateResult is the outcome of the identity + whitelist gate that both Detect and
+// Flash apply. Flash re-runs it right before writing as defence in depth, so keeping
+// the decision in one place is what stops the two checks from drifting (a scan that
+// says "ready" while the flash refuses, or the reverse).
+type gateResult int
+
+const (
+	gateOK             gateResult = iota
+	gateUnidentified              // product_version matched no known unit
+	gateNotWhitelisted            // recognized unit, but its firmware is not on the validated list
+)
+
+// gateDevice classifies a device by its sdk_version. opt.AllowUnknownVersion bypasses
+// only the whitelist gate; an unidentifiable unit is always refused.
+func gateDevice(sdk *device.SDKVersion, opt Options) gateResult {
+	if sdk.Identify() == device.UnitUnknown {
+		return gateUnidentified
+	}
+
+	if !whitelist.Allowed(sdk.HardwareVersion, sdk.SoftwareVersion, sdk.ProductVersion) && !opt.AllowUnknownVersion {
+		return gateNotWhitelisted
+	}
+
+	return gateOK
+}
+
 // Detect brings the link up, connects, and reports what is attached. It never
 // writes anything. A nil error with info.Flashable == false means a device was
 // found but cannot/should not be flashed (with the reason in info.Note).
@@ -56,19 +82,18 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		return nil, fail(emit, fmt.Errorf("reading device firmware version: %w", err))
 	}
 
-	unit := sdk.Identify()
 	info := &DeviceInfo{
-		Unit:     string(unit),
+		Unit:     string(sdk.Identify()),
 		Product:  sdk.ProductVersion,
 		Firmware: sdk.SoftwareVersion,
 		Hardware: sdk.HardwareVersion,
 	}
 
-	switch {
-	case unit == device.UnitUnknown:
+	switch gateDevice(sdk, opt) {
+	case gateUnidentified:
 		info.Note = "The connected unit could not be identified; refusing to flash."
 
-	case !whitelist.Allowed(sdk.HardwareVersion, sdk.SoftwareVersion, sdk.ProductVersion) && !opt.AllowUnknownVersion:
+	case gateNotWhitelisted:
 		info.Note = fmt.Sprintf("Firmware %s (hardware %s) is not on the validated list; refusing for safety.",
 			sdk.SoftwareVersion, sdk.HardwareVersion)
 
@@ -143,14 +168,14 @@ func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit
 
 	if !state.isSwitchTarget() {
 		return fail(emit, fmt.Errorf("slot %s does not hold a complete recognized image (found: %s); "+
-			"refusing to switch", state.TargetSlot, SlotContentDescription(state.TargetContent)))
+			"refusing to switch", state.TargetSlot, slotContentDescription(state.TargetContent)))
 	}
 
 	if !strings.EqualFold(state.TargetSlot, target.Slot) || state.TargetContent != target.Content {
 		return fail(emit, fmt.Errorf("the device's slot state changed since the scan (the switch is now "+
 			"slot %s holding %s, not slot %s holding %s as confirmed); re-scan and try again",
-			state.TargetSlot, SlotContentDescription(state.TargetContent),
-			target.Slot, SlotContentDescription(target.Content)))
+			state.TargetSlot, slotContentDescription(state.TargetContent),
+			target.Slot, slotContentDescription(target.Content)))
 	}
 
 	emit(Event{Level: LevelStep, Msg: fmt.Sprintf("Making slot %s the active boot slot", state.TargetSlot)})
@@ -253,12 +278,11 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("reading device firmware version: %w", err))
 	}
 
-	unit := sdk.Identify()
-	if unit == device.UnitUnknown {
+	switch gateDevice(sdk, opt) {
+	case gateUnidentified:
 		return fail(emit, fmt.Errorf("connected unit could not be identified; refusing to flash"))
-	}
 
-	if !whitelist.Allowed(sdk.HardwareVersion, sdk.SoftwareVersion, sdk.ProductVersion) && !opt.AllowUnknownVersion {
+	case gateNotWhitelisted:
 		return fail(emit, fmt.Errorf("firmware %s (hardware %s) is not on the validated whitelist; refusing to flash",
 			sdk.SoftwareVersion, sdk.HardwareVersion))
 	}

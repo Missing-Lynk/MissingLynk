@@ -60,7 +60,7 @@ func fillSwitchTarget(client deviceClient, info *DeviceInfo, emit Emit) {
 // than asserted - the same split shows up whenever a boot lands somewhere other than
 // the active slot.
 func switchDetail(info *DeviceInfo) string {
-	content := SlotContentDescription(info.TargetContent)
+	content := slotContentDescription(info.TargetContent)
 	if info.RunningSlot != "" && info.ActiveSlot != "" && info.RunningSlot != info.ActiveSlot {
 		return fmt.Sprintf("This boot is running slot %s while slot %s is still the active one "+
 			"(as after a flash-boot); switching activates slot %s, which holds %s.",
@@ -154,9 +154,9 @@ func probeSlots(client deviceClient, emit Emit) (*slotState, error) {
 	return &state, nil
 }
 
-// SlotContentDescription is the human name of a slot-content classification, for
+// slotContentDescription is the human name of a slot-content classification, for
 // the GUI's device card and dialogs.
-func SlotContentDescription(content string) string {
+func slotContentDescription(content string) string {
 	switch content {
 	case "open":
 		return "the MissingLynk open firmware"

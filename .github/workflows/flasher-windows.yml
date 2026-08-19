@@ -1,5 +1,5 @@
 # Build the host flasher for Windows (x86-64) and keep it as a workflow artifact.
-# Cross-built on a Linux runner: flasher/Dockerfile.windows carries the mingw-w64 toolchain.
+# Cross-built on a Linux runner: flasher/docker/Dockerfile.windows carries the mingw-w64 toolchain.
 
 name: flasher-windows
 
