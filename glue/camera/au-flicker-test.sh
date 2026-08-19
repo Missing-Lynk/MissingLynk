@@ -43,6 +43,11 @@ OUT="${OUT:-$REPO/out/au-flicker}"
 TUNING=/lib/firmware/artosyn/nt99235-tuning-preview-fpv.bin
 START_INDEX="${START_INDEX:-317}"
 RECORDER="${RECORDER:-rtsp}"
+# SERVICE=1 drives the FLASHED ml-air-ae service through /usrdata/missinglynk/banding instead of
+# staging a fresh ml-aed into /tmp. That is the shipping path end to end, init script included, so
+# it proves what a user actually runs rather than what this harness built. It requires the flashed
+# image to carry a banding-aware init script and binary, which the preflight checks.
+SERVICE="${SERVICE:-}"
 # The mains frequency the scene is actually lit by, which is what flicker-metric.py predicts
 # against. It is NOT the leg: the 0 and 60 legs are filmed under the same lamp as the 50 leg.
 MAINS="${MAINS:-50}"
@@ -87,6 +92,49 @@ au 'cat > /tmp/ml-aed; chmod +x /tmp/ml-aed' < "$BIN"
   || { echo "pushed ml-aed hash mismatch" >&2; exit 1; }
 echo "  ml-aed rebuilt and staged"
 
+cat > "$OUT/save-banding.sh" <<'DEVEOF'
+#!/bin/sh
+# Remember the operator's own banding setting before a leg overwrites it. A unit set to 50 for
+# flying must come back set to 50, so this records the value (or its absence) rather than assuming
+# the shipped default is what was there.
+if [ -f /usrdata/missinglynk/banding ]; then
+    cp /usrdata/missinglynk/banding /tmp/banding.orig
+else
+    rm -f /tmp/banding.orig
+fi
+
+echo "saved: $(cat /tmp/banding.orig 2>/dev/null || echo absent)"
+DEVEOF
+
+cat > "$OUT/leg-service.sh" <<'DEVEOF'
+#!/bin/sh
+# Run one banding setting through the flashed service. $1 = 0|50|60
+# 0 is the absent file rather than a literal 0, because absent is what ships and is the case the
+# init script's default branch covers.
+mkdir -p /usrdata/missinglynk
+
+if [ "$1" = 0 ]; then
+    rm -f /usrdata/missinglynk/banding
+else
+    echo "$1" > /usrdata/missinglynk/banding
+fi
+
+rc-service ml-air-ae stop >/dev/null 2>&1
+sleep 1
+ANNOUNCED=$(rc-service ml-air-ae start 2>&1 | grep -o 'banding [0-9]*')
+sleep 4
+
+if ! pgrep ml-aed >/dev/null; then
+    echo "FAILED: the service did not come up with banding $1"
+    tail -3 /var/log/ml-air-ae.log
+    exit 1
+fi
+
+# The service logs only index moves, so the harness's index extraction needs a log to read.
+ln -sf /var/log/ml-air-ae.log /tmp/flick.log
+echo "engaged: banding $1 (service announced: ${ANNOUNCED:-nothing})"
+DEVEOF
+
 cat > "$OUT/leg.sh" <<DEVEOF
 #!/bin/sh
 # Run one banding setting. \$1 = 0|50|60
@@ -129,16 +177,27 @@ DEVEOF
 
 cat > "$OUT/restore.sh" <<'DEVEOF'
 #!/bin/sh
+# The banding file is persistent and survives a reboot, so a leg that set it has changed how the
+# unit will fly until someone notices. Put back exactly what was there, including its absence.
+if [ -f /tmp/banding.orig ]; then
+    mkdir -p /usrdata/missinglynk
+    cp /tmp/banding.orig /usrdata/missinglynk/banding
+else
+    rm -f /usrdata/missinglynk/banding
+fi
+
 killall ml-aed 2>/dev/null
 sleep 1
 # A bare killall leaves OpenRC believing the service is started, and `start` is then a no-op.
 rc-service ml-air-ae stop >/dev/null 2>&1
 rc-service ml-air-ae start >/dev/null 2>&1
 sleep 3
-pgrep ml-aed >/dev/null && echo "restored: service ml-aed running" || echo "FAILED: no ml-aed after restore"
+pgrep ml-aed >/dev/null \
+  && echo "restored: service ml-aed running, banding $(cat /usrdata/missinglynk/banding 2>/dev/null || echo absent)" \
+  || echo "FAILED: no ml-aed after restore"
 DEVEOF
 
-for f in leg.sh sample.sh restore.sh; do
+for f in leg.sh leg-service.sh save-banding.sh sample.sh restore.sh; do
     au "cat > /tmp/$f; chmod +x /tmp/$f" < "$OUT/$f"
 done
 echo "  device scripts staged"
@@ -175,10 +234,16 @@ if [ "$RECORDER" = rtsp ] && [ -z "${SKIP_RECORD:-}" ]; then
         || { echo "the restream did not come up; nothing would be recorded" >&2; exit 1; }
 fi
 
+if [ -n "$SERVICE" ]; then
+    echo "  $(au '/tmp/save-banding.sh')"
+fi
+
 for hz in $LEGS; do
     echo
     echo "=== leg: banding $hz ==="
-    au "/tmp/leg.sh $hz" > "$OUT/engage-$hz.out" 2>&1
+    LEGSH=/tmp/leg.sh
+    [ -n "$SERVICE" ] && LEGSH=/tmp/leg-service.sh
+    au "$LEGSH $hz" > "$OUT/engage-$hz.out" 2>&1
     cat "$OUT/engage-$hz.out"
 
     if ! grep -q "^engaged" "$OUT/engage-$hz.out"; then
@@ -225,7 +290,7 @@ done
 echo
 echo "=== restoring ==="
 au '/tmp/restore.sh'
-au 'rm -f /tmp/ml-aed /tmp/leg.sh /tmp/sample.sh /tmp/restore.sh /tmp/flick.log'
+au 'rm -f /tmp/ml-aed /tmp/leg.sh /tmp/leg-service.sh /tmp/save-banding.sh /tmp/sample.sh /tmp/restore.sh /tmp/flick.log /tmp/banding.orig'
 
 echo
 echo "=== what each setting drove into the sensor ==="
