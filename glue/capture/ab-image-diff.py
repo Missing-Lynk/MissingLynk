@@ -286,6 +286,23 @@ def tone_curve(hist_open: np.ndarray, hist_vendor: np.ndarray) -> np.ndarray:
     return np.interp(cdf_open, cdf_vendor, np.arange(256, dtype=np.float64))
 
 
+def classify(delta: float, drift: float) -> str:
+    """How an effect compares with the drift between two recordings of one configuration.
+
+    3x is not a statistical test, it is a floor blunt enough to survive a scene that moves. The
+    withdrawn tone reading had effects of 0.7 against a drift of 5.1 and read as a result.
+    """
+    if drift <= 0:
+        return "real" if delta else "buried"
+
+    ratio = abs(delta) / drift
+
+    if ratio >= 3.0:
+        return "real"
+
+    return "marginal" if ratio >= 1.0 else "buried"
+
+
 def mean_of(samples: list[Sample], key: str) -> float:
     values = [s[key] for s in samples if not np.isnan(s[key])]
     return float(np.mean(values)) if values else float("nan")
@@ -492,6 +509,12 @@ def main() -> int:
                         help="label for the vendor leg in the report and plots")
     parser.add_argument("--open-label", default="open",
                         help="label for our leg in the report and plots")
+    parser.add_argument("--null", default=None,
+                        help="a THIRD recording of the same configuration as the open leg. Every "
+                             "difference is then reported against the drift between those two, "
+                             "which is the only way to tell an effect from the scene moving")
+    parser.add_argument("--null-start", type=float, default=1.0,
+                        help="seconds to skip at the head of the null-control leg")
     args = parser.parse_args()
 
     if args.samples <= 0:
@@ -545,6 +568,22 @@ def main() -> int:
     open_samples, open_hist, open_frames = sample_metrics(
         open_path, open_info, open_positions, args.burst)
 
+    # The null control is a repeat of the open leg's own configuration, so the difference between
+    # them is pure scene and AE drift: the floor any claimed effect has to clear.
+    null_samples = None
+    if args.null:
+        null_path = Path(args.null)
+
+        if not null_path.exists():
+            raise SystemExit(f"no such file: {null_path}")
+
+        null_info = probe(null_path)
+        null_positions = [args.null_start + f * duration for f in fractions]
+        print(f"null:   {null_path.name} {null_info['width']}x{null_info['height']} "
+              f"{null_info['fps']:.2f} fps {null_info['duration']:.1f}s {null_info['codec']}")
+        null_samples, _null_hist, _null_frames = sample_metrics(
+            null_path, null_info, null_positions, args.burst)
+
     vendor_line = timeline(vendor_path, vendor_info, args.vendor_start, duration, args.rate)
     open_line = timeline(open_path, open_info, args.open_start, duration, args.rate)
     curve = tone_curve(open_hist, vendor_hist)
@@ -589,16 +628,47 @@ def main() -> int:
              "spatial statistics still carry a compression component and are comparable between "
              "the legs rather than absolute.",
              "",
-             f"| measurement | {args.vendor_label} | {args.open_label} | delta | what it points at |",
-             "|---|---:|---:|---:|---|"]
+             (f"| measurement | {args.vendor_label} | {args.open_label} | delta | drift | verdict "
+              f"| what it points at |" if null_samples else
+              f"| measurement | {args.vendor_label} | {args.open_label} | delta | what it points at |"),
+             ("|---|---:|---:|---:|---:|---|---|" if null_samples else "|---|---:|---:|---:|---|")]
 
     summary = {}
+    survived = 0
     for label, key, meaning in rows:
         vendor_value = mean_of(vendor_samples, key)
         open_value = mean_of(open_samples, key)
         summary[key] = (vendor_value, open_value)
         delta = open_value - vendor_value
-        lines.append(f"| {label} | {vendor_value:.3f} | {open_value:.3f} | {delta:+.3f} | {meaning} |")
+
+        if null_samples is None:
+            lines.append(f"| {label} | {vendor_value:.3f} | {open_value:.3f} | {delta:+.3f} "
+                         f"| {meaning} |")
+
+            continue
+
+        drift = abs(mean_of(null_samples, key) - open_value)
+        verdict = classify(delta, drift)
+        survived += verdict == "real"
+        lines.append(f"| {label} | {vendor_value:.3f} | {open_value:.3f} | {delta:+.3f} "
+                     f"| {drift:.3f} | {verdict} | {meaning} |")
+
+    if null_samples is not None:
+        lines += ["",
+                  f"**{survived} of {len(rows)} measurements clear their own drift floor by 3x.** "
+                  "A row marked `buried` has an effect smaller than the difference between two "
+                  "recordings of the SAME configuration, so it says nothing whatever its sign. "
+                  "A `marginal` row is between 1x and 3x the floor and is not evidence on its own. "
+                  "This column exists because a tone reading was once published from this report "
+                  "and had to be withdrawn: every headline number in it was smaller than the "
+                  "drift, and nothing in the report said so.",
+                  "",
+                  "The null leg must come from the SAME session as the other two, on the same "
+                  "scene and light, recorded adjacent to them. A null from another session "
+                  "measures the difference between sessions, which is large, and buries "
+                  "everything. A null that is too similar is worse: a drift near zero makes the "
+                  "ratio explode and marks noise as `real`, so treat any row whose drift is "
+                  "orders below the others as unmeasured rather than significant."]
 
     lines += ["", "## Tone transfer, ours to the vendor's", "",
               "The vendor luma level carrying the same population share as each of ours. A "
