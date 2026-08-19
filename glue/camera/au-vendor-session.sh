@@ -16,6 +16,7 @@
 #   5  LTM page and statistics buffers, same scene                 no scene requirement
 #   6  saturated point: breath plus heap dump                      needs the lens covered
 #   7  AE convergence trace                                        needs lens cover then uncover
+#   8  LTM same-frame input/output pair (freezes ar_lowdelay)      static scene, see the stage
 #
 # Stages 1 to 5 have run and their captures are in out/au-vendor-session. Stage 4's capture
 # predates the shared cfa/cnf/cm/cm2 gate windows it now reads, so rerun it before using those
@@ -191,6 +192,62 @@ case "$1" in
 	echo "  >>> UNCOVER NOW and point at the light <<<"
 	wait $TRACE
 	grep -c "^t=" "$OUT/converge-trace.txt"
+	;;
+
+8)
+	echo "=== stage 8: LTM same-frame input/output pair (ar_lowdelay FROZEN briefly) ==="
+	# plans/done/au-ltm-page-algorithm.md: the shipped CLAHE (neo_v2) runs on the CPU inside
+	# ar_lowdelay, input marshalled at ltm_ctx[1320], output at ctx+1464, every frame, all of it
+	# heap. The captures in hand are minutes apart, and fitting input to output across that
+	# mismatch leaves a residual comparable to identity's own. A SIGSTOP between frames freezes
+	# one frame's input and output together; the whole heap is taken so ltm_ctx is resolved
+	# off-device, the same way stage 1 resolves the AE structures.
+	#
+	# What the freeze costs, stated up front: video TX stalls while the process is stopped. The
+	# RF link itself is chip-autonomous and survives; the goggle shows a frozen frame. The stop
+	# is held only as long as the copy takes: to /tmp when it fits (sub-second), streamed over
+	# ssh only as the fallback. Nothing persistent is written; if the unit misbehaves after
+	# SIGCONT, power-cycle it.
+	#
+	# Three repeats, because a stop landing inside the LTM compute (about a millisecond of a
+	# 16.7 ms frame) tears the pair. Independent stops make two clean pairs overwhelmingly
+	# likely, and the off-device fit cross-checks the repeats against each other.
+	# The maps file is what lets the extractor translate dump offsets to virtual addresses,
+	# which is how pointers found in the dump are followed. Saved, not just parsed.
+	sshg "cat /proc/$PID/maps" > "$OUT/ltm-frozen-maps.txt"
+	HEAP="$(awk '/\[heap\]/{split($1,a,"-"); print a[1], a[2]}' "$OUT/ltm-frozen-maps.txt")"
+	# shellcheck disable=SC2086  # word splitting is the point: base and limit into $1 and $2.
+	set -- $HEAP
+	SKIP=$(( 0x$1 / 4096 ))
+	CNT=$(( (0x$2 - 0x$1) / 4096 ))
+	FREE_KB="$(sshg "df -k /tmp" | awk 'NR==2{print $4}')"
+	echo "  heap 0x$1-0x$2, $CNT pages; /tmp free ${FREE_KB} KB"
+	for i in 1 2 3; do
+		echo "--- freeze $i"
+		if [ "${FREE_KB:-0}" -gt $(( CNT * 4 + 2048 )) ]; then
+			# Local copy: the stop lasts the dd alone, the transfer happens streaming.
+			sshg "kill -STOP $PID
+				dd if=/proc/$PID/mem of=/tmp/heap8.bin bs=4096 skip=$SKIP count=$CNT 2>/dev/null
+				kill -CONT $PID
+				cat /tmp/heap8.bin
+				rm -f /tmp/heap8.bin" > "$OUT/ltm-frozen-$i.bin"
+		else
+			# Streaming while stopped: seconds rather than sub-second, still one frame.
+			sshg "kill -STOP $PID
+				dd if=/proc/$PID/mem bs=4096 skip=$SKIP count=$CNT 2>/dev/null
+				kill -CONT $PID" > "$OUT/ltm-frozen-$i.bin"
+		fi
+		ls -l "$OUT/ltm-frozen-$i.bin"
+		# The pair is worthless if the pipeline did not resume: prove it, not assume it.
+		F0="$(sshg '/tmp/ml-regdump 0x088701f8 1' | awk 'NR==1{print $2}')"
+		sleep 1
+		F1="$(sshg '/tmp/ml-regdump 0x088701f8 1' | awk 'NR==1{print $2}')"
+		if [ "0x${F0:-0}" = "0x${F1:-0}" ]; then
+			echo "  frame counter stuck after SIGCONT ($F0): STOP HERE and power-cycle"
+			break
+		fi
+		echo "  resumed: frame counter $F0 -> $F1"
+	done
 	;;
 
 *)
