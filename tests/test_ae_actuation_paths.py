@@ -120,7 +120,7 @@ def test_camera_harnesses_read_only_nodes_the_driver_creates() -> None:
     nodes = debugfs_nodes(driver_text())
     missing: list[str] = []
 
-    for script in sorted(GLUE.glob("au-tone-*.sh")):
+    for script in sorted(GLUE.glob("au-*.sh")):
         for (node,) in sorted(paths_in(script, DEBUGFS)):
             if node not in nodes:
                 missing.append(f"{script.name}: {node}")
