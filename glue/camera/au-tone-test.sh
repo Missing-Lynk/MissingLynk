@@ -32,7 +32,7 @@ au() { timeout 60 sshpass -p "$PASS" ssh "${SSHOPTS[@]}" "root@$AU" "$@" 2>/dev/
 
 mkdir -p "$OUT"
 
-if ! au 'echo ok' | grep -q ok; then
+if [ "$(au 'echo ok')" != ok ]; then
   echo "air unit $AU not reachable" >&2
   exit 1
 fi

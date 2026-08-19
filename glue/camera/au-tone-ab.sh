@@ -40,8 +40,8 @@ gg() { timeout 60 sshpass -p "$PASS" ssh "${SSHOPTS[@]}" "root@$GG" "$@" 2>/dev/
 
 mkdir -p "$OUT"
 
-au 'echo ok' | grep -q ok || { echo "air unit $AU unreachable" >&2; exit 1; }
-gg 'echo ok' | grep -q ok || { echo "goggle $GG unreachable" >&2; exit 1; }
+[ "$(au 'echo ok')" = ok ] || { echo "air unit $AU unreachable" >&2; exit 1; }
+[ "$(gg 'echo ok')" = ok ] || { echo "goggle $GG unreachable" >&2; exit 1; }
 
 echo "=== staging ==="
 au 'cat > /tmp/ml-aed; chmod +x /tmp/ml-aed' < "$REPO/userspace/build/ml-aed"
