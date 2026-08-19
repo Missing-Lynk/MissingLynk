@@ -121,7 +121,7 @@ glue/capture/ab-sweep-summary.py \
     -o out/au-ab/tone-sweep.md
 ```
 
-Read the sweep narrowly. If one forced point pulls the tone-transfer curve and p50/p95/p99 toward the vendor while mean luma stays close, implement `plans/isp-tone-selector.md` next. If all four points leave the same local-contrast error, move the tone selector behind LTM/CLAHE. If all four points leave the same luma-banded colour, chroma, gradient or noise residual, take the shared `cfa/cnf/cm/cm2` gate before selector integration.
+Read the sweep narrowly. If one forced point pulls the tone-transfer curve and p50/p95/p99 toward the vendor while mean luma stays close, implement `plans/done/isp-tone-selector.md` next. If all four points leave the same local-contrast error, move the tone selector behind LTM/CLAHE. If all four points leave the same luma-banded colour, chroma, gradient or noise residual, take the shared `cfa/cnf/cm/cm2` gate before selector integration.
 
 ## Adding an AE event
 
