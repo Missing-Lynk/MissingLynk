@@ -7,6 +7,7 @@ no blob present. Checks that need bytes live in kernel/scripts/isp/check-blob-la
 
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -279,3 +280,66 @@ def test_no_script_hardcodes_an_offset_the_layout_names(layout) -> None:
     assert not offenders, "scripts carrying their own copy of a layout offset: " + "; ".join(
         f"{name} ({', '.join(hits)})" for name, hits in sorted(offenders.items())
     )
+
+# The tuning blob is pulled off the device and is gitignored, so these skip on a checkout that has
+# never run `make fetch-blobs`. They are worth having anyway: they encode the experiment-design
+# failure that cost a device session, and that failure is silent by nature.
+TUNING_CANDIDATES = [
+    ROOT / "firmware" / "bin" / "slot-a" / "usr" / "usrdata" / "tunning"
+         / "nt99235_tuning_preview_fpv.bin",
+    ROOT / "rootfs" / "build" / "work" / "root" / "lib" / "firmware" / "artosyn"
+         / "nt99235-tuning-preview-fpv.bin",
+]
+
+
+def tuning_blob() -> Path | None:
+    """The shipped sensor tuning blob, wherever this checkout happens to have it."""
+    for path in TUNING_CANDIDATES:
+        if path.exists():
+            return path
+
+    return None
+
+
+def run_differ(blob: Path, low: int, high: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(ISP / "check-tone-page-live.py"), "--tuning", str(blob), "--differ",
+         str(low), str(high)],
+        capture_output=True, text=True, check=False)
+
+
+@pytest.mark.skipif(tuning_blob() is None, reason="the tuning blob is not in this checkout")
+def test_the_void_scalar_pair_is_reported_as_void() -> None:
+    """291 against 305 must be refused: it is how the first tone gate boot was lost.
+
+    Both scalars land inside gamma band 3 and DRC band 4, so both legs build byte-identical pages
+    and the comparison measures nothing about tone however carefully it is run. Nothing about the
+    run itself reveals that, which is why it has to be caught before the device is booted.
+    """
+    blob = tuning_blob()
+    assert blob is not None
+    result = run_differ(blob, 291, 305)
+
+    assert "VOID" in result.stdout, result.stdout
+    assert result.returncode != 0, "a void pair must fail, so a harness can gate on it"
+
+
+@pytest.mark.skipif(tuning_blob() is None, reason="the tuning blob is not in this checkout")
+def test_the_designed_scalar_pair_would_show_something() -> None:
+    """305 against 240, the pair the image experiment is designed around, must be usable.
+
+    A guard that called everything void would be useless, so the positive case is pinned too. 240
+    is about 2.8 stops brighter than the 305 the AE sits at indoors, and selects a different entry
+    for both stages rather than only one.
+    """
+    blob = tuning_blob()
+    assert blob is not None
+    result = run_differ(blob, 305, 240)
+
+    assert result.returncode == 0, result.stdout
+    assert "VOID" not in result.stdout
+
+    for line in result.stdout.splitlines():
+        if line.startswith(("gamma:", "drc")):
+            differing = int(line.split(":")[1].strip().split()[0])
+            assert differing > 500, f"expected a substantial difference, got: {line}"
