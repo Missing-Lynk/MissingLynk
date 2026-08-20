@@ -67,6 +67,7 @@ CODEC="$(sshg "grep 'RTSP serving' $LOG 2>/dev/null | tail -1" </dev/null \
 # does not mean the server is down: the :554 listener is the ground truth, and the codec rides the
 # pipeline's ML_DVR_CODEC (unset = the h265 default).
 if [ -z "$CODEC" ]; then
+    # shellcheck disable=SC2016  # $pid and $c expand on the goggle, inside the remote shell
     CODEC="$(sshg 'netstat -tln 2>/dev/null | grep -q ":554 " || exit 0
                    pid=$(pgrep ml-pipeline | head -1)
                    c=$(tr "\0" "\n" < /proc/$pid/environ 2>/dev/null | sed -n "s/^ML_DVR_CODEC=//p")
