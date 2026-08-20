@@ -11,7 +11,7 @@ CC := $(CROSS)gcc
 CFLAGS ?= -static -O2 -Wall
 BUILD := build
 
-TOOLS := $(BUILD)/uboot-trigger $(BUILD)/wdt-reset $(BUILD)/ml-rf-replay
+TOOLS := $(BUILD)/uboot-trigger $(BUILD)/wdt-reset $(BUILD)/ml-rf-replay $(BUILD)/ml-fake-air
 
 all: $(TOOLS)
 
@@ -22,6 +22,14 @@ $(BUILD)/wdt-reset: boot/wdt-reset.c boot/wdt.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD)/ml-rf-replay: capture/ml-rf-replay.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD)/ml-fake-air: capture/ml-fake-air.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
+
+# Bench diagnostic kept with the other untracked harnesses under dev/ (gitignored), so it is an
+# explicit target, not part of all: make -C glue build/ml-drmfbs
+$(BUILD)/ml-drmfbs: dev/ml-drmfbs.c ../userspace/ml-shared/mlm.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD):

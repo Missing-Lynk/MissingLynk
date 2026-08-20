@@ -63,6 +63,16 @@ LOG=/var/log/ml-pipeline.log
 CODEC="$(sshg "grep 'RTSP serving' $LOG 2>/dev/null | tail -1" </dev/null \
          | sed -n 's/.*(\([a-z0-9]*\)).*/\1/p')"
 
+# The serving line lives in a tmpfs log that ml-logd truncates when /var/log fills, so its absence
+# does not mean the server is down: the :554 listener is the ground truth, and the codec rides the
+# pipeline's ML_DVR_CODEC (unset = the h265 default).
+if [ -z "$CODEC" ]; then
+    CODEC="$(sshg 'netstat -tln 2>/dev/null | grep -q ":554 " || exit 0
+                   pid=$(pgrep ml-pipeline | head -1)
+                   c=$(tr "\0" "\n" < /proc/$pid/environ 2>/dev/null | sed -n "s/^ML_DVR_CODEC=//p")
+                   echo ${c:-h265}' </dev/null | tr -d "\r\n ")"
+fi
+
 if [ -z "$CODEC" ]; then
     echo "the goggle is not serving the restream: run glue/capture/rtsp-stream.sh on first" >&2
     exit 1

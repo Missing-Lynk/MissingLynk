@@ -33,14 +33,29 @@ TILES = [                   # (crop_h, crop_y)
 ]
 
 
-def encode_tile(src_filter, h, y, secs, out):
+# Content presets, distinct along the axes an FPV feed varies on: sustained motion everywhere in
+# the frame, near-static hover, and hard per-frame scene change (every pixel new, worst case for
+# the P-frame budget). All carry the frame counter across the tile seam.
+COUNTER = ("drawtext=text='%{n}':fontsize=160:fontcolor=white:borderw=6:bordercolor=black:"
+           "x=(w-tw)/2:y=460")
+PRESETS = {
+    "flight": "testsrc2=size=1920x1080:rate=60," + COUNTER,
+    "hover":  "smptehdbars=size=1920x1080:rate=60," + COUNTER,
+    "chaos":  "mandelbrot=size=1920x1080:rate=60:end_pts=100000," + COUNTER,
+}
+
+
+def encode_tile(src_filter, h, y, secs, mbit, out):
+    # VBV bounds every access unit under the wire format's u16 payload length (and a UDP
+    # datagram): one AU per datagram, so an unbounded IDR does not fit. 480 kbit = 60 KB ceiling.
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", src_filter, "-t", str(secs),
         "-vf", f"crop=1920:{h}:0:{y}",
         "-c:v", "libx265", "-preset", "fast",
-        "-x265-params", f"keyint={FPS}:min-keyint={FPS}:bframes=0:ref=1:scenecut=0",
-        "-pix_fmt", "yuv420p", "-b:v", "6M", "-f", "hevc", str(out),
+        "-x265-params", (f"keyint={FPS}:min-keyint={FPS}:bframes=0:ref=1:scenecut=0"
+                         f":vbv-maxrate={mbit * 1000}:vbv-bufsize=350:strict-cbr=1"),
+        "-pix_fmt", "yuv420p", "-b:v", f"{mbit}M", "-f", "hevc", str(out),
     ], check=True)
 
 
@@ -69,17 +84,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--secs", type=int, default=10)
+    ap.add_argument("--preset", choices=sorted(PRESETS), default="flight")
+    ap.add_argument("--bitrate", type=int, default=6, metavar="MBIT")
     args = ap.parse_args()
 
-    src = ("testsrc2=size=1920x1080:rate=60,"
-           "drawtext=text='%{n}':fontsize=160:fontcolor=white:borderw=6:bordercolor=black:"
-           "x=(w-tw)/2:y=460")
+    src = PRESETS[args.preset]
 
     with tempfile.TemporaryDirectory() as td:
         tiles = []
         for i, (h, y) in enumerate(TILES):
             out = Path(td) / f"tile{i}.h265"
-            encode_tile(src, h, y, args.secs, out)
+            encode_tile(src, h, y, args.secs, args.bitrate, out)
             tiles.append(split_aus(out))
 
         n = min(len(t) for t in tiles)
@@ -87,6 +102,12 @@ def main():
             for fid in range(n):
                 for chn, aus in enumerate(tiles):
                     es, key = aus[fid]
+                    # One AU per datagram: the record length is u16 and the replayer sends each
+                    # record as a single UDP datagram, so an AU that VBV failed to bound is a
+                    # generation error, not something to write through.
+                    if len(es) + 44 > 65000:
+                        raise SystemExit(f"[synth] tile{chn} frame {fid} AU is {len(es)} B, "
+                                         f"over the datagram bound - lower --bitrate")
                     hdr = struct.pack("<8I", MAGIC, len(es), chn, 1 if key else 0,
                                       fid, fid * 1000 // FPS, RES, TAIL)
                     hdr += struct.pack("<I", zlib.crc32(hdr))
