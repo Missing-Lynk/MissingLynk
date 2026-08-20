@@ -1,5 +1,6 @@
-# device.mk - manifest for the BetaFPV VR04 HD air unit (P1_SKY). See docs/adding-a-device.md and
-# plans/air-unit-open-stack.md. Facts confirmed on-device (gather sessions 2026-07-18..19).
+# device.mk - manifest for the BetaFPV VR04 HD air unit (P1_SKY): identity, capabilities, and
+# build pointers for this device (the goggle manifest carries the shared mechanism notes).
+# See docs/adding-a-device.md.
 
 DEV_NAME           = betafpv-vr04-air
 DEV_VENDOR         = betafpv
@@ -13,25 +14,26 @@ DEV_FW_VERSION     = 1.0.44.rel
 DEV_BOARD_TYPE     = c401
 DEV_RF_ROLE        = air
 
-# Capabilities. camera=1 (NT99235 capture, greenfield); no display, no buzzer. The LEDs are two
-# plain GPIO ones (red bind indicator on global GPIO 0, green power light on GPIO 1, both active
-# low on mainline leds-gpio), NOT the goggle's WS2812-over-SPI chain - so DEV_HAS_LED=1 here does
-# not imply ml-ledd, which is WS2812-only and reaches the goggle through its rootfs overlay init
-# script rather than this flag. Input is a
-# single gpio-keys button (bind, global GPIO 42 = vendor bank 1 pin 19, active low; code 0xf0 in
-# the vendor DTB, KEY_CONNECT on the open kernel) - a different mechanism from the goggle's
-# adc-keys ladder, so DEV_HAS_KEYPAD=0, DEV_HAS_GPIO_KEYS=1 (the flags compose; a unit
-# could have both). This variant has no microSD -> no DVR, no MTP (rootfs board.conf HAS_SD=0); an
-# SD-equipped variant flips DEV_HAS_SD/DEV_HAS_DVR + HAS_SD. FC link (MSP over /dev/ttyS1) is
-# air-only.
+# Capabilities: source of truth for UI gating (injected into ml-hud as -D defines) + docs.
+# Kernel/rootfs do not branch on these; they resolve concrete files by name. The HAS_* flags
+# compose (a unit may set several), so they describe hardware, not a device class.
+# Comments sit on their own lines so the make values stay bare (a trailing inline comment would
+# leave whitespace in the value, which then leaks into ml-hud's -D defines).
 DEV_HAS_DISPLAY     = 0
+# NT99235 sensor capture.
 DEV_HAS_CAMERA      = 1
+# No adc-keys ladder (the goggle's input); a single bind button instead, so KEYPAD=0/GPIO_KEYS=1.
 DEV_HAS_KEYPAD      = 0
+# Bind button: global GPIO 42 (vendor bank 1 pin 19), active low, KEY_CONNECT on the open kernel.
 DEV_HAS_GPIO_KEYS   = 1
 DEV_HAS_BUZZER      = 0
+# Two plain GPIO LEDs (red bind on GPIO 0, green power on GPIO 1, active-low leds-gpio), NOT the
+# goggle's WS2812-over-SPI chain, so this does NOT imply ml-ledd (WS2812-only, via the goggle overlay).
 DEV_HAS_LED         = 1
+# No microSD -> no DVR, no MTP (rootfs board.conf HAS_SD=0); an SD variant flips these two + HAS_SD.
 DEV_HAS_SD          = 0
 DEV_HAS_DVR         = 0
+# MSP over /dev/ttyS1, air-only.
 DEV_HAS_FC_LINK     = 1
 
 # Build pointers. Kernel + rootfs resolve by DEV_NAME (kernel/devices/$(DEV_NAME)/,
