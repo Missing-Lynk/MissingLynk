@@ -19,7 +19,8 @@
 # a block whose clock is gated, which is why this refuses to run unless the camera is streaming.
 #
 # Usage: glue/camera/au-snapshot-vendor.sh
-# Env: none. Targets stock slot A (192.168.3.100 / artosyn); AU_IP / AU_PASS override.
+# Env: AU_SNAPSHOT_OUT overrides the output directory. Targets stock slot A
+#      (192.168.3.100 / artosyn); AU_IP / AU_PASS override.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -29,7 +30,9 @@ REPO="$(cd "$HERE/../.." && pwd)"
 # Reads the vendor stack: slot A only.
 au_stock_slot_a
 
-OUT="$REPO/out/au-snapshot"
+# The output directory. Defaults to the reference capture the parity checks read; set
+# AU_SNAPSHOT_OUT to write a session elsewhere and keep that reference intact.
+OUT="${AU_SNAPSHOT_OUT:-$REPO/out/au-snapshot}"
 
 mkdir -p "$OUT"
 
