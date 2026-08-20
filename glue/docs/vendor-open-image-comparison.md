@@ -71,11 +71,11 @@ The tone transfer curve is the most diagnostic single output. It is recovered by
 
 The suggested-work table intentionally ranks by measured delta, not by certainty. The expected landing order after a clean static-scene run is:
 
-1. Mean-luma or timeline difference: re-check AE operating point, target, convergence and anti-flicker.
-2. p50/p95/p99 or tone-transfer difference with similar mean luma: implement the gamma/DRC tone-table selector.
-3. Gradient, noise, chroma, saturation, or luma-band channel-ratio difference: gate-boot the implemented `cfa/cnf/cm/cm2` ladders. AWB is gated off in the shipped tuning, so an AWB estimator is beyond vendor parity.
+1. Mean-luma or timeline difference: re-check AE operating point, target, convergence and anti-flicker. Mind the banding toggle: `/usrdata/missinglynk/banding` at 50 moves the open leg 0.74 stops darker than a vendor leg running the default off, which would read as an AE difference.
+2. p50/p95/p99 or tone-transfer difference with similar mean luma: the gamma/DRC tone-table selector, shipped and driven by default since 2026-08-19; the question becomes whether its scalar tracks the vendor's on this scene, not whether the pages reach the pixels (that is proven).
+3. Gradient, noise, chroma, saturation, or luma-band channel-ratio difference: the gain-keyed ladders. All five (`rnr/lnr/de3d/cfa/cnf`) plus `cm/cm2` reproduce their recomputation on hardware across the gate abscissas (2026-08-19 sweep), so a delta here points at the blob transforms or the abscissa itself, not the appliers. AWB is gated off in the shipped tuning, so an AWB estimator is beyond vendor parity.
 4. A remaining raw-domain temporal-noise signature after that gate: re-check `raw_3dnr`, which is currently classified disabled for the shipped path.
-5. Local-contrast mismatch that survives the above: LTM/CLAHE.
+5. Local-contrast mismatch that survives the above: LTM/CLAHE, the one enabled stage still running a stand-in (identity ramp) on our side.
 
 ## Forced tone sweep
 
