@@ -115,6 +115,7 @@ echo
 echo "  dumping $BYTES bytes from $BASE"
 
 # One grab has to fit in the device's /tmp; it is pulled and removed before the next.
+# shellcheck disable=SC2016  # $4 is awk's field on the device, so it must not expand here.
 FREEK="$(sshg 'df -k /tmp | awk "NR==2 { print \$4 }"' 2>/dev/null)"
 if [ -n "$FREEK" ] && [ "$FREEK" -lt $((BYTES / 1024 + 1024)) ]; then
 	echo "  /tmp has ${FREEK}K free, which is not enough for a ${BYTES}-byte grab."
