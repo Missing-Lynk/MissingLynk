@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Missing-Lynk/MissingLynk/flasher/internal/devconf"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/manifest"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/whitelist"
@@ -183,40 +182,18 @@ func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	// The reboot command belongs to the firmware that is RUNNING (the vendor slot has
-	// ar_wdt_service, the open slot ships wdt-reset), while the address, password and
-	// DHCP behaviour belong to the slot being ACTIVATED. Those two are the same slot in
-	// a normal switch and different ones out of a flash-boot, so they are decided apart.
-	rebootCmd := stockRebootCmd
-	if runningOpen {
-		rebootCmd = openRebootCmd
-	}
-
-	targetOpen := state.TargetContent == "open"
-	targetPassword, targetIP := device.StockPassword, opt.DeviceIP
-	doneMsg := "Done - the device is now running the stock firmware."
-	if targetOpen {
-		targetIP = devconf.OpenIP[product]
-		if targetIP == "" && runningOpen {
-			// Already on an open slot: both open slots answer at the same fixed address.
-			targetIP = connectedIP
-		}
-
-		if targetIP == "" {
-			return fail(emit, fmt.Errorf("no open-slot IP configured for product %s", product))
-		}
-
-		targetPassword = device.OpenPassword
-		doneMsg = "Done - the device is now running the MissingLynk open firmware."
-	}
-
-	// The open slot serves DHCP; the vendor slot does not. When the activated slot
-	// answers at the address we are already connected to (an open slot activated out of
-	// a flash-boot), reachability alone cannot tell the old session from the new one, so
-	// the reconnect additionally has to see a rebooted uptime.
-	if err := rebootAndWait(ctx, opt, client, rebootCmd, targetPassword, targetIP,
-		targetOpen, targetIP == connectedIP, emit); err != nil {
+	land, err := landingFor(runningFirmware(runningOpen), state.TargetContent, product, connectedIP, opt)
+	if err != nil {
 		return fail(emit, err)
+	}
+
+	if err := rebootAndWait(ctx, opt, client, land, emit); err != nil {
+		return fail(emit, err)
+	}
+
+	doneMsg := "Done - the device is now running the stock firmware."
+	if land.activated == firmwareOpen {
+		doneMsg = "Done - the device is now running the MissingLynk open firmware."
 	}
 
 	emit(Event{Level: LevelDone, Msg: doneMsg})
@@ -261,7 +238,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return err
 	}
 
-	client, alreadyOpen, _, err := connect(ctx, opt.DeviceIP, opt.OpenIPs)
+	client, alreadyOpen, connectedIP, err := connect(ctx, opt.DeviceIP, opt.OpenIPs)
 	if err != nil {
 		return fail(emit, fmt.Errorf("SSH connect failed: %w", err))
 	}
@@ -336,12 +313,14 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
-	// Flashing lands on the open slot, which answers at the device's fixed open IP and serves DHCP.
-	openIP := devconf.OpenIP[sdk.ProductVersion]
-	if openIP == "" {
-		return fail(emit, fmt.Errorf("no open-slot IP configured for product %s", sdk.ProductVersion))
+	// The flip above made the newly written slot the active one, so this reboot lands
+	// on the open firmware, fired from the stock firmware this flash connected to.
+	land, err := landingFor(firmwareStock, contentOpen, sdk.ProductVersion, connectedIP, opt)
+	if err != nil {
+		return fail(emit, err)
 	}
-	if err := rebootAndWait(ctx, opt, client, stockRebootCmd, device.OpenPassword, openIP, true, false, emit); err != nil {
+
+	if err := rebootAndWait(ctx, opt, client, land, emit); err != nil {
 		return fail(emit, err)
 	}
 

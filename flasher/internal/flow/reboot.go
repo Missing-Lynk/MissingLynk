@@ -10,50 +10,50 @@ import (
 	"time"
 )
 
-// Per-slot reboot commands. A plain `reboot` is a no-op on this hardware (sysrq
-// is out); the reliable reset is the watchdog, fired WITHOUT setting the SPL
-// reboot-reason flag so the SPL Falcon-boots the GPT-active slot (setting that
-// flag would instead drop to U-Boot).
-const (
-	// The vendor slot has ar_wdt_service: arm the watchdog for 1s and stop petting
-	// it. The connection drops as the SoC resets, so the command error is ignored.
-	stockRebootCmd = "sync; /usr/bin/ar_wdt_service -t 1 >/dev/null 2>&1 & sleep 1; killall ar_wdt_service"
+// The post-reboot poll cadence, as one value so tests can shrink it (like
+// dialDevice and reachable) and drive the whole wait loop in milliseconds.
+var waitTimings = struct {
+	// settle lets the SoC reset and drop the USB link before the first poll, so
+	// the old interface is gone and only the re-enumerated one is a candidate.
+	settle time.Duration
 
-	// The open slot ships the self-contained wdt-reset helper.
-	openRebootCmd = "sync; /usr/local/bin/wdt-reset"
-)
+	// poll is the gap between reachability attempts.
+	poll time.Duration
+
+	// dhcpGrace is how long a DHCP-serving firmware gets to configure the host on
+	// its own before the host IP is reattached statically.
+	dhcpGrace time.Duration
+
+	// deadline bounds the whole wait.
+	deadline time.Duration
+}{
+	settle:    6 * time.Second,
+	poll:      2 * time.Second,
+	dhcpGrace: 8 * time.Second,
+	deadline:  180 * time.Second,
+}
 
 // rebootAndWait triggers the watchdog reboot (never `reboot`; see the reboot-
-// command constants) and waits for the now-active slot to reappear as a
-// reachable device that answers SSH with targetPassword. The connection drops as
+// command constants) and waits for land to come back: the activated firmware
+// answering SSH at land.address with its own password. The connection drops as
 // the SoC resets, so the reboot command's error is expected and ignored.
+//
+// The reboot command belongs to the firmware that is RUNNING, while the address,
+// password and DHCP behaviour belong to the firmware being ACTIVATED; landingFor
+// is what keeps those two apart. Waiting on the wrong address would never see the
+// reboot complete: the stock slot answers at .100 and an open slot at the unit's
+// fixed board.conf address (.101 goggle, .102 air).
 //
 // The USB gadget re-enumerates on reboot with a boot-randomized MAC, so the host
 // sees a NEW interface (enx<newmac>); the host IP assigned to the pre-reboot
-// interface does not carry over. The slot we land on may also serve no DHCP, so
-// the fresh interface can come up with no address at all and stay unreachable
+// interface does not carry over. The firmware we land on may also serve no DHCP,
+// so the fresh interface can come up with no address at all and stay unreachable
 // forever. This reattaches the host IP to the re-enumerated interface, which is
-// what lets a switch back to the vendor slot be detected as complete.
-//
-// targetServesDHCP says whether the slot being booted serves DHCP (the open slot
-// does, the vendor slot does not). For a DHCP slot we wait briefly for DHCP to
-// configure the host before doing a static reattach, which avoids a needless
-// authorization prompt; for a non-DHCP slot we reattach as soon as the interface
-// appears, so the vendor slot is detected as soon as it is up.
-//
-// ip is the address the slot being booted answers on: the stock slot at .100, the
-// open slot at the unit's fixed board.conf address (.101 goggle, .102 air). The
-// slots live at different addresses, so waiting on the wrong one would never see
-// the reboot complete.
-//
-// verifyUptime is for the one case where the firmware being booted answers at the
-// address we are connected to right now (an open slot activated out of a flash-boot):
-// there, an SSH answer at ip is not by itself proof of a reboot, so the session that
-// answers must also report an uptime shorter than the time since the reboot command
-// went out. An unreadable uptime is accepted, so this can only delay a false positive,
-// never turn a real reboot into a timeout.
-func rebootAndWait(ctx context.Context, opt Options, client deviceClient, rebootCmd, targetPassword, ip string,
-	targetServesDHCP, verifyUptime bool, emit Emit) error {
+// what lets a switch back to the vendor slot be detected as complete. A
+// DHCP-serving firmware gets waitTimings.dhcpGrace to configure the host first,
+// which avoids a needless authorization prompt; anything else is reattached as
+// soon as its interface appears.
+func rebootAndWait(ctx context.Context, opt Options, client deviceClient, land landing, emit Emit) error {
 	emit(Event{Level: LevelStep, Msg: "Rebooting into the newly activated firmware"})
 
 	// The reboot command tears the SoC down mid-session, so this SSH call never
@@ -62,40 +62,38 @@ func rebootAndWait(ctx context.Context, opt Options, client deviceClient, reboot
 	// whole reconnect - including the host-IP reattach - for that long, so fire it
 	// in the background and move straight to the wait loop. The command is delivered
 	// before the SoC resets; the deferred client.Close eventually unblocks the call.
-	go func() { _, _ = client.Run(rebootCmd) }()
+	go func() { _, _ = client.Run(land.running.rebootCmd()) }()
 	issued := time.Now()
 
 	emit(Event{Level: LevelInfo, Msg: "Waiting for the device to come back (this can take a minute)"})
 
-	// Let the SoC actually reset and drop the USB link before polling, so the old
-	// interface is gone and only the re-enumerated one is a candidate.
-	if err := sleep(ctx, 6*time.Second); err != nil {
+	if err := sleep(ctx, waitTimings.settle); err != nil {
 		return err
 	}
 
 	backend := newBackend()
 	assigned := map[string]bool{}
 	lastIfaces := ""
-	// A DHCP slot gets a short grace to configure the host on its own; a non-DHCP
-	// slot is reattached immediately once its interface enumerates.
 	reattachAfter := time.Now()
-	if targetServesDHCP {
-		reattachAfter = reattachAfter.Add(8 * time.Second)
+
+	if land.activated.isDHCPServer() {
+		reattachAfter = reattachAfter.Add(waitTimings.dhcpGrace)
 	}
-	deadline := time.Now().Add(180 * time.Second)
+
+	deadline := time.Now().Add(waitTimings.deadline)
 	for time.Now().Before(deadline) {
-		if reachable(ctx, ip, 2*time.Second) {
-			if c, err := dialDevice(ctx, ip, "root", targetPassword, 5*time.Second); err == nil {
-				rebooted := !verifyUptime || hasRebooted(c, time.Since(issued))
+		if reachable(ctx, land.address, 2*time.Second) {
+			if c, err := dialDevice(ctx, land.address, "root", land.activated.password(), 5*time.Second); err == nil {
+				rebooted := !land.isSameAddress || hasRebooted(c, time.Since(issued))
 				_ = c.Close()
 				if rebooted {
 					emit(Event{Level: LevelInfo, Msg: "The device is back up and reachable"})
 					return nil
 				}
 
-				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s still answers from the pre-reboot session", ip)})
+				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s still answers from the pre-reboot session", land.address)})
 			} else {
-				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s answers but SSH is not ready yet", ip)})
+				emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("%s answers but SSH is not ready yet", land.address)})
 			}
 		} else if time.Now().After(reattachAfter) {
 			// Not reachable and no DHCP took hold: reattach the host IP to the
@@ -127,7 +125,7 @@ func rebootAndWait(ctx context.Context, opt Options, client deviceClient, reboot
 			}
 		}
 
-		if err := sleep(ctx, 2*time.Second); err != nil {
+		if err := sleep(ctx, waitTimings.poll); err != nil {
 			return err
 		}
 	}

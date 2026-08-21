@@ -47,7 +47,7 @@ func fillSwitchTarget(client deviceClient, info *DeviceInfo, emit Emit) {
 	info.Detail = switchDetail(info)
 	// Only the open slot needs a boot proof: the stock slot is the untouched factory
 	// install this tool never writes.
-	if info.TargetContent == "open" {
+	if info.TargetContent == contentOpen {
 		fillProof(client, info, emit)
 	}
 }
@@ -158,10 +158,10 @@ func probeSlots(client deviceClient, emit Emit) (*slotState, error) {
 // the GUI's device card and dialogs.
 func slotContentDescription(content string) string {
 	switch content {
-	case "open":
+	case contentOpen:
 		return "the MissingLynk open firmware"
 
-	case "vendor":
+	case contentVendor:
 		return "the stock firmware"
 
 	case "empty":

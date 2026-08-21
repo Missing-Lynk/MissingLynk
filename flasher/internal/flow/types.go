@@ -137,7 +137,7 @@ func (i *DeviceInfo) SwitchTarget() SwitchTarget {
 // that the flip has a defined direction.
 func (s *slotState) isSwitchTarget() bool {
 	return s.TargetSlot != "" && s.TargetSlot != "unknown" && s.TargetComplete &&
-		(s.TargetContent == "open" || s.TargetContent == "vendor")
+		(s.TargetContent == contentOpen || s.TargetContent == contentVendor)
 }
 
 // applyDefaults fills the unset options and rejects malformed ones. The addresses
