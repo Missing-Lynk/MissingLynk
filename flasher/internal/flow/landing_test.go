@@ -79,18 +79,18 @@ func TestLandingForNamesTheActivatedFirmware(t *testing.T) {
 		wantSame      bool
 	}{
 		{
-			name: "stock running, flip to the open slot", running: firmwareStock, content: contentOpen,
+			name: "stock running, flip to the open slot", running: firmwareStock, content: ContentOpen,
 			connectedIP: DefaultDeviceIP, wantAddress: openIP, wantActivated: firmwareOpen,
 			wantRebootCmd: stockRebootCmd, wantPassword: device.OpenPassword, wantDHCP: true,
 		},
 		{
-			name: "open running, flip back to the vendor slot", running: firmwareOpen, content: contentVendor,
+			name: "open running, flip back to the vendor slot", running: firmwareOpen, content: ContentVendor,
 			connectedIP: openIP, wantAddress: DefaultDeviceIP, wantActivated: firmwareStock,
 			wantRebootCmd: openRebootCmd, wantPassword: device.StockPassword, wantDHCP: false,
 		},
 		{
 			name: "open running, flip to the open slot answering where we are", running: firmwareOpen,
-			content: contentOpen, connectedIP: openIP, wantAddress: openIP, wantActivated: firmwareOpen,
+			content: ContentOpen, connectedIP: openIP, wantAddress: openIP, wantActivated: firmwareOpen,
 			wantRebootCmd: openRebootCmd, wantPassword: device.OpenPassword, wantDHCP: true, wantSame: true,
 		},
 	}
@@ -147,11 +147,11 @@ func TestLandingForRejectsAnUnknownProduct(t *testing.T) {
 		t.Fatalf("applying defaults: %v", err)
 	}
 
-	if _, err := landingFor(firmwareStock, contentOpen, "P1_NOT_A_PRODUCT", DefaultDeviceIP, opt); err == nil {
+	if _, err := landingFor(firmwareStock, ContentOpen, "P1_NOT_A_PRODUCT", DefaultDeviceIP, opt); err == nil {
 		t.Fatal("expected an error for a product with no open-slot address")
 	}
 
-	land, err := landingFor(firmwareOpen, contentOpen, "P1_NOT_A_PRODUCT", "192.168.3.199", opt)
+	land, err := landingFor(firmwareOpen, ContentOpen, "P1_NOT_A_PRODUCT", "192.168.3.199", opt)
 	if err != nil {
 		t.Fatalf("an open slot should fall back to the connected address: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRebootAndWaitReturnsWhenTheActivatedFirmwareAnswers(t *testing.T) {
 		t.Fatalf("applying defaults: %v", err)
 	}
 
-	land, err := landingFor(firmwareStock, contentOpen, product, DefaultDeviceIP, opt)
+	land, err := landingFor(firmwareStock, ContentOpen, product, DefaultDeviceIP, opt)
 	if err != nil {
 		t.Fatalf("landingFor: %v", err)
 	}

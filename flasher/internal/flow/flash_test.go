@@ -390,12 +390,13 @@ func TestDetectReportsAnAlreadyOpenUnit(t *testing.T) {
 		t.Fatalf("Detect() = %v, want no error", err)
 	}
 
-	if !info.AlreadyOpen {
-		t.Error("AlreadyOpen = false, want true for a unit answering on the open address")
+	if !info.IsAlreadyOpen() {
+		t.Errorf("verdict = %v, want the already-open verdict for a unit answering on the open address",
+			info.Verdict)
 	}
 
-	if info.Flashable {
-		t.Error("Flashable = true, want false for a unit already running the open firmware")
+	if info.IsFlashable() {
+		t.Error("IsFlashable() = true, want false for a unit already running the open firmware")
 	}
 
 	if info.Name != "Artosyn Proxima-9311 (test)" {

@@ -17,7 +17,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/Missing-Lynk/MissingLynk/flasher/internal/flow"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/present"
 )
 
 // ui holds the widgets and the shared state. Every field is touched only on the
@@ -46,15 +46,8 @@ type ui struct {
 	logTrimmed bool
 	logPending bool
 
-	selectedImage string
-	flashable     bool
-	flashing      bool
-	scanning      bool
-	switchable    bool
-	switchTarget  flow.SwitchTarget // the slot a switch activates and what it holds
-	flashboot     bool              // the running slot is not the active one
-	provenNote    string            // boot-proof sentence for an open switch target (empty if unknown)
-	switching     bool
+	// state is what the window knows; present.Render turns it into what is drawn.
+	state present.State
 }
 
 // appID is the unique application identifier Fyne needs for its preferences and
@@ -122,7 +115,7 @@ func newUI(win fyne.Window) *ui {
 	spacer.SetMinSize(fyne.NewSize(0, slotHeight))
 	activityOverlay := container.NewVBox(layout.NewSpacer(), u.activity, layout.NewSpacer())
 	statusSlot := container.NewStack(spacer, u.deviceStatus, activityOverlay)
-	u.setBusy(false)
+	u.refresh()
 
 	// Top: device status (with the progress bar overlaid). Centre: the log,
 	// filling. Bottom: full-width actions.
@@ -152,33 +145,21 @@ func (u *ui) setBusy(busy bool) {
 	u.deviceStatus.Show()
 }
 
-// refresh updates the action buttons from the current flags: their enabled state,
-// and the switch button's label, which names the slot the switch would activate
-// (that slot follows the device's active slot, so it is not always the same one).
-// Must run on the UI thread.
+// refresh draws the rendered view: the device card, the activity bar, and the
+// action buttons with their labels and enabled state. Every decision behind it is
+// present.Render's. Must run on the UI thread.
 func (u *ui) refresh() {
-	busy := u.scanning || u.flashing || u.switching
-	setEnabled(u.rescanButton, !busy)
-	setEnabled(u.chooseButton, u.flashable && !busy)
-	setEnabled(u.flashButton, u.flashable && !busy && u.selectedImage != "")
-	setEnabled(u.switchButton, u.switchable && !busy)
+	view := present.Render(u.state)
 
-	label := "Switch slot"
-	if u.switchTarget.Slot != "" {
-		label = "Switch to slot " + u.switchTarget.Slot
-	}
-	u.switchButton.SetText(label)
-}
+	u.deviceState.SetText(view.Title)
+	u.deviceStatus.SetText(view.Status)
+	u.setBusy(view.Busy)
 
-// withDetail appends an optional follow-on line below the summary, so the status
-// area shows a one-sentence summary with any extra information on its own line
-// rather than one long truncated string.
-func withDetail(summary, detail string) string {
-	if detail == "" {
-		return summary
-	}
-
-	return summary + "\n" + detail
+	setEnabled(u.rescanButton, view.RescanEnabled)
+	setEnabled(u.chooseButton, view.ChooseEnabled)
+	setEnabled(u.flashButton, view.FlashEnabled)
+	setEnabled(u.switchButton, view.SwitchEnabled)
+	u.switchButton.SetText(view.SwitchLabel)
 }
 
 func setEnabled(button *widget.Button, enabled bool) {

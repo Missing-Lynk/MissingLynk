@@ -10,10 +10,11 @@ import (
 )
 
 // The slot-content classifications mlflash reports for the slot a flip would
-// activate. "empty" and anything unrecognized are neither firmware.
+// activate, as carried on DeviceInfo.TargetContent. "empty" and anything
+// unrecognized are neither firmware.
 const (
-	contentOpen   = "open"
-	contentVendor = "vendor"
+	ContentOpen   = "open"
+	ContentVendor = "vendor"
 )
 
 // firmware is one of the two stacks a slot can hold. How to reset it, which
@@ -100,10 +101,10 @@ func runningFirmware(isOpen bool) firmware {
 // tool knows how to wait for.
 func firmwareForContent(content string) (firmware, error) {
 	switch content {
-	case contentOpen:
+	case ContentOpen:
 		return firmwareOpen, nil
 
-	case contentVendor:
+	case ContentVendor:
 		return firmwareStock, nil
 
 	default:

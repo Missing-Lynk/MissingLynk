@@ -14,6 +14,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/flow"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/present"
 )
 
 // chooseImage opens the native OS file picker (zenity: the real GTK/KDE dialog on
@@ -60,27 +61,20 @@ func (u *ui) chooseImageFallback() {
 
 // setImage records the chosen image and updates the UI (UI thread only).
 func (u *ui) setImage(path string) {
-	u.selectedImage = path
+	u.state.Image = path
 	u.selectedLabel.SetText(filepath.Base(path))
 	u.refresh()
 }
 
-// confirmFlash offers the two flash modes. "Flash and switch" (default) writes the
-// inactive slot, activates it, and reboots. "Flash only" writes the inactive slot
-// and stops, leaving the device on its current slot; the written slot can be
-// activated later with the switch button (after proving it, e.g. by RAM-boot). The
-// confirm button for each mode is a distinct button so the choice is explicit.
+// confirmFlash offers the two flash modes. The confirm button for each mode is a
+// distinct button so the choice is explicit.
 func (u *ui) confirmFlash() {
-	if u.selectedImage == "" || u.flashing {
+	if u.state.Image == "" || u.state.Flashing {
 		return
 	}
 
-	message := widget.NewLabel(
-		"This writes the open firmware to the device's inactive slot. The stock firmware on the " +
-			"other slot is left untouched.\n\n" +
-			"Flash and switch: activate the newly written slot and reboot into it now.\n\n" +
-			"Flash only: leave the device on its current slot. The new slot is written but not " +
-			"activated; use the switch button to boot it once you are ready.")
+	text := present.Render(u.state).FlashDialog
+	message := widget.NewLabel(text.Body)
 	message.Wrapping = fyne.TextWrapWord
 
 	var confirmDialog *dialog.CustomDialog
@@ -95,38 +89,29 @@ func (u *ui) confirmFlash() {
 	})
 	flashAndSwitchButton.Importance = widget.HighImportance
 
-	confirmDialog = dialog.NewCustomWithoutButtons("Flash open firmware?", message, u.win)
+	confirmDialog = dialog.NewCustomWithoutButtons(text.Title, message, u.win)
 	confirmDialog.SetButtons([]fyne.CanvasObject{cancelButton, flashOnlyButton, flashAndSwitchButton})
 	confirmDialog.Show()
 	confirmDialog.Resize(fyne.NewSize(520, 0))
 }
 
 func (u *ui) startFlash(flashOnly bool) {
-	u.flashing = true
+	u.state.Flashing = true
 	u.refresh()
 	u.resetLog()
-	u.setBusy(true)
 
-	image := u.selectedImage
+	image := u.state.Image
 	go func() {
 		err := flow.Flash(context.Background(), flow.Options{ImagePath: image, FlashOnly: flashOnly}, u.onEvent)
 		fyne.Do(func() {
-			u.flashing = false
-			u.setBusy(false)
+			u.state.Flashing = false
 			u.refresh()
 			if err == nil {
-				if flashOnly {
-					// The device is still on its old slot; the new slot is written
-					// but not active. Re-scan so the card offers the switch.
-					dialog.ShowInformation("Flash complete",
-						"The open firmware is written to the inactive slot. The device is still "+
-							"running its current slot; use the switch button to activate it.", u.win)
-				} else {
-					// Flash already waited for the device to reboot onto the open
-					// firmware; confirm it.
-					dialog.ShowInformation("Flash complete",
-						"The device is now running the MissingLynk open firmware.", u.win)
-				}
+				// Flash has already waited for whatever it started: a reboot onto the
+				// open firmware, or nothing at all for a flash-only run. Re-scan so the
+				// card reflects where the device ended up.
+				done := present.FlashDone(flashOnly)
+				dialog.ShowInformation(done.Title, done.Body, u.win)
 				go u.scan()
 			}
 		})

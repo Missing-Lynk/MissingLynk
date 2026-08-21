@@ -44,8 +44,8 @@ func gateDevice(sdk *device.SDKVersion, opt Options) gateResult {
 }
 
 // Detect brings the link up, connects, and reports what is attached. It never
-// writes anything. A nil error with info.Flashable == false means a device was
-// found but cannot/should not be flashed (with the reason in info.Note).
+// writes anything. A nil error with info.IsFlashable() == false means a device was
+// found but cannot/should not be flashed; info.Verdict says which case it is.
 func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	if err := opt.applyDefaults(); err != nil {
 		return nil, fail(emit, err)
@@ -65,13 +65,11 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	defer client.Close()
 	if alreadyOpen {
 		info := &DeviceInfo{
-			AlreadyOpen: true, Flashable: false,
-			Name: deviceName(client),
-			Note: "This device is already running the MissingLynk firmware.",
+			Verdict: VerdictAlreadyOpen,
+			Name:    deviceName(client),
 		}
 
 		fillSwitchTarget(client, info, emit)
-		emitSummary(emit, info)
 
 		return info, nil
 	}
@@ -90,31 +88,19 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 
 	switch gateDevice(sdk, opt) {
 	case gateUnidentified:
-		info.Note = "The connected unit could not be identified; refusing to flash."
+		info.Verdict = VerdictUnidentified
 
 	case gateNotWhitelisted:
-		info.Note = fmt.Sprintf("Firmware %s (hardware %s) is not on the validated list; refusing for safety.",
-			sdk.SoftwareVersion, sdk.HardwareVersion)
+		info.Verdict = VerdictNotWhitelisted
 
 	default:
-		info.Flashable = true
-		info.Note = "Ready to flash."
+		info.Verdict = VerdictReady
 	}
 
 	// A previously flashed open image may still be intact on the non-active slot; if
 	// it is, the device can be switched to it without reflashing.
-	if info.Flashable {
+	if info.IsFlashable() {
 		fillSwitchTarget(client, info, emit)
-	}
-
-	// Close out the scan log with the outcome, so it does not just stop.
-	if info.Flashable {
-		emitSummary(emit, info)
-	} else {
-		emit(Event{Level: LevelWarn, Msg: info.Note})
-		if info.Detail != "" {
-			emit(Event{Level: LevelDone, Msg: info.Detail})
-		}
 	}
 
 	return info, nil
@@ -315,7 +301,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 
 	// The flip above made the newly written slot the active one, so this reboot lands
 	// on the open firmware, fired from the stock firmware this flash connected to.
-	land, err := landingFor(firmwareStock, contentOpen, sdk.ProductVersion, connectedIP, opt)
+	land, err := landingFor(firmwareStock, ContentOpen, sdk.ProductVersion, connectedIP, opt)
 	if err != nil {
 		return fail(emit, err)
 	}

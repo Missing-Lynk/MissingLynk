@@ -46,18 +46,40 @@ type Options struct {
 	FlashOnly bool
 }
 
-// DeviceInfo is what Detect learns about the connected unit, for display and to
-// decide whether flashing is allowed.
+// Verdict is what a scan concluded about the connected unit.
+type Verdict int
+
+const (
+	VerdictReady          Verdict = iota // identified, whitelisted, ready to flash
+	VerdictUnidentified                  // product_version matched no known unit
+	VerdictNotWhitelisted                // recognized unit, firmware not on the validated list
+	VerdictAlreadyOpen                   // already running our open firmware
+)
+
+// BootProof is what the per-unit device.json record (mlflash --record) says about a
+// slot: whether a record exists, the healthy-boot count, whether the record carries
+// kernel/dtb digests at all, and the verdict (boots > 0 AND those digests still match
+// the live partitions, computed on the device). DigestsRecorded splits "never had
+// digests" (a slot installed outside this tool) from "digests differ", which are
+// different things to tell the user. Other keys of the record are ignored.
+type BootProof struct {
+	Present         bool `json:"present"`
+	Boots           int  `json:"boots"`
+	DigestsRecorded bool `json:"digests_recorded"`
+	Verified        bool `json:"verified"`
+}
+
+// DeviceInfo is what Detect learns about the connected unit: facts, and no rendered
+// sentences. The wording shown to the user is built from these fields by the present
+// package, so there is one place where a status line or a warning is worded.
 type DeviceInfo struct {
-	Unit        string `json:"unit"`     // "P1_GND" (goggle), "P1_SKY" (air), "unknown"
-	Product     string `json:"product"`  // product_version
-	Firmware    string `json:"firmware"` // software_version
-	Hardware    string `json:"hardware"` // hardware_version
-	Name        string `json:"name"`     // human device name (device-tree model) for an already-open unit
-	Flashable   bool   `json:"flashable"`
-	AlreadyOpen bool   `json:"alreadyOpen"` // already running our open firmware
-	Note        string `json:"note"`        // one-sentence status summary
-	Detail      string `json:"detail"`      // optional follow-on line (e.g. the switch-slot hint)
+	Unit     string // "P1_GND" (goggle), "P1_SKY" (air), "unknown"
+	Product  string // product_version
+	Firmware string // software_version
+	Hardware string // hardware_version
+	Name     string // human device name (device-tree model) for an already-open unit
+
+	Verdict Verdict
 
 	// The A/B slot state (from mlflash --slots), for the switch-slot feature.
 	// ActiveSlot is the slot the device actually boots (the GPT active bit) and
@@ -65,21 +87,25 @@ type DeviceInfo struct {
 	// where the flashed slot runs from a host-loaded kernel while the other slot is
 	// still the active one. TargetSlot is the slot a switch would activate - always
 	// the complement of ActiveSlot, never of RunningSlot - and TargetContent is what
-	// it holds ("open", "vendor", "empty", "unknown"). Switchable is true only when
-	// the target holds a complete recognized image.
-	ActiveSlot    string `json:"activeSlot"`
-	RunningSlot   string `json:"runningSlot"`
-	TargetSlot    string `json:"targetSlot"`
-	TargetContent string `json:"targetContent"`
-	Switchable    bool   `json:"switchable"`
+	// it holds (ContentOpen, ContentVendor, "empty", "unknown"). Switchable is true
+	// only when the target holds a complete recognized image.
+	ActiveSlot    string
+	RunningSlot   string
+	TargetSlot    string
+	TargetContent string
+	Switchable    bool
 
-	// ProvenNote is a ready-to-show sentence about whether the OPEN switch-target
-	// slot has proven it boots, from the per-unit device.json record (mlflash
-	// --record). Advisory only: it never changes Switchable, it just tells the user
-	// what is known about that slot. Empty when no record could be read (then the
-	// caller keeps the plain caution).
-	ProvenNote string `json:"provenNote"`
+	// Proof is the boot record of the OPEN switch-target slot. Advisory only: it
+	// never changes Switchable, it just says what is known about that slot. A zero
+	// value means no record could be read.
+	Proof BootProof
 }
+
+// IsFlashable reports whether this unit may be written to.
+func (i *DeviceInfo) IsFlashable() bool { return i.Verdict == VerdictReady }
+
+// IsAlreadyOpen reports whether the unit is already running our open firmware.
+func (i *DeviceInfo) IsAlreadyOpen() bool { return i.Verdict == VerdictAlreadyOpen }
 
 // SwitchTarget names the slot a switch activates and what the scan found in it.
 // The user consents to exactly this pair (the dialog names both), and SwitchSlot
@@ -88,19 +114,6 @@ type DeviceInfo struct {
 type SwitchTarget struct {
 	Slot    string // "A" or "B"
 	Content string // "open" or "vendor"
-}
-
-// recordReport captures the fields of the mlflash --record JSON that the boot-proof
-// summary needs: whether a record exists, the healthy-boot count, whether the record
-// carries kernel/dtb digests at all, and the verdict (boots > 0 AND those digests
-// still match the live partitions, computed on the device). DigestsRecorded splits
-// "never had digests" (a slot installed outside this tool) from "digests differ",
-// which are different things to tell the user. Other keys are ignored.
-type recordReport struct {
-	Present         bool `json:"present"`
-	Boots           int  `json:"boots"`
-	DigestsRecorded bool `json:"digests_recorded"`
-	Verified        bool `json:"verified"`
 }
 
 // slotState mirrors the JSON object mlflash --slots prints. Target* describes the
@@ -137,7 +150,7 @@ func (i *DeviceInfo) SwitchTarget() SwitchTarget {
 // that the flip has a defined direction.
 func (s *slotState) isSwitchTarget() bool {
 	return s.TargetSlot != "" && s.TargetSlot != "unknown" && s.TargetComplete &&
-		(s.TargetContent == contentOpen || s.TargetContent == contentVendor)
+		(s.TargetContent == ContentOpen || s.TargetContent == ContentVendor)
 }
 
 // applyDefaults fills the unset options and rejects malformed ones. The addresses
