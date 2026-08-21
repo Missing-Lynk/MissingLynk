@@ -133,8 +133,13 @@ static pid_t find_watchdog_holder(void)
  * @brief Fire the watchdog and hard-reset the SoC.
  *
  * Three ways in, tried in order, all of which leave the armed timeout alone:
- *   1. Nothing holds /dev/watchdog: open it, close without the magic 'V'. CONFIG_WATCHDOG_NOWAYOUT
- *      is set, so the core keeps the counter armed and the reset follows.
+ *   1. Nothing holds /dev/watchdog: open it, close WITHOUT the magic 'V'. The DTS gives the
+ *      watchdog no reset control, so dw_wdt_stop() cannot disarm the counter; the core logs
+ *      "watchdog did not stop!", pings once, leaves the device active, and the counter runs out.
+ *      The magic-'V' close is the opposite and must not be used here: it clears the active flag,
+ *      after which the core pets the timer itself for as long as no process holds the device and
+ *      the board stays up. Both halves measured: killing the feeder resets the board ~64 s later,
+ *      `rc-service ml-watchdog stop` leaves it running indefinitely.
  *   2. A feeder holds it: SIGSTOP the feeder. Its fd stays open and unclosed, so nothing can stop
  *      the counter, and it runs out.
  *   3. The counter is not armed at all: arm it by raw register write at the timeout index the

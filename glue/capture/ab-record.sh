@@ -5,8 +5,15 @@
 # with a stock vendor air unit and once with ours, and record both through the SAME goggle. The
 # goggle decodes the downlink and re-encodes it for the DVR, so both legs carry an identical
 # receive and re-encode path and everything that differs between the two files came from the air
-# side: the ISP configuration and the AE loop. That is the whole point of recording on our goggle
-# rather than pulling frames off each air unit with different tooling.
+# side. That is the whole point of recording on our goggle rather than pulling frames off each air
+# unit with different tooling.
+#
+# The air side is the ISP configuration, the AE loop AND the encoder bitrate. The vendor derives
+# its bitrate from live RF throughput and re-applies it whenever the MCS changes; ours is fixed.
+# A leg recorded at a higher air bitrate carries more detail into the goggle's re-encode, which
+# reads as a sharpness or noise difference in the report. The downlink rate is therefore measured
+# over each recording window and written to the leg's metadata, so the two legs can be checked for
+# a bitrate difference before their pixels are compared.
 #
 # Nothing is written on the air unit and no air-unit tooling is staged, so the vendor leg runs
 # against a bone-stock unit exactly as it ships. The goggle side stages one small helper (ml-rec,
@@ -126,6 +133,23 @@ else
     echo "  OSD burn-in already off (record_osd=${BURN_WAS:-absent})"
 fi
 
+# ---- downlink rate -------------------------------------------------------------------------------
+# The air unit's encoder bitrate is part of what separates the two legs, so it has to be measured
+# rather than assumed equal. The vendor derives its target from live RF throughput
+# (AR_8030_TX_GetBitRate: throughput * Ar803xThroutputRate, capped at ArMaxBitRate, 8000 kbps when
+# throughput reads zero) and re-applies it on every MCS change; ours is the fixed ML_AIR_BITRATE.
+# Two legs recorded at different air bitrates differ in detail for that reason alone, which reads
+# as a sharpness or noise difference in the report.
+#
+# Measured at the receiving interface's byte counter over the recording window, with the device's
+# own uptime as the clock so the interval is measured rather than taken from --secs.
+DOWNLINK_IF="${DOWNLINK_IF:-sdio0}"
+
+downlink_sample() {
+    sshg "cut -d' ' -f1 /proc/uptime; sed -n 's/.*${DOWNLINK_IF}://p' /proc/net/dev | awk '{print \$1}'" \
+        </dev/null 2>/dev/null | tr '\n' ' '
+}
+
 # ---- record ------------------------------------------------------------------------------------
 FROM="$(sshg "wc -l < $LOG" </dev/null)"
 
@@ -140,6 +164,8 @@ for _ in $(seq 10); do
 done
 [ -n "$REC_LINE" ] || { echo "recording did not start; see $LOG on the device" >&2; exit 1; }
 echo "  $REC_LINE"
+
+RX_START="$(downlink_sample)"
 
 # Liveness by file growth rather than by the pipeline's frame counters: the rx= stats line is
 # throttled to a ~30 s cadence, and the per-frame latraw path needs a pipeline restart to enable.
@@ -161,8 +187,23 @@ else
     sleep "$SECS"
 fi
 
+RX_END="$(downlink_sample)"
 FROM="$(sshg "wc -l < $LOG" </dev/null)"
 sshg "/tmp/ml-rec toggle" </dev/null
+
+DOWNLINK="$(awk -v a="$RX_START" -v b="$RX_END" '
+BEGIN {
+    split(a, s, " "); split(b, e, " ");
+    secs = e[1] - s[1]; bytes = e[2] - s[2];
+    if (s[2] == "" || e[2] == "" || secs <= 0) {
+        print "unavailable";
+    } else if (bytes <= 0) {
+        printf "0.00 Mbps over %.1f s (the counter did not advance)", secs;
+    } else {
+        printf "%.2f Mbps over %.1f s (%d bytes)", bytes * 8 / secs / 1000000, secs, bytes;
+    }
+}')"
+echo "  downlink on $DOWNLINK_IF: $DOWNLINK"
 
 STOP_LINE=""
 for _ in $(seq 15); do
@@ -203,6 +244,8 @@ META="${LOCAL%.*}.meta.txt"
     echo "format: ${RES}p${FPS}, dvr.record_osd was ${BURN_WAS:-absent}"
     echo "device file: $FILE ($SIZE bytes)"
     echo "local file: $LOCAL"
+    echo
+    echo "downlink during the recording: $DOWNLINK (interface $DOWNLINK_IF)"
     echo
     echo "--- link at the end of the run ---"
     sshg "grep -E 'rx=|rssi|snr' $LOG | tail -5" </dev/null 2>/dev/null || true

@@ -309,7 +309,8 @@ check-native:
 #     that hold the logic and need no display stack. GOFLAGS keeps the tags aligned with that
 #     build so vet sees the same code.
 GO_CHECK_PKGS := ./internal/device/... ./internal/devconf/... ./internal/flow/... \
-                 ./internal/manifest/... ./internal/netcfg/... ./internal/whitelist/...
+                 ./internal/manifest/... ./internal/netcfg/... ./internal/present/... \
+                 ./internal/whitelist/...
 
 # The toolchain: a host `go` is used when present, otherwise the same pinned image
 # flasher/docker/Dockerfile builds with, so a machine with only Docker can still run this. Keep the

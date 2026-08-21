@@ -31,8 +31,10 @@ echo "[*] firing trigger (flag + watchdog reset -> SPL -> U-Boot)..."
 sshg "$STAGE/uboot-trigger" >/dev/null 2>&1 &
 TRIG=$!
 
-echo "[*] catching U-Boot on serial (spamming Enter, <=35s)..."
-"$ROOT/.venv/bin/python3" -u "$HERE/wait-for-serial.py" '=>' --timeout 35 --send '\r' --baud 1152000 --port "$CONSOLE_PORT"
+# The window covers one full watchdog period: uboot-trigger stops the feeder and lets the armed
+# counter expire, measured at ~45 s on the goggle and ~64 s elsewhere (glue/boot/wdt.h).
+echo "[*] catching U-Boot on serial (spamming Enter, <=90s)..."
+"$ROOT/.venv/bin/python3" -u "$HERE/wait-for-serial.py" '=>' --timeout 90 --send '\r' --baud 1152000 --port "$CONSOLE_PORT"
 rc=$?
 kill "$TRIG" 2>/dev/null
 
