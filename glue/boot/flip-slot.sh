@@ -132,19 +132,33 @@ if [ "${NO_RESET:-}" = "1" ]; then
     exit 0
 fi
 
-# Watchdog reset (backgrounded so the dropping SSH doesn't hang)
+# Fire the reset, then decide from whether the device is still there.
+#
+# The helper does not return when the reset lands: the SoC goes down under it. What ssh makes of
+# that varies, so the exit status alone is not proof. It reports 255 once keepalives notice the
+# dead transport, but a reset measured on the air unit instead left ssh blocked until `timeout`
+# killed it at 90 s. Reachability is the ground truth; the status only distinguishes the cases
+# where the board survived.
+RESET_WAIT="${RESET_WAIT:-120}"
+
 echo "[*] firing watchdog reset; SPL will boot slot $TARGET..."
-sshg "$STAGE/wdt-reset" >/dev/null 2>&1 &
-sleep 12
-if ping -c1 -W1 "$DEVICE_IP" >/dev/null 2>&1 && device_ssh "$PASS" "$DEVICE_IP" true 2>/dev/null; then
-    echo "[!] still reachable on the old slot after 12s; the reset may not have fired."
-    echo "    Power-cycle the device to boot slot $TARGET (gpt0 is already set)."
-else
+reset_status=0
+device_ssh_timeout "$RESET_WAIT" "$STAGE/wdt-reset" || reset_status=$?
+
+if ! device_ssh_timeout 10 true >/dev/null 2>&1; then
     echo "[+] device went down for reset. It will come up on slot $TARGET."
-    if [ "$TARGET" = a ]; then
-        echo "    Slot A is stock: run glue/net/net-up.sh, then SSH root/artosyn."
-    else
-        echo "    Slot B is open Alpine: autonet should restore the host IP; SSH root/libre."
-    fi
+elif [ "$reset_status" -eq 0 ]; then
+    echo "[+] the shortened period did not arm, but the feeder is stopped and the counter is"
+    echo "    unfed, so the reset is still on its way. It will come up on slot $TARGET."
+else
+    echo "[!] still reachable and wdt-reset armed nothing (status $reset_status)." >&2
+    echo "    gpt0 already points at $TARGET: power-cycle to boot it." >&2
+    exit 1
+fi
+
+if [ "$TARGET" = a ]; then
+    echo "    Slot A is stock: run glue/net/net-up.sh, then SSH root/artosyn."
+else
+    echo "    Slot B is open Alpine: autonet should restore the host IP; SSH root/libre."
 fi
 exit 0

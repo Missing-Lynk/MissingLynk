@@ -26,6 +26,11 @@ SSH_OPTS_LIBRE=(
     -o LogLevel=ERROR
     -o UserKnownHostsFile=/dev/null
     -o ConnectTimeout=8
+    # Keepalives so a command that resets the SoC returns instead of hanging. Without them ssh
+    # never notices the transport die and blocks on the host's TCP timeout, which made a reset
+    # that had already happened look like a command still running.
+    -o ServerAliveInterval=5
+    -o ServerAliveCountMax=3
 )
 
 # shellcheck disable=SC2054  # the commas separate values WITHIN one ssh option argument
