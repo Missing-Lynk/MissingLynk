@@ -8,6 +8,10 @@ in the accumulated buffer or `timeout` elapses. Prints a RESULT line and a sanit
 the last bytes seen (control bytes replaced with '.'), then exits 0 if found, 2 if not - so
 callers can drive it from a shell one-liner.
 
+A "[=] LISTENING <port> @ <baud>" line goes to stderr the moment the port is open. A caller that
+triggers the event it is catching blocks on that line before triggering, so the catcher cannot be
+started too late to see it.
+
 Port resolution: --port if given, else the shared glue resolver (glue/lib/serial_port.py:
 $ML_SERIAL, or glue/glue.env).
 
@@ -61,6 +65,8 @@ def wait_for(
     Returns (found, tail): tail is the last TAIL_CHARS chars seen (see _readable_tail).
     """
     with serial.Serial(port or find_port(), baud, timeout=POLL_TIMEOUT) as s:
+        print(f"[=] LISTENING {s.port} @ {baud}", file=sys.stderr, flush=True)
+
         deadline = time.time() + timeout
         buf = b""
         found = False
