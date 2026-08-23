@@ -53,30 +53,15 @@ if [ ! -x "$WDTRESET" ]; then
     exit 1
 fi
 
-# Pick the root password of the running slot.
+# Reach whichever slot is running.
 #
-# We are switching AWAY from the other slot, so try its creds first: going to A we are almost
-# certainly on B (libre), going to B we are on A (artosyn). The second is a fallback for the odd
-# case of re-asserting the slot you are already on. Override with SRC_PASS to skip probing.
-case "$TARGET" in
-    a) try_order="libre artosyn" ;;   # -> A means currently on B (open Alpine)
-    b) try_order="artosyn libre" ;;   # -> B means currently on A (stock)
-esac
-
-PASS="${SRC_PASS:-}"
-if [ -z "$PASS" ]; then
-    for p in $try_order; do
-        if device_ssh "$p" "$DEVICE_IP" true 2>/dev/null; then
-            PASS="$p"
-            break
-        fi
-    done
-
-    if [ -z "$PASS" ]; then
-        echo "cannot SSH to $DEVICE_IP (tried $try_order)" >&2
-        exit 1
-    fi
-fi
+# The two slots answer at different ADDRESSES, not merely with different passwords: the open slot
+# at the unit's own gadget IP from board.conf, stock at $ML_STOCK_IP. Probing passwords against a
+# single address therefore fails outright whenever the running slot is the other one, which is
+# every flip that starts from stock. ensure_device_reachable probes both and retargets DEVICE_IP
+# and PASS, which is what the RAM-boot scripts already rely on. SRC_PASS still forces a password.
+[ -n "${SRC_PASS:-}" ] && PASS="$SRC_PASS"
+ensure_device_reachable || exit 1
 echo "[*] connected to $DEVICE_IP (root/$PASS)"
 
 # Where to stage the static helpers: the open Alpine's /tmp lives on the (often near-full)

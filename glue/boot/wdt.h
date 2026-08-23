@@ -306,13 +306,15 @@ static inline void arm_by_register(volatile uint32_t *watchdog_registers, unsign
     watchdog_registers[DWWDT_CRR / 4]  = DWWDT_CRR_KICK;
 }
 
-/** @brief The ladder index currently programmed, read back from TORR. */
+/**
+ * @brief The ladder index currently programmed, read back from TORR.
+ *
+ * @param watchdog_registers must be mapped. There is no out-of-band value to report a failed
+ *        mapping with: every index the register can hold is a real one, so a sentinel would
+ *        collide with an armed state rather than stand apart from it.
+ */
 static inline unsigned int watchdog_armed_top_index(volatile uint32_t *watchdog_registers)
 {
-    if (watchdog_registers == MAP_FAILED) {
-        return DWWDT_TOP_INDEX_MAX + 1;
-    }
-
     return watchdog_registers[DWWDT_TORR / 4] & DWWDT_TORR_TOP_MASK;
 }
 
@@ -542,14 +544,17 @@ static inline wdt_exit fire_watchdog(const char *tag, unsigned int top_index)
 
         /* The driver picks the first ladder entry at or above the request, which can be a
          * neighbour of the wanted index. Any entry the tool can ask for resets the board, so this
-         * is worth saying and not worth refusing over: wait at whatever landed.
+         * is worth saying and not worth refusing over: wait at whatever landed. Without the
+         * registers there is nothing to read it back from, so the request stands as the estimate.
          */
-        unsigned int armed_top_index = watchdog_armed_top_index(watchdog_registers);
-        if (watchdog_registers == MAP_FAILED) {
-            armed_top_index = top_index;
-        } else if (armed_top_index != top_index) {
-            printf("%s: the driver armed TOP %u rather than %u; waiting at that period\n", tag,
-                   armed_top_index, top_index);
+        unsigned int armed_top_index = top_index;
+        if (watchdog_registers != MAP_FAILED) {
+            armed_top_index = watchdog_armed_top_index(watchdog_registers);
+
+            if (armed_top_index != top_index) {
+                printf("%s: the driver armed TOP %u rather than %u; waiting at that period\n", tag,
+                       armed_top_index, top_index);
+            }
         }
 
         return wait_for_reset(tag, armed_top_index, tick_rate_hz, 0);
