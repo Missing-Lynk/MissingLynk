@@ -48,6 +48,7 @@ SAMPLE="${SAMPLE:-5}"
 REMOTE='
 echo "kernel=$(uname -r)"
 echo "cmdline=$(cat /proc/cmdline)"
+echo "rootfs_part=$(m=$(cat /sys/class/ubi/ubi0/mtd_num 2>/dev/null); [ -n "$m" ] && sed -n "s/^mtd$m:.*\"\(.*\)\"/\1/p" /proc/mtd)"
 echo "modules=$(lsmod | awk "NR>1 {printf \"%s \", \$1}")"
 echo "installed=$(sed -n "s/.*\"version\":[^\"]*\"\([^\"]*\)\".*/\1/p" /usrdata/missinglynk/device.json 2>/dev/null | head -1)"
 echo "boots=$(sed -n "s/.*\"boots\":[^0-9]*\([0-9]*\).*/\1/p" /usrdata/missinglynk/device.json 2>/dev/null | head -1)"
@@ -66,6 +67,8 @@ echo "usrdata=$(awk "\$2 == \"/usrdata\" {print \$4}" /proc/mounts | cut -d, -f1
 echo "sdcard=$(awk "\$2 == \"/mnt/sdcard\" {print \$3}" /proc/mounts)"
 echo "persist=$([ -x /usr/local/bin/ml-rf-persist ] && echo yes || echo no)"
 echo "cma_free=$(awk "/CmaFree/ {print \$2}" /proc/meminfo)"
+echo "wdt_procs=$(grep -lx watchdog /proc/[0-9]*/comm 2>/dev/null | wc -l)"
+echo "wdt_cmdline=$(for c in $(grep -lx watchdog /proc/[0-9]*/comm 2>/dev/null); do tr "\0" " " < "${c%/comm}/cmdline"; done)"
 echo "mem_avail=$(awk "/MemAvailable/ {print \$2}" /proc/meminfo)"
 for d in /sys/bus/iio/devices/iio:device*
 do
@@ -111,20 +114,28 @@ check() {
     return 0
 }
 
-# --- identity ------------------------------------------------------------------------------
+# identity
 kernel="$(field kernel)"
-case "$(field cmdline)" in
-    *ubi.mtd=userapp1*)
-        check PASS "booted slot B rootfs" "kernel $kernel"
+# The backing partition is resolved by name from the ubi device, not read out of the cmdline.
+# How the cmdline spells it depends on how the unit booted: a Falcon boot from the flashed dtb
+# says ubi.mtd=18, a bench flash-boot with hand-set bootargs says ubi.mtd=userapp1. Both are the
+# same partition, and only the name settles it.
+rootfs_part="$(field rootfs_part)"
+case "$rootfs_part" in
+    userapp1)
+        check PASS "booted slot B rootfs" "kernel $kernel, ubi on $rootfs_part"
+        ;;
+    "")
+        check FAIL "booted slot B rootfs" "could not resolve the ubi backing partition"
         ;;
     *)
-        check FAIL "booted slot B rootfs" "cmdline has no ubi.mtd=userapp1 - this is not our rootfs"
+        check FAIL "booted slot B rootfs" "ubi is on $rootfs_part, not userapp1 - this is not our rootfs"
         ;;
 esac
 
 check INFO "flashed image" "$(field installed), boot #$(field boots)"
 
-# --- modules -------------------------------------------------------------------------------
+# modules
 # artosyn_gpio is in the list because card0 does not appear without it, which reads as a display
 # fault rather than a missing module.
 modules="$(field modules)"
@@ -146,7 +157,7 @@ else
     check FAIL "display, codec and RF modules loaded" "missing:$missing"
 fi
 
-# --- the RF chip enumerated as itself --------------------------------------------------------
+# the RF chip enumerated as itself
 # 0x8030 is the pre-firmware id, 0x8031 the post-upload one; anything else is the corrupt power-up
 # state, where nothing downstream exists to report a fault.
 devid="$(field sdio_devid)"
@@ -184,7 +195,7 @@ else
     check FAIL "exactly one ml-linkd, started once" "$banners startup banners: it restarted"
 fi
 
-# --- the rest of the daemon set ----------------------------------------------------------------
+# the rest of the daemon set
 absent=""
 extra=""
 for p in ml-pipeline ml-hud ml-drmfd ml-ledd ml-logd
@@ -225,7 +236,7 @@ else
     check FAIL "IPC sockets published" "missing:$missing"
 fi
 
-# --- the panel is alive --------------------------------------------------------------------------
+# the panel is alive
 if [ "$(field drm_card)" = yes ] && [ "$(field connector)" = connected ]
 then
     check PASS "card0 present, panel connected"
@@ -280,7 +291,7 @@ else
     check FAIL "HUD overlay plane enabled" "no 'overlay plane enabled' line - the OSD has no plane"
 fi
 
-# --- codec ----------------------------------------------------------------------------------------
+# codec
 faults="$(field vpu_faults)"
 if [ "${faults:-0}" -eq 0 ]
 then
@@ -289,7 +300,7 @@ else
     check FAIL "no codec watchdog or syserr" "$faults matching dmesg lines"
 fi
 
-# --- what the radio received -------------------------------------------------------------------------
+# what the radio received
 # WARN rather than FAIL throughout: a bench goggle with no air unit powered is a legitimate state.
 rx_a="$(field rx_a)"
 rx_b="$(field rx_b)"
@@ -318,7 +329,7 @@ then
     fi
 fi
 
-# --- storage ---------------------------------------------------------------------------------------
+# storage
 case "$(field usrdata)" in
     rw)
         check PASS "/usrdata mounted rw" "settings and RF config persist"
@@ -344,6 +355,25 @@ then
     check PASS "ml-rf-persist present" "a bind can survive a power cycle"
 else
     check FAIL "ml-rf-persist present" "a bind would be runtime-only and lost on power-off"
+fi
+
+# The feeder is busybox `watchdog` under start-stop-daemon, so it is found by that name and not by
+# the service's, and sysfs is the watchdog core's own view: `state` says whether the timer is armed,
+# which a live feeder only implies. Both units run the same timeout from the rootfs skeleton, so a
+# disagreement between them is itself the finding.
+# The armed timeout comes from the feeder's own command line, not from sysfs: the watchdog core
+# exposes state/timeout/bootstatus only under CONFIG_WATCHDOG_SYSFS, which this kernel does not
+# set, so /sys/class/watchdog/watchdog0 carries nothing but the bare device attributes. The
+# cmdline is still a plain file read, which keeps this sweep off the registers.
+#
+# It reports what was requested; the driver rounds UP to the ladder, so the period in force is the
+# next step at or above it. `wdt-reset --status` prints what actually landed.
+wdt_timeout="$(field wdt_cmdline | sed -n "s/.*-T \([0-9]*\).*/\1/p")"
+if [ "$(field wdt_procs)" -ge 1 ] && [ -n "$wdt_timeout" ]
+then
+    check PASS "watchdog armed" "${wdt_timeout}s requested: a hang resets the goggle instead of ending the flight"
+else
+    check WARN "watchdog armed" "$(field wdt_procs) feeder(s) - a hang would need a power cycle"
 fi
 
 check INFO "junction temperature" "$(field temp_c) C"

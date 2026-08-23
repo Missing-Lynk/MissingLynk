@@ -25,12 +25,25 @@
 #     ml-aed prints only when the index moves, so a settled loop and a dead one produce the same
 #     last line. Two things that look like faults and are not: a quiet log is convergence, and
 #     sensor exposure pinned at 1125 is the 1080p60 frame-time ceiling with gain doing the work.
+#   - /var/log growth as a RATE, extrapolated to minutes-to-full. This unit has no SD card and
+#     nothing rotates logs, so /var/log is an 8 MiB tmpfs that fills and then silently stops
+#     recording, which costs the diagnostics exactly when a flight has gone wrong. Occupancy on
+#     its own says nothing: what matters is whether the current rate outlasts the battery.
+#   - Oversize access units, counted over the window rather than found in the log. They are the
+#     fastest writer here, printing once per occurrence per tile at up to 120 lines a second, and
+#     each one is a dropped frame, so the check is a defect check that happens to bound the log.
+#   - --rate-adapt on the running ml-linkd. The governor is what the vendor air does and the
+#     init script passes it unconditionally, so its absence means the service did not start what
+#     it was told to and the encoder is holding its opening rate.
 #
 # Usage:
 #   glue/boot/au-health.sh                 # sweep, 5 s counter window
 #   SAMPLE=10 glue/boot/au-health.sh       # longer window for a steadier rate
+#   SAMPLE=60 REMOTE_ONLY=1 ... > f        # capture a report without judging it
+#   REPORT_FILE=f glue/boot/au-health.sh   # judge a captured report, no device needed
 #
-# Env: AU_IP (default 192.168.3.102), AU_PORT (22), AU_PASS (libre), SAMPLE (seconds, default 5).
+# Env: AU_IP (default 192.168.3.102), AU_PORT (22), AU_PASS (libre), SAMPLE (seconds, default 5),
+#      REPORT_FILE, REMOTE_ONLY.
 #
 # Exit status: 0 when every check passed, 1 when any FAIL. WARN never fails the run - it marks
 # something that is legitimate in some sessions (no camera running, say) and wrong in others.
@@ -50,6 +63,7 @@ SAMPLE="${SAMPLE:-5}"
 REMOTE='
 echo "kernel=$(uname -r)"
 echo "cmdline=$(cat /proc/cmdline)"
+echo "rootfs_part=$(m=$(cat /sys/class/ubi/ubi0/mtd_num 2>/dev/null); [ -n "$m" ] && sed -n "s/^mtd$m:.*\"\(.*\)\"/\1/p" /proc/mtd)"
 echo "modules=$(lsmod | awk "NR>1 {printf \"%s \", \$1}")"
 echo "isp_tables=$(dmesg | grep -m1 "isp: tables:" | sed "s/.*tables: //")"
 echo "enc_opens=$(dmesg | grep -c "enc instance open")"
@@ -75,23 +89,53 @@ done
 
 # Counter pairs around one window. The IRQ count is the capture rate and the sdio0 byte count is
 # what actually left the radio; both are meaningless as absolutes and exact as deltas.
+echo "wdt_procs=$(grep -lx watchdog /proc/[0-9]*/comm 2>/dev/null | wc -l)"
+echo "wdt_cmdline=$(for c in $(grep -lx watchdog /proc/[0-9]*/comm 2>/dev/null); do tr "\0" " " < "${c%/comm}/cmdline"; done)"
+for c in $(grep -lx ml-linkd /proc/[0-9]*/comm 2>/dev/null)
+do
+    echo "linkd_cmdline=$(tr "\0" " " < "${c%/comm}/cmdline")"
+done
+echo "varlog_kb=$(df -k /var/log | awk "NR==2 {print \$2}")"
+echo "tmp_kb=$(df -k /tmp | awk "NR==2 {print \$2}")"
+echo "tmp_used=$(df -k /tmp | awk "NR==2 {print \$3}")"
+echo "varlog_top=$(du -sk /var/log/* 2>/dev/null | sort -rn | head -1 | tr "\t" " ")"
 echo "vif_a=$(awk "/ar-vif/ {print \$2}" /proc/interrupts)"
+echo "varlog_a=$(df -k /var/log | awk "NR==2 {print \$3}")"
+echo "oversize_a=$(grep -c "datagram limit" /var/log/ml-air-camera.log 2>/dev/null || echo 0)"
+echo "raterun_a=$(grep -c "] rate: " /var/log/ml-linkd.log 2>/dev/null || echo 0)"
 echo "tx_a=$(awk "/sdio0/ {print \$10}" /proc/net/dev)"
 echo "rx_a=$(awk "/sdio0/ {print \$2}" /proc/net/dev)"
 echo "flips_a=$(cat /sys/kernel/debug/ar-isp/stats_flips 2>/dev/null || echo 0)"
 echo "ae_moves_a=$(wc -l < /var/log/ml-air-ae.log 2>/dev/null || echo 0)"
 sleep SAMPLE_WINDOW
 echo "vif_b=$(awk "/ar-vif/ {print \$2}" /proc/interrupts)"
+echo "varlog_b=$(df -k /var/log | awk "NR==2 {print \$3}")"
+echo "oversize_b=$(grep -c "datagram limit" /var/log/ml-air-camera.log 2>/dev/null || echo 0)"
+echo "raterun_b=$(grep -c "] rate: " /var/log/ml-linkd.log 2>/dev/null || echo 0)"
 echo "tx_b=$(awk "/sdio0/ {print \$10}" /proc/net/dev)"
 echo "rx_b=$(awk "/sdio0/ {print \$2}" /proc/net/dev)"
 echo "flips_b=$(cat /sys/kernel/debug/ar-isp/stats_flips 2>/dev/null || echo 0)"
 echo "ae_moves_b=$(wc -l < /var/log/ml-air-ae.log 2>/dev/null || echo 0)"
 '
 
-report="$(device_ssh "$AU_PASS" "$AU_IP" "${REMOTE/SAMPLE_WINDOW/$SAMPLE}")" || {
-    echo "au-health: $AU_IP unreachable (open slot B, root/$AU_PASS)" >&2
-    exit 1
-}
+# REPORT_FILE replays a captured report instead of sweeping a device, so the verdicts below can be
+# exercised without hardware and a sweep taken in the field can be re-judged afterwards. Capture one
+# with REMOTE_ONLY=1.
+if [ -n "${REPORT_FILE:-}" ]
+then
+    report="$(cat "$REPORT_FILE")" || exit 1
+else
+    report="$(device_ssh "$AU_PASS" "$AU_IP" "${REMOTE/SAMPLE_WINDOW/$SAMPLE}")" || {
+        echo "au-health: $AU_IP unreachable (open slot B, root/$AU_PASS)" >&2
+        exit 1
+    }
+fi
+
+if [ -n "${REMOTE_ONLY:-}" ]
+then
+    printf '%s\n' "$report"
+    exit 0
+fi
 
 field() {
     printf '%s\n' "$report" | sed -n "s/^$1=//p" | head -1
@@ -108,18 +152,26 @@ check() {
     return 0
 }
 
-# --- identity ------------------------------------------------------------------------------
+# identity
 kernel="$(field kernel)"
-case "$(field cmdline)" in
-    *ubi.mtd=userapp1*)
-        check PASS "booted slot B rootfs" "kernel $kernel"
+# The backing partition is resolved by name from the ubi device, not read out of the cmdline.
+# How the cmdline spells it depends on how the unit booted: a Falcon boot from the flashed dtb
+# says ubi.mtd=18, a bench flash-boot with hand-set bootargs says ubi.mtd=userapp1. Both are the
+# same partition, and only the name settles it.
+rootfs_part="$(field rootfs_part)"
+case "$rootfs_part" in
+    userapp1)
+        check PASS "booted slot B rootfs" "kernel $kernel, ubi on $rootfs_part"
+        ;;
+    "")
+        check FAIL "booted slot B rootfs" "could not resolve the ubi backing partition"
         ;;
     *)
-        check FAIL "booted slot B rootfs" "cmdline has no ubi.mtd=userapp1 - this is not our rootfs"
+        check FAIL "booted slot B rootfs" "ubi is on $rootfs_part, not userapp1 - this is not our rootfs"
         ;;
 esac
 
-# --- modules -------------------------------------------------------------------------------
+# modules
 modules="$(field modules)"
 missing=""
 for m in nt99235 ar_csi2 ar_vif ar_isp ar_cvisp wave5 artosyn_sdio ml_mmzheap
@@ -139,7 +191,7 @@ else
     check FAIL "camera, codec and RF modules loaded" "missing:$missing"
 fi
 
-# --- the ISP tuning blob actually reached the ISP -------------------------------------------
+# the ISP tuning blob actually reached the ISP
 # "built" means generated from the tuning blob; "seeded" means it was not found, and the picture
 # is streak garbage that every counter downstream reports as healthy.
 tables="$(field isp_tables)"
@@ -153,7 +205,7 @@ else
     check PASS "ISP tables built from the blob" "$tables"
 fi
 
-# --- capture rate, from the interrupt counter ------------------------------------------------
+# capture rate, from the interrupt counter
 vif_a="$(field vif_a)"
 vif_b="$(field vif_b)"
 if [ -n "$vif_a" ] && [ -n "$vif_b" ]
@@ -172,7 +224,7 @@ else
     check WARN "capture running at 60 fps" "no ar-vif interrupt line - camera not up"
 fi
 
-# --- crashed services --------------------------------------------------------------------------
+# crashed services
 # A service that started and then died leaves every other signal healthy. ml-air-ae did exactly
 # that for a whole session: video, OSD, telemetry and every counter read fine while exposure sat
 # frozen, because nothing here asked OpenRC what it thought.
@@ -184,7 +236,7 @@ else
     check FAIL "no crashed services" "crashed:$crashed"
 fi
 
-# --- auto exposure ------------------------------------------------------------------------------
+# auto exposure
 # Judge AE by the actuator and the hold rate, never by the log tail: ml-aed prints only when the
 # index moves, so a converged loop and a dead one look identical from the last line. The specific
 # regression to catch is the daemon exiting on EAGAIN before the first flip.
@@ -236,7 +288,7 @@ else
     check WARN "AE settled" "stats_flips not advancing - no statistics, so no decisions to judge"
 fi
 
-# --- encoders --------------------------------------------------------------------------------
+# encoders
 opens="$(field enc_opens)"
 case "$opens" in
     2)
@@ -258,7 +310,7 @@ else
     check FAIL "no codec watchdog or syserr" "$faults matching dmesg lines"
 fi
 
-# --- RF ---------------------------------------------------------------------------------------
+# RF
 addr="$(field sdio_addr)"
 if [ -n "$addr" ]
 then
@@ -300,7 +352,7 @@ else
     check FAIL "exactly one ml-linkd, started once" "$banners startup banners: it restarted"
 fi
 
-# --- what left the radio -----------------------------------------------------------------------
+# what left the radio
 tx_a="$(field tx_a)"
 tx_b="$(field tx_b)"
 if [ -n "$tx_a" ] && [ -n "$tx_b" ]
@@ -312,6 +364,95 @@ fi
 
 check INFO "junction temperature" "$(field temp_c) C"
 check INFO "CMA free" "$(field cma_free) kB"
+
+# flight readiness
+# The air unit has no SD card and no log rotation, so /var/log is an 8 MiB tmpfs that fills and
+# then silently stops recording. Nothing writes /tmp. Three writers can move fast enough to matter
+# and all three are judged below, by rate rather than by presence.
+
+case "$(field linkd_cmdline)" in
+    *--rate-adapt*)
+        check PASS "rate governor running" "ml-linkd carries --rate-adapt"
+        ;;
+    "")
+        check FAIL "rate governor running" "no ml-linkd cmdline read"
+        ;;
+    *)
+        check FAIL "rate governor running" "ml-linkd has no --rate-adapt: the encoder holds its opening rate"
+        ;;
+esac
+
+# Two signals, because either alone can mislead. The feeder is busybox `watchdog` under
+# start-stop-daemon, so it is found by that name and not by the service's. And sysfs is the
+# watchdog core's own view: `state` says whether the timer is armed, which a live feeder only
+# implies.
+# The armed timeout comes from the feeder's own command line, not from sysfs: the watchdog core
+# exposes state/timeout/bootstatus only under CONFIG_WATCHDOG_SYSFS, which this kernel does not
+# set, so /sys/class/watchdog/watchdog0 carries nothing but the bare device attributes. The
+# cmdline is still a plain file read, which keeps this sweep off the registers.
+#
+# It reports what was requested; the driver rounds UP to the ladder, so the period in force is the
+# next step at or above it. `wdt-reset --status` prints what actually landed.
+wdt_timeout="$(field wdt_cmdline | sed -n "s/.*-T \([0-9]*\).*/\1/p")"
+if [ "$(field wdt_procs)" -ge 1 ] && [ -n "$wdt_timeout" ]
+then
+    check PASS "watchdog armed" "${wdt_timeout}s requested: a hang resets the unit instead of ending the flight"
+else
+    check WARN "watchdog armed" "$(field wdt_procs) feeder(s) - a hang would need a battery pull"
+fi
+
+# An oversize access unit is dropped, so it is a visible glitch AND the fastest log writer here:
+# it prints once per occurrence per tile, which is up to 120 lines a second at 60 fps.
+oversize_delta=$(( $(field oversize_b) - $(field oversize_a) ))
+if [ "$oversize_delta" -eq 0 ]
+then
+    check PASS "no oversize access units" "$(field oversize_b) since boot"
+else
+    check FAIL "no oversize access units" "$oversize_delta in ${SAMPLE}s - dropped frames, and the log fills fast"
+fi
+
+varlog_kb="$(field varlog_kb)"
+varlog_a="$(field varlog_a)"
+varlog_b="$(field varlog_b)"
+if [ -n "$varlog_kb" ] && [ -n "$varlog_a" ] && [ -n "$varlog_b" ]
+then
+    free_kb=$(( varlog_kb - varlog_b ))
+    grew_kb=$(( varlog_b - varlog_a ))
+    check INFO "/var/log" "${varlog_b} of ${varlog_kb} kB used, largest $(field varlog_top)"
+
+    if [ "$grew_kb" -le 0 ]
+    then
+        check PASS "/var/log growth" "no measurable growth in ${SAMPLE}s"
+    else
+        # Integer minutes to full at the observed rate. A flight is one battery, so anything
+        # that survives an hour survives the flight with room to spare.
+        mins=$(( free_kb * SAMPLE / grew_kb / 60 ))
+        rate_bs=$(( grew_kb * 1024 / SAMPLE ))
+        if [ "$mins" -lt 15 ]
+        then
+            check FAIL "/var/log growth" "${rate_bs} B/s fills the remaining ${free_kb} kB in ~${mins} min"
+        elif [ "$mins" -lt 60 ]
+        then
+            check WARN "/var/log growth" "${rate_bs} B/s fills the remaining ${free_kb} kB in ~${mins} min"
+        else
+            check PASS "/var/log growth" "${rate_bs} B/s, ~${mins} min of headroom"
+        fi
+    fi
+fi
+
+# Nothing in this image writes /tmp: no DVR (HAS_SD=0), no SD logger, no scratch files. Anything
+# there is something new, and it has 32 MiB of RAM to eat before anyone notices.
+tmp_used="$(field tmp_used)"
+if [ "${tmp_used:-0}" -lt 1024 ]
+then
+    check PASS "/tmp unused" "${tmp_used} of $(field tmp_kb) kB"
+else
+    check WARN "/tmp unused" "${tmp_used} kB in use - nothing in this image should write /tmp"
+fi
+
+ae_rate=$(( ($(field ae_moves_b) - $(field ae_moves_a)) / SAMPLE ))
+rate_rate=$(( ($(field raterun_b) - $(field raterun_a)) / SAMPLE ))
+check INFO "log lines per second" "AE ${ae_rate}/s, rate governor ${rate_rate}/s"
 
 if [ "$(field persist)" = yes ]
 then
