@@ -27,10 +27,19 @@
  *       one the encoder ever sees. Separates concurrent access to a buffer from the camera
  *       streaming at all.
  *
+ * A third question the encoder-only mode answers, and the reason -A exists:
+ *
+ *   -A us  abandon. Queue two frames, wait us microseconds, then close() the encoder fd with both
+ *          queues still streaming and nothing dequeued. That leaves W5_ENC_PIC outstanding across
+ *          the close, which is the teardown shape the VPU wedge needs. A run that never prints
+ *          "ABANDON: close returned" is wedged, and the milliseconds that line reports say whether
+ *          the close waited on a running job or found one already finished.
+ *
  * Failures of the measured ioctls are results, not crashes: each is reported with its errno and
  * the run continues where continuing still means something.
  *
  * Usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames] [-b bufs] [-o file] [-c h264|hevc] [-H heap] [-p]
+ *                   [-A us]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +51,7 @@
 #include <dirent.h>
 #include <poll.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
@@ -81,6 +91,7 @@ static int opt_frames = 60;
 static int opt_bufs = 5;
 static int opt_probe;
 static int opt_no_streamoff;
+static int opt_abandon_us = -1;
 static int opt_gop;
 static int opt_bitrate;
 static unsigned long opt_max_bytes;
@@ -763,6 +774,66 @@ static unsigned int encoder_reap(int fd, void *map[N_CAP], FILE *out, int *coded
 }
 
 /**
+ * Queue frames and close the fd with a job still running.
+ *
+ * A wave5 encode job is finished only from the completion IRQ, so a close() landing while
+ * W5_ENC_PIC is outstanding enters v4l2_m2m_cancel_job() with TRANS_RUNNING still set. That wait
+ * is uninterruptible and has no timeout, and it runs under the mutex both video nodes are
+ * registered with, so a completion that never arrives parks this process in D state and takes
+ * /dev/video0 and /dev/video1 down with it. Reaching that state on demand is the point of this
+ * mode.
+ *
+ * Both queues are left streaming and no buffer is dequeued: a drain lets the job finish, which is
+ * the state this mode exists to avoid.
+ *
+ * The bitstream mappings are dropped first. An mmap holds a reference to the struct file, so with
+ * one alive the close() returns in microseconds without entering the driver's release path at all,
+ * and the teardown lands at process exit instead. The close has to be the last reference for this
+ * mode to test anything.
+ *
+ * The close() is reported before and after, because a run whose log stops between the two lines
+ * is the wedge itself and is the signal the loop harness grades on.
+ */
+static int encoder_abandon(int fd, const struct geometry *g, int fds[2][MAX_PLANES],
+                           void *cap_map[N_CAP], const unsigned int cap_len[N_CAP])
+{
+    for (int i = 0; i < 2; i++) {
+        if (encoder_queue(fd, g, i, fds[i])) {
+            bad("QBUF(encoder OUTPUT DMABUF)");
+            return 1;
+        }
+    }
+
+    if (opt_abandon_us > 0) {
+        usleep((unsigned int)opt_abandon_us);
+    }
+
+    for (int i = 0; i < N_CAP; i++) {
+        munmap(cap_map[i], cap_len[i]);
+    }
+
+    printf("ABANDON: closing, 2 frames queued, %d us after QBUF\n", opt_abandon_us);
+    fflush(stdout);
+
+    /*
+     * How long the close takes is the measurement, not a diagnostic. v4l2_m2m_cancel_job() waits
+     * only while the job is TRANS_RUNNING, so a close that returns in microseconds says the job
+     * had already finished and this cycle never tested the wait at all. A close that costs
+     * milliseconds waited for a real in-flight encode, which is the state the wedge needs.
+     */
+    struct timespec t0;
+    struct timespec t1;
+
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    close(fd);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
+    printf("ABANDON: close returned after %.3f ms\n",
+           (double)(t1.tv_sec - t0.tv_sec) * 1000.0 + (double)(t1.tv_nsec - t0.tv_nsec) / 1e6);
+    return 0;
+}
+
+/**
  * Encoder-only run: dma-heap buffers at the camera's exact layout, so a refusal here is about
  * the geometry and nothing else.
  *
@@ -864,6 +935,10 @@ static int run_encoder_only(uint32_t codec)
     if (ioctl(fd, VIDIOC_STREAMON, &type)) {
         bad("STREAMON(encoder CAPTURE)");
         return 1;
+    }
+
+    if (opt_abandon_us >= 0) {
+        return encoder_abandon(fd, &g, fds, cap_map, cap_len);
     }
 
     for (int i = 0; i < opt_frames; i++) {
@@ -1670,7 +1745,7 @@ int main(int argc, char **argv)
     int mode = 0;                              /* 0 joined, 1 export only, 2 encoder only */
     int c;
 
-    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:R:")) != -1) {
+    while ((c = getopt(argc, argv, "xeskvVMn:b:o:c:H:g:w:D:N:phSG:m:R:A:")) != -1) {
         switch (c) {
         case 'x': {
             mode = 1;
@@ -1761,10 +1836,14 @@ int main(int argc, char **argv)
             opt_bitrate = atoi(optarg);
         } break;
 
+        case 'A': {
+            opt_abandon_us = atoi(optarg);
+        } break;
+
         default: {
             fprintf(stderr, "usage: ml-cam2enc [-x|-e] [-s|-k] [-n frames (0=until signal)] "
                             "[-b bufs] [-o file] [-c h264|hevc] [-H heap] [-G gop] [-m MB] "
-                            "[-R bps (CBR; default constant-QP)] [-p] [-S]\n");
+                            "[-R bps (CBR; default constant-QP)] [-p] [-S] [-A us]\n");
             return 2;
         } break;
         }
