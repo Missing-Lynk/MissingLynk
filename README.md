@@ -48,7 +48,7 @@ cd missinglynk
 | `tests/` | Unit tests for the Python CLI; no device needed (`make check-python`). |
 | `devices/` | Per-device profiles; `make list-devices` shows them, `make setup DEVICE=<name>` selects the target. |
 | `glue/` | Host-side device scripts: networking, U-Boot/serial, RAM-boot, slot-B flashers, slot flip, recovery. |
-| `native/` | On-device tools (vendor-glibc): `fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`, `ml-rfcmd`. |
+| `native/` | On-device tools (vendor-glibc): `fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`. |
 | `flasher/` | Host-side flashing GUI (`ml-flasher`, Go); writes slot B over USB. |
 | `firmware/` | Patch tooling that regenerates patched binaries from your own dump (vendor binaries **never distributed**). |
 | `assets/` | Splash screen, OSD fonts. |
@@ -145,7 +145,7 @@ make
 
 Or build parts individually (order matters, modules need the kernel, rootfs bakes in the modules and userspace binaries):
 
-- `make native`: the vendor-glibc device tools (`fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`, `ml-rfcmd`)
+- `make native`: the vendor-glibc device tools (`fbtext`, `minidhcpd`, `mtdtool`, `mlmenu`, `mlflash`, `air-qpower`)
 - `make userspace`: the on-device programs, including the standalone fully-static `ml-pipeline` (no SD card, no plugin registry)
 - `make kernel`: reproducible arm64 `Image` + out-of-tree Artosyn modules
 - `make rootfs`: the lean `slim` Alpine slot-B rootfs, produces `rootfs/build/rootfs-<device>.ubi` (bakes in the modules); `make rootfs-dev` for the `dev` flavor (adds SSH + scp + strace/tcpdump)

@@ -70,7 +70,7 @@ vendor/mtd-utils/lib/libcrc32.c vendor/mtd-utils/lib/common.c vendor/mtd-utils/l
 # which: DEVICE_TOOLS ship on the device, BRINGUP_TOOLS exist to answer a hardware question and
 # are staged by hand when one is being asked. Tools whose compile line is not this shape stay
 # spelled out in the container script below.
-DEVICE_TOOLS="air-qpower ml-rfcmd"
+DEVICE_TOOLS="air-qpower"
 BRINGUP_TOOLS="ml-regdump ml-mmioreplay ml-i2cprobe ml-camtest ml-v4l2grab ml-cam2enc
 ml-isploop ml-lutfill ml-fbdump"
 
@@ -126,4 +126,4 @@ docker run --rm --platform=linux/arm64 -v "$PWD":/work -w /work alpine:3.24 sh -
     apk add -q build-base &&
     gcc -O2 -Wall -static minidhcpd.c -o build/minidhcpd-musl &&
     strip build/minidhcpd-musl'
-file build/fbtext build/minidhcpd build/minidhcpd-musl build/mtdtool build/mlflash build/air-qpower build/ml-rfcmd build/ml-rf-persist build/ml-boot-record build/mlmenu
+file build/fbtext build/minidhcpd build/minidhcpd-musl build/mtdtool build/mlflash build/air-qpower build/ml-rf-persist build/ml-boot-record build/mlmenu
