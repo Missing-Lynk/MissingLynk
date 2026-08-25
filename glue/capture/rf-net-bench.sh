@@ -177,6 +177,31 @@ echo "'"$label"' rx_bytes=$((rx1-rx0)) tx_bytes=$((tx1-tx0)) secs=$S"' \
         > "$OUT/raw/sdio-$label.txt" 2>&1 || true
 }
 
+sample_link_quality()
+{
+    local label="$1"
+    local safe_label="${label//[^A-Za-z0-9_.-]/_}"
+
+    {
+        echo "label: $label"
+        echo "time_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo
+        echo "--- goggle ml-linkd link samples ---"
+        sshg 'tail -160 /var/log/ml-linkd.log 2>/dev/null |
+              grep -E "1v1info|snr_raw|snr_db|thr_kbps|throughput|mcs sample|mcs=|alive hs=" |
+              tail -40 || true' 2>&1 || true
+        echo
+        echo "--- air ml-linkd MCS samples ---"
+        if [ "${AIR_SSH_OK:-0}" -eq 1 ]; then
+            air_ssh 'tail -160 /var/log/ml-linkd.log 2>/dev/null |
+                     grep -E "mcs sample|mcs=|throughput|GET_MCS|1v1info|snr_raw|snr_db|thr_kbps" |
+                     tail -40 || true' 2>&1 || true
+        else
+            echo "air ssh unavailable"
+        fi
+    } > "$OUT/raw/link-$safe_label.txt"
+}
+
 write_metadata()
 {
     {
@@ -205,7 +230,9 @@ write_metadata()
               done' 2>&1 || true
         echo
         echo "--- goggle rf tail ---"
-        sshg 'tail -40 /var/log/ml-linkd.log 2>/dev/null | grep -E "1v1info|snr|thr|mcs|rate|rx=" || true' 2>&1 || true
+        sshg 'tail -120 /var/log/ml-linkd.log 2>/dev/null |
+              grep -E "1v1info|snr_raw|snr_db|thr_kbps|throughput|mcs sample|mcs=|rate|rx=|alive hs=" |
+              tail -40 || true' 2>&1 || true
         echo
         echo "--- air identity ---"
         if [ "${AIR_SSH_OK:-0}" -eq 1 ]; then
@@ -218,6 +245,11 @@ write_metadata()
                          ls -l "$f"
                          sha256sum "$f" 2>/dev/null || md5sum "$f" 2>/dev/null || true
                      done' 2>&1 || true
+            echo
+            echo "--- air rf tail ---"
+            air_ssh 'tail -120 /var/log/ml-linkd.log 2>/dev/null |
+                     grep -E "mcs sample|mcs=|throughput|GET_MCS|1v1info|snr_raw|snr_db|thr_kbps" |
+                     tail -40 || true' 2>&1 || true
         else
             echo "air ssh unavailable"
         fi
@@ -258,10 +290,12 @@ run_iperf_goggle_to_air()
     local raw="$OUT/raw/iperf-goggle-to-air-len${safe_len}-$safe_rate.json"
     local ping="$OUT/raw/ping-during-goggle-to-air-len${safe_len}-$safe_rate.txt"
 
+    sample_link_quality "before-goggle-to-air-len${safe_len}-$safe_rate"
     start_iperf_server_on_air || return 1
     sshg "ping -c '$IPERF_SECS' -i 1 -W 2 '$AIR_RF_IP' > /tmp/rf-net-bench-ping-load.log 2>&1 & \
           iperf3 -u -c '$AIR_RF_IP' -b '$rate' -t '$IPERF_SECS' -l '$len' --json; \
           cat /tmp/rf-net-bench-ping-load.log >&2" > "$raw" 2> "$ping"
+    sample_link_quality "after-goggle-to-air-len${safe_len}-$safe_rate"
     printf 'goggle->air len=%-6s rate=%-8s %s | ' "$len" "$rate" "$(extract_iperf_json_field "$raw")"
     ping_summary "ping-load" < "$ping"
 }
@@ -275,11 +309,13 @@ run_iperf_air_to_goggle()
     local raw="$OUT/raw/iperf-air-to-goggle-len${safe_len}-$safe_rate.json"
     local ping="$OUT/raw/ping-during-air-to-goggle-len${safe_len}-$safe_rate.txt"
 
+    sample_link_quality "before-air-to-goggle-len${safe_len}-$safe_rate"
     start_iperf_server_on_goggle || return 1
     sshg "ping -c '$IPERF_SECS' -i 1 -W 2 '$AIR_RF_IP' > /tmp/rf-net-bench-ping-load.log 2>&1 &" \
         >/dev/null 2>&1 || true
     air_ssh "iperf3 -u -c '$GOGGLE_RF_IP' -b '$rate' -t '$IPERF_SECS' -l '$len' --json" > "$raw" 2>&1
     sshg "cat /tmp/rf-net-bench-ping-load.log 2>/dev/null" > "$ping" 2>&1 || true
+    sample_link_quality "after-air-to-goggle-len${safe_len}-$safe_rate"
     printf 'air->goggle len=%-6s rate=%-8s %s | ' "$len" "$rate" "$(extract_iperf_json_field "$raw")"
     ping_summary "ping-load" < "$ping"
 }
@@ -348,6 +384,7 @@ fi
 
 write_metadata
 sample_sdio 3 idle
+sample_link_quality idle
 run_ping_suite
 run_iperf_suite
 
