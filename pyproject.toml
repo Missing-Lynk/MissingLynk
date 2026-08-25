@@ -45,7 +45,7 @@ dev = [
 target-version = "py314"
 line-length = 100
 include = ["missinglynk/**/*.py", "tests/**/*.py", "glue/**/*.py",
-           "kernel/scripts/**/*.py"]
+           "kernel/scripts/**/*.py", "android/tools/**/*.py"]
 # glue/dev/ is gitignored per-machine scratch, not part of the tree. kernel/build/ holds the
 # fetched kernel tree and its thousands of upstream scripts; ruff's default excludes already
 # drop a directory named build, and this states it rather than relying on that.
