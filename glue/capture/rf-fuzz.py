@@ -26,6 +26,10 @@ Modes (one family per run, or `all` to interleave a mix):
   drop         delete whole datagrams         -> packet loss
   dup          repeat a datagram              -> a retransmit artifact
   reorder      swap adjacent datagrams        -> arrival jitter
+  tile-swap    tile 1 arrives before tile 0    -> inverted half-frame order
+  tile-drop    one half of a frame is missing  -> the pair can never complete
+  tile-lag     one half arrives frames late    -> the pair resolves by eviction
+  frame-rewind move a pair's FrameId back        -> a duplicate PTS inside one session
   hdr-magic    corrupt MagicCode              -> must be dropped as bad_hdr
   hdr-crc      corrupt the CRC field          -> must be dropped as bad_crc
   hdr-len      lie about the declared length  -> must be dropped as bad_hdr
@@ -63,6 +67,7 @@ VIDEO_PORT = 10001
 MODES = (
     "es-bitflip", "es-zero", "es-truncate", "idr-kill",
     "drop", "dup", "reorder",
+    "tile-swap", "tile-drop", "tile-lag", "frame-rewind",
     "hdr-magic", "hdr-crc", "hdr-len",
 )
 
@@ -70,6 +75,18 @@ MODES = (
 # a payload-corrupting mode and a transport mode independently, the way a bad link damages both.
 ES_MODES = ("es-bitflip", "es-zero", "es-truncate", "idr-kill", "hdr-magic", "hdr-crc", "hdr-len")
 TRANSPORT_MODES = ("drop", "dup", "reorder")
+TILE_MODES = ("tile-swap", "tile-drop", "tile-lag", "frame-rewind")
+
+# How far back frame-rewind moves a FrameId. ml-pipeline treats a regression of MORE than 8 as a new
+# air session (mlp-rf.c: `frame_id < c->last_fid - 8`), which bumps pts_epoch and re-arms the IDR
+# gate - a different code path entirely. Staying inside the window keeps the frame in the CURRENT
+# session and lets it collide with an earlier one instead.
+REWIND_MAX = 8
+
+# How far a tile-lag half is pushed down the stream. Six video datagrams is about three composed
+# frames, comfortably past the pairing window, so the pair is resolved by eviction rather than by
+# arriving a little early.
+LAG_RECORDS = 6
 
 
 class Record:
@@ -100,6 +117,7 @@ def read_dump(path: Path) -> list[Record]:
         offset += REC_HDR.size
         if offset + length > size:
             break
+
         records.append(Record(delta_us, dport, data[offset:offset + length]))
         offset += length
 
@@ -110,6 +128,34 @@ def write_dump(path: Path, records: list[Record]) -> None:
     with open(path, "wb") as handle:
         for record in records:
             handle.write(record.pack())
+
+
+def chn_index(payload: bytes) -> int:
+    """ChnIndex from the header: 0 = top tile, 1 = bottom tile. The receiver demuxes on this."""
+    return struct.unpack_from("<I", payload, 8)[0]
+
+
+def frame_id(payload: bytes) -> int:
+    """FrameId from the header. The two tiles of one composed frame share it."""
+    return struct.unpack_from("<I", payload, 16)[0]
+
+
+def frame_groups(records: list[Record]) -> dict[int, dict[int, int]]:
+    """{frame_id: {chn: record index}} over the video records, for the tile-level modes.
+
+    Only the FIRST record of a given (frame, channel) is indexed. A tile is one access unit in one
+    datagram at this layer, so a second one is a duplicate rather than a continuation, and the
+    tile modes act on the datagram the receiver would pair with.
+    """
+    groups: dict[int, dict[int, int]] = {}
+    for index, record in enumerate(records):
+        if not record.is_video:
+            continue
+
+        groups.setdefault(frame_id(record.payload), {}).setdefault(
+            chn_index(record.payload), index)
+
+    return groups
 
 
 def declared_stream_len(payload: bytes) -> int:
@@ -135,10 +181,12 @@ def corrupt_es_bitflip(payload: bytes, rng: random.Random) -> bytes:
     start, end = es_span(payload)
     if end <= start:
         return payload
+
     out = bytearray(payload)
     for _ in range(rng.randint(1, 8)):
         pos = rng.randrange(start, end)
         out[pos] ^= 1 << rng.randrange(8)
+
     return bytes(out)
 
 
@@ -147,9 +195,11 @@ def corrupt_es_zero(payload: bytes, rng: random.Random) -> bytes:
     start, end = es_span(payload)
     if end <= start:
         return payload
+
     out = bytearray(payload)
     for pos in range(start, end):
         out[pos] = 0
+
     return bytes(out)
 
 
@@ -163,11 +213,13 @@ def corrupt_es_truncate(payload: bytes, rng: random.Random) -> bytes:
     original = end - start
     if original <= 1:
         return payload
+
     keep = max(1, int(original * rng.uniform(0.1, 0.9)))
     out = bytearray(payload[:start + keep])
     struct.pack_into("<I", out, 4, keep)
     fix_crc(out)
     out += struct.pack("<I", VPH_TAIL_MAGIC)
+
     return bytes(out)
 
 
@@ -190,11 +242,13 @@ def corrupt_idr_kill(payload: bytes, rng: random.Random) -> bytes:
         else:
             pos += 1
             continue
+
         if header_at < end:
             nal_type = (out[header_at] >> 1) & 0x3F
             if 16 <= nal_type <= 23:
                 out[header_at] |= 0x40    # set type bit 5: 16..23 -> 48..55, no longer IRAP
                 touched = True
+
         pos = header_at + 1
 
     return bytes(out) if touched else payload
@@ -259,6 +313,7 @@ def apply_transport_mode(records: list[Record], mode: str, rate: float,
                 hits += 1
                 continue
             kept.append(record)
+
         return kept, hits
 
     if mode == "dup":
@@ -268,6 +323,7 @@ def apply_transport_mode(records: list[Record], mode: str, rate: float,
             if record.is_video and rng.random() < rate:
                 out.append(Record(0, record.dport, record.payload))  # arrives back to back
                 hits += 1
+
         return out, hits
 
     if mode == "reorder":
@@ -280,9 +336,116 @@ def apply_transport_mode(records: list[Record], mode: str, rate: float,
                 index += 2
             else:
                 index += 1
+
         return out, hits
 
     raise ValueError(f"not a transport mode: {mode}")
+
+
+def apply_tile_mode(records: list[Record], mode: str, rate: float,
+                    rng: random.Random) -> tuple[list[Record], int]:
+    """Damage a frame's two TILES rather than its datagrams, with probability `rate` per frame.
+
+    The transport modes above work on datagrams and leave tile structure intact: `reorder` swaps two
+    adjacent datagrams, which within one tile is arrival jitter and says nothing about which HALF of
+    a composed frame reaches the compositor first. These modes act on the pair.
+
+    They matter because the replay harnesses cannot produce any of this: every dump was captured
+    with tile 0 ahead of tile 1 and `ml-rf-replay` plays a dump back verbatim, so the goggle has
+    only ever been bench-tested against one arrival order with both halves always present. Over the
+    air the two tiles are independent encodes of different sizes, so the order can invert and a
+    half can simply not arrive.
+    """
+    hits = 0
+    out = list(records)
+    groups = frame_groups(out)
+
+    if mode == "tile-swap":
+        # Exchange the two halves' PAYLOADS rather than their positions, so the pair keeps its exact
+        # inter-tile timing and only the order changes: the receiver sees tile 1 first.
+        for chans in groups.values():
+            if len(chans) < 2 or rng.random() >= rate:
+                continue
+
+            first, second = (out[chans[0]], out[chans[1]])
+            out[chans[0]] = Record(first.delta_us, first.dport, second.payload)
+            out[chans[1]] = Record(second.delta_us, second.dport, first.payload)
+            hits += 1
+
+        return out, hits
+
+    if mode == "tile-drop":
+        # One half of the frame never arrives, so the pair cannot complete and the slot must be
+        # evicted. Distinct from `drop`, which deletes datagrams without regard to what that leaves
+        # of a frame, and usually leaves the pair intact at these rates.
+        doomed: set[int] = set()
+        for chans in groups.values():
+            if len(chans) < 2 or rng.random() >= rate:
+                continue
+
+            doomed.add(chans[rng.choice(sorted(chans))])
+            hits += 1
+
+        return [r for i, r in enumerate(out) if i not in doomed], hits
+
+    if mode == "tile-lag":
+        # One half arrives far later than its partner: the pair either completes late or is evicted
+        # while the other half is still held. Moves the record LAG_RECORDS later in the stream and
+        # leaves the deltas attached to positions, the same timing model `reorder` uses.
+        moves: list[tuple[int, bytes, int]] = []
+        for chans in groups.values():
+            if len(chans) < 2 or rng.random() >= rate:
+                continue
+
+            index = chans[rng.choice(sorted(chans))]
+            moves.append((index, out[index].payload, out[index].dport))
+            hits += 1
+
+        if not moves:
+            return out, hits
+
+        drop_at = {index for index, _, _ in moves}
+        kept = [(i, r) for i, r in enumerate(out) if i not in drop_at]
+        rebuilt: list[Record] = []
+        pending = {index + LAG_RECORDS: (payload, dport) for index, payload, dport in moves}
+        for original, record in kept:
+            rebuilt.append(record)
+            late = pending.pop(original, None)
+            if late is not None:
+                rebuilt.append(Record(0, late[1], late[0]))
+
+        for payload, dport in pending.values():   # lagged past the end of the dump
+            rebuilt.append(Record(0, dport, payload))
+
+        return rebuilt, hits
+
+    if mode == "frame-rewind":
+        # ml-pipeline pairs on PTS and derives PTS straight from FrameId
+        # (mlp-rf.c: `pts = pts_epoch + frame_id * (1s / RF_FPS)`), so moving a pair's FrameId back
+        # gives two different frames the same PTS within one session. That is the input the seam
+        # scratch's collision detector is built to catch: band_region() indexes by slot and
+        # seam_stamp[region] holds the pair's PTS, so two pairs that share a region AND a PTS are
+        # exactly the case the stamp cannot tell apart.
+        #
+        # Both halves are rewritten, so the pair still pairs; a half-only rewrite would just
+        # un-pair the frame, which tile-drop already covers.
+        for chans in groups.values():
+            if len(chans) < 2 or rng.random() >= rate:
+                continue
+
+            back = rng.randint(1, REWIND_MAX)
+            for index in chans.values():
+                payload = bytearray(out[index].payload)
+                struct.pack_into("<I", payload, 16,
+                                 max(0, frame_id(out[index].payload) - back))
+                fix_crc(payload)
+                out[index] = Record(out[index].delta_us, out[index].dport, bytes(payload))
+
+            hits += 1
+
+        return out, hits
+
+    raise ValueError(f"not a tile mode: {mode}")
 
 
 def fuzz(records: list[Record], mode: str, rate: float,
@@ -292,8 +455,14 @@ def fuzz(records: list[Record], mode: str, rate: float,
     if mode == "all":
         payload_mode = rng.choice(ES_MODES)
         transport_mode = rng.choice(TRANSPORT_MODES)
+        tile_mode = rng.choice(TILE_MODES)
+        # Tile damage first: the tile modes index frames by header, and running them before the
+        # payload corruption keeps that indexing over headers the ES modes have not rewritten.
+        records, tally[tile_mode] = apply_tile_mode(records, tile_mode, rate, rng)
         records, tally[payload_mode] = apply_payload_mode(records, payload_mode, rate, rng)
         records, tally[transport_mode] = apply_transport_mode(records, transport_mode, rate, rng)
+    elif mode in TILE_MODES:
+        records, tally[mode] = apply_tile_mode(records, mode, rate, rng)
     elif mode in TRANSPORT_MODES:
         records, tally[mode] = apply_transport_mode(records, mode, rate, rng)
     else:
@@ -314,16 +483,21 @@ def header_passes_receiver(payload: bytes, datagram_len: int) -> tuple[bool, str
     """Model mlp-rf.c's guards: does this datagram reach the decoder, and if not, which counter."""
     if datagram_len < VPH_LEN:
         return False, "bad_hdr"
+
     magic, stream_len = struct.unpack_from("<I", payload, 0)[0], declared_stream_len(payload)
     tail = struct.unpack_from("<I", payload, 28)[0]
     crc = struct.unpack_from("<I", payload, 32)[0]
+
     if magic != VPH_MAGIC or tail != VPH_TAIL_MAGIC:
         return False, "bad_hdr"
+
     if (zlib.crc32(payload[:32]) & 0xFFFFFFFF) != crc:
         return False, "bad_crc"
+
     chn = struct.unpack_from("<I", payload, 8)[0]
     if chn >= RF_NCHN or stream_len == 0 or VPH_LEN + stream_len > datagram_len:
         return False, "bad_hdr"
+
     return True, "pushed"
 
 
@@ -338,12 +512,15 @@ def self_test() -> int:
                                                                        for _ in range(200))
     p_es = b"\x00\x00\x01\x02\x01" + bytes(rng.randrange(256) for _ in range(200))
     base: list[Record] = []
-    for frame_id in range(40):
+    # `fid`, not `frame_id`: the module-level frame_id() reader is in scope for the whole of
+    # self_test, and a loop variable of that name shadows it for every later check.
+    for fid in range(40):
         for chn in range(RF_NCHN):
-            is_idr = 1 if frame_id % 20 == 0 else 0
+            is_idr = 1 if fid % 20 == 0 else 0
             es = idr_es if is_idr else p_es
             base.append(Record(16667 if chn == 0 else 300, VIDEO_PORT,
-                               build_video_payload(chn, is_idr, frame_id, es)))
+                               build_video_payload(chn, is_idr, fid, es)))
+
     # a control-plane record the fuzzer must never touch
     base.append(Record(500, 20001, b"hello-control-plane"))
 
@@ -396,6 +573,7 @@ def self_test() -> int:
         for record in out:
             if not record.is_video:
                 continue
+
             reaches, why = header_passes_receiver(record.payload, len(record.payload))
             if reaches or why != expect:
                 failures.append(f"{mode}: expected {expect}, got {'pushed' if reaches else why}")
@@ -412,6 +590,82 @@ def self_test() -> int:
         if not ok:
             failures.append(f"{mode}: count {video_before} -> {video_after} broke {relation}")
 
+    # Tile modes act on the PAIR, so each has its own contract on the frames it hits.
+    groups_before = frame_groups(base)
+    paired = [f for f, chans in groups_before.items() if len(chans) == 2]
+    if not paired:
+        failures.append("tile modes: the base capture has no frame carrying both tiles")
+    else:
+        # tile-swap keeps every datagram and every frame, and inverts the order within a pair.
+        out, _ = fuzz(clone(), "tile-swap", 1.0, random.Random(19))
+        if sum(1 for r in out if r.is_video) != video_before:
+            failures.append("tile-swap: changed the datagram count")
+        else:
+            swapped = 0
+            for frame in paired:
+                chans = groups_before[frame]
+                lo, hi = chans[0], chans[1]
+                if chn_index(out[lo].payload) == 1 and chn_index(out[hi].payload) == 0:
+                    swapped += 1
+
+            if swapped != len(paired):
+                failures.append(f"tile-swap: inverted {swapped} of {len(paired)} pairs")
+
+        # tile-drop leaves exactly one half of every hit frame.
+        out, tally = fuzz(clone(), "tile-drop", 1.0, random.Random(23))
+        after = frame_groups(out)
+        widowed = sum(1 for f in paired if len(after.get(f, {})) == 1)
+        if tally.get("tile-drop") != len(paired) or widowed != len(paired):
+            failures.append(f"tile-drop: {tally.get('tile-drop')} hits, {widowed} of "
+                            f"{len(paired)} frames left with one half")
+
+        # tile-lag keeps every datagram but moves one half away from its partner.
+        out, _ = fuzz(clone(), "tile-lag", 1.0, random.Random(29))
+        if sum(1 for r in out if r.is_video) != video_before:
+            failures.append("tile-lag: changed the datagram count")
+        else:
+            moved = 0
+            after = frame_groups(out)
+            for frame in paired:
+                chans = after.get(frame, {})
+                if len(chans) == 2 and abs(chans[0] - chans[1]) > 1:
+                    moved += 1
+
+            if moved == 0:
+                failures.append("tile-lag: left every pair adjacent")
+
+        # frame-rewind keeps every datagram, keeps both halves together, moves the pair's
+        # FrameId back, and leaves a header the receiver still accepts (the CRC covers it).
+        out, _ = fuzz(clone(), "frame-rewind", 1.0, random.Random(31))
+        if sum(1 for r in out if r.is_video) != video_before:
+            failures.append("frame-rewind: changed the datagram count")
+        else:
+            moved_back = 0
+            for frame in paired:
+                chans = groups_before[frame]
+                new_ids = {frame_id(out[i].payload) for i in chans.values()}
+                if len(new_ids) != 1:
+                    failures.append("frame-rewind: split a pair across two FrameIds")
+                    break
+
+                if new_ids.pop() < frame:
+                    moved_back += 1
+            else:
+                # FrameId 0 has nowhere to go: the rewind clamps at zero rather than wrapping into
+                # the huge value an unsigned underflow would give, which the receiver would read as
+                # a forward jump rather than a collision.
+                expect = sum(1 for f in paired if f > 0)
+                if moved_back != expect:
+                    failures.append(f"frame-rewind: moved {moved_back} of {expect} rewindable pairs")
+            for record in out:
+                if not record.is_video:
+                    continue
+
+                reaches, why = header_passes_receiver(record.payload, len(record.payload))
+                if not reaches:
+                    failures.append(f"frame-rewind: header stopped passing the guard ({why})")
+                    break
+
     # A fuzzed dump round-trips through the record parser unchanged in structure.
     out, _ = fuzz(clone(), "all", 0.3, random.Random(17))
     blob = b"".join(r.pack() for r in out)
@@ -425,7 +679,7 @@ def self_test() -> int:
         return 1
 
     print("[rf-fuzz self-test] all checks passed "
-          "(framing, CRC model, guard outcomes, transport counts, round-trip)")
+          "(framing, CRC model, guard outcomes, transport counts, tile pairs, round-trip)")
     return 0
 
 
@@ -439,8 +693,10 @@ def _parse_bytes(data: bytes) -> list[Record]:
         offset += REC_HDR.size
         if offset + length > size:
             break
+
         records.append(Record(delta_us, dport, data[offset:offset + length]))
         offset += length
+
     return records
 
 
@@ -462,6 +718,7 @@ def main() -> int:
 
     if args.infile is None or args.outfile is None:
         parser.error("infile and outfile are required unless --check is given")
+
     if not 0.0 <= args.rate <= 1.0:
         parser.error("--rate must be in [0, 1]")
 
@@ -478,6 +735,7 @@ def main() -> int:
     print(f"[rf-fuzz] {args.mode} @ rate {args.rate:g} seed {args.seed}: "
           f"{video_total} video datagrams in, corrupted {hit_summary} "
           f"-> {args.outfile} ({args.outfile.stat().st_size // 1024} KiB)")
+
     return 0
 
 

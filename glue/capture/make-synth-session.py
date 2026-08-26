@@ -32,6 +32,17 @@ TILES = [                   # (crop_h, crop_y)
     (552, 528),
 ]
 
+# A second VALID split, for --geom-change. ml-pipeline derives the seam geometry from the tile
+# heights the decoders actually produce and only takes the split path when
+# h0 + h1 - TILE_OVER == COMP_H (mlp-compose.c: seam_geom_update); 600 + 512 - 32 = 1080 satisfies
+# that exactly as 560 + 552 - 32 does, with the same 32-row overlap. The seam therefore sits at a
+# different composite row, which is the point: seam_top moves while the cross-fade scratch still
+# holds a band captured at the old one.
+ALT_TILES = [
+    (600, 0),
+    (512, 568),
+]
+
 
 # Content presets, distinct along the axes an FPV feed varies on: sustained motion everywhere in
 # the frame, near-static hover, and hard per-frame scene change (every pixel new, worst case for
@@ -86,6 +97,9 @@ def main():
     ap.add_argument("--secs", type=int, default=10)
     ap.add_argument("--preset", choices=sorted(PRESETS), default="flight")
     ap.add_argument("--bitrate", type=int, default=6, metavar="MBIT")
+    ap.add_argument("--geom-change", action="store_true",
+                    help="switch the tile split mid-session (560/552 -> 600/512), so the receiver "
+                         "has to re-derive the seam geometry on a live stream")
     args = ap.parse_args()
 
     src = PRESETS[args.preset]
@@ -98,9 +112,32 @@ def main():
             tiles.append(split_aus(out))
 
         n = min(len(t) for t in tiles)
+
+        # The second geometry is spliced in at one of ITS OWN keyframes: a segment that starts
+        # mid-GOP has no IDR for the decoder to start on, so the tile would never begin and the
+        # test would measure nothing. Both channels must be at a keyframe together, which the
+        # shared keyint gives at the same indices.
+        switch_at = n
+        if args.geom_change:
+            alt = []
+            for i, (h, y) in enumerate(ALT_TILES):
+                out = Path(td) / f"alt{i}.h265"
+                encode_tile(src, h, y, args.secs, args.bitrate, out)
+                alt.append(split_aus(out))
+
+            n = min(n, min(len(t) for t in alt))
+            switch_at = next((k for k in range(n // 2, n)
+                              if all(a[k][1] for a in alt)), None)
+            if switch_at is None:
+                raise SystemExit("[synth] no keyframe in the second half to splice the new "
+                                 "geometry at - raise --secs or lower the encoder keyint")
+            print(f"[synth] geometry change at frame {switch_at}: "
+                  f"{TILES[0][0]}/{TILES[1][0]} -> {ALT_TILES[0][0]}/{ALT_TILES[1][0]}")
+
         with open(args.out, "wb") as f:
             for fid in range(n):
-                for chn, aus in enumerate(tiles):
+                source = alt if args.geom_change and fid >= switch_at else tiles
+                for chn, aus in enumerate(source):
                     es, key = aus[fid]
                     # One AU per datagram: the record length is u16 and the replayer sends each
                     # record as a single UDP datagram, so an AU that VBV failed to bound is a
