@@ -16,8 +16,17 @@ import json
 import sys
 from pathlib import Path
 
-# (json key, header, width, format). Ordered along the pipeline, ending with the two counts that
-# decide whether a row means anything: frames, and whether phase forcing was armed while it ran.
+# (json key, header, width, format). The conditions come first: a row is only comparable with
+# another when the source rate, the panel rate and the pacing state line up, and putting them left
+# of the medians is what stops two runs taken under different conditions being read as one result.
+CONDITIONS: list[tuple[str, str, int, str]] = [
+    ("source", "source", 8, "s"),
+    ("source_fps", "src fps", 8, ".1f"),
+    ("pixclk_hz", "pixclk", 10, "d"),
+    ("pace_hz", "pace", 10, "d"),
+]
+
+# Ordered along the pipeline, ending with the counts that say whether a row means anything.
 COLUMNS: list[tuple[str, str, int, str]] = [
     ("rxdec0", "dec t0", 7, ".1f"),
     ("rxdec1", "dec t1", 7, ".1f"),
@@ -76,13 +85,14 @@ def main() -> int:
         return 1
 
     width = max(len(label) for label, _ in rows)
-    header = f"{'capture':{width}s}" + "".join(f"{h:>{w}s}" for _, h, w, _ in COLUMNS)
+    columns = CONDITIONS + COLUMNS
+    header = f"{'capture':{width}s}" + "".join(f"{h:>{w}s}" for _, h, w, _ in columns)
     print(header)
     print("-" * len(header))
 
     for label, stats in rows:
         line = f"{label:{width}s}"
-        for key, _, w, fmt in COLUMNS:
+        for key, _, w, fmt in columns:
             value = stats.get(key)
             line += f"{value:>{w}{fmt}}" if value is not None else f"{'n/a':>{w}s}"
         if stats.get("phase_forced_us") is not None:
@@ -90,6 +100,9 @@ def main() -> int:
         print(line)
 
     print("\nAll figures are medians over the capture's 1 Hz summary lines, in ms.")
+    print("src fps / pixclk / pace are the conditions: rows only compare when those agree.")
+    print("A pace column with a value means the servo was steering the clock, so sub2flip is a "
+          "swept figure, not a held one.")
     return 0
 
 

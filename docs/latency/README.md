@@ -23,7 +23,13 @@ Tabulate the whole history:
 glue/capture/latency-compare.py docs/latency/*/
 ```
 
-A row reading `PHASE-FORCED <n> us, NOT A LATENCY RESULT` was taken with the vblank phase injector armed, which holds the tile-0 submit back by up to a full vsync. Every wait on that row is inflated and it is not comparable with the others.
+The first columns are the conditions, not the results. Two rows only compare when `source`, `src fps`, `pixclk` and `pace` agree, and they are printed left of the medians so a mismatch is seen before the numbers are read rather than after a conclusion has been drawn from them.
+
+- `source` is `air` or `replay`. The replayer plays a captured dump at its own cadence, so its frame rate and tile spacing are its own and not the link's.
+- `src fps` is what the panel had to keep up with. A 60 fps source against a 60.00 Hz panel beats at nothing; a 56.6 fps source against the same panel repeats a frame three times a second.
+- `pixclk` is the panel rate the leaf held, and `pace` carries a value when the servo was steering it. A paced run's `sub2flip` is a swept figure rather than a held one, so it is not comparable with an unpaced run's even when everything else matches.
+
+A row reading `PHASE-FORCED <n> us, NOT A LATENCY RESULT` was taken with the vblank phase injector armed, which holds the tile-0 submit back by up to a full vsync. Every wait on that row is inflated and it is not comparable with anything.
 
 Publish a run once it is captured:
 

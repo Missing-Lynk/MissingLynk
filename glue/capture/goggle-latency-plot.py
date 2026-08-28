@@ -48,6 +48,7 @@ class LatStats:
     submit_event: float | None
     pair_event: float | None
     phase_forced_us: int | None
+    source_fps: float
 
 
 def median(values: list[float]) -> float:
@@ -121,6 +122,7 @@ def parse_log(path: Path) -> LatStats:
         submit_event=median(submit_event) if submit_event else None,
         pair_event=median(pair_event) if pair_event else None,
         phase_forced_us=phase_forced_us,
+        source_fps=round(frames / len(summary["rxflip50"]), 1),
     )
 
 

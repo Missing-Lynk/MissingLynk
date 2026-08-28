@@ -6,10 +6,12 @@
   "issue_submit": 0.133,
   "judder": 4,
   "lines": 93,
+  "pace_hz": null,
   "pair_event": 26.476,
   "pair_issue": 9.909,
   "pair_skew": 10.4,
   "phase_forced_us": null,
+  "pixclk_hz": 148500000,
   "pixclk_hz_asked": 148500000,
   "pixclk_hz_max": 148500000,
   "pixclk_hz_min": 148500000,
@@ -20,6 +22,9 @@
   "rxdec1": 16.8,
   "rxflip50": 45.3,
   "rxflip99": 48.3,
+  "seam_mode": 2,
+  "source": "air",
+  "source_fps": 60.0,
   "subflip": 16.4,
   "submit_event": 16.423
 }

@@ -78,11 +78,29 @@ if [ ! -s "$LOG" ]; then
     exit 1
 fi
 
+# The conditions that decide whether two captures are comparable, read from the process that was
+# measured rather than from the flag directory: ml-video-up reads those flags only at ml-video
+# start, so one changed since then is visible on disk and has no effect on the running pipeline.
+# shellcheck disable=SC2016  # the pid lookup, /proc read and clock read expand on the device
+sshg 'p=$(pgrep ml-pipeline | tail -1)
+      env=""
+      [ -n "$p" ] && env=$(tr "\0" "\n" < "/proc/$p/environ")
+      val() { printf %s "$env" | sed -n "s/^$1=//p" | tail -1; }
+      echo "pixclk_hz=$(cat /sys/kernel/debug/ar9311_pixclk_rate 2>/dev/null)"
+      echo "pace_hz=$(val ML_PACE)"
+      echo "seam=$(val ML_SEAM)"
+      echo "phase_force_us=$(val ML_PHASE_FORCE)"
+      if pgrep ml-rf-replay >/dev/null 2>&1; then echo "source=replay"
+      else echo "source=air"; fi' </dev/null > "$OUT/conditions.env" 2>/dev/null
+
 if [ -x "$PLOTTER" ]; then
     "$PLOTTER" "$LOG" -o "$SVG"
 else
     python3 "$PLOTTER" "$LOG" -o "$SVG"
 fi
+
+CAPTURE="$OUT" python3 "$HERE/summary-merge.py" ||
+    echo "could not merge the run conditions into summary.json" >&2
 
 echo "log: $LOG"
 echo "metadata: $META"

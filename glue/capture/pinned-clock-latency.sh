@@ -119,7 +119,7 @@ for i in "${!LEGS[@]}"; do
 
     # Fold what the leg's clock did into its own summary. Kept as scalars beside the latency
     # medians so one file answers both "what was the panel doing" and "what did that cost".
-    ASKED="$want" LEG="$leg" python3 "$HERE/clock-merge.py" || \
+    ASKED="$want" CAPTURE="$leg" python3 "$HERE/summary-merge.py" || \
         log "leg $((i + 1)): could not merge the clock trace into summary.json"
 done
 
