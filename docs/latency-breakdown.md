@@ -3,6 +3,32 @@
 This document summarizes the current measured latency pieces for the MissingLynk video path. It
 separates the RF/network transport benchmark from the goggle-local receive/decode/display timing.
 
+## Reproducing the air-unit graph
+
+Air-unit latency instrumentation is opt-in in `ml-air-video`:
+
+```sh
+EXTRA_ENV='ML_AIR_LATSTATS=1 ML_AIR_LATRAW=1' TX=1 glue/camera/au-cam-tx.sh
+SECS=60 glue/capture/air-latency-capture.sh
+```
+
+`ML_AIR_LATSTATS=1` emits one-second p50/p99 summaries. `ML_AIR_LATRAW=1` also emits one line per
+transmitted access unit, suitable for a timeline plotter.
+
+The current marks are:
+
+| Mark | Meaning |
+|---|---|
+| `capts` | V4L2 capture-buffer timestamp from the camera node |
+| `capdq` | userspace time after `VIDIOC_DQBUF` on the capture node |
+| `encq` | userspace time after queueing the capture buffer into the encoder OUTPUT queue |
+| `encdone` | userspace time after dequeuing the encoded access unit from the encoder CAPTURE queue |
+| `tx` | userspace time after a successful UDP `sendto` on `:10001` |
+
+This measures capture-completion-to-transmit and userspace-visible queue/encode/transmit stages. It
+does not by itself measure photon-to-buffer time; that needs a sensor/frame-start hardware mark or
+an external optical setup.
+
 ## Reproducing the goggle graph
 
 Capture a new goggle-side latency run with:
@@ -42,10 +68,23 @@ flip event, which is the scanout latch.
 | flip returned -> latch event p50 | 8.9 ms |
 | pair complete -> latch event p50 | 10.2 ms |
 
-The `scanout latch` wait is display-refresh quantization, not active compute. At 60 Hz one refresh
-period is 16.7 ms, so a submitted frame waits anywhere from near 0 ms to one period for the next
-safe latch point. A faster panel would reduce this bucket, assuming the DSI timing and panel accept
-the higher refresh.
+The `scanout latch` wait is display-refresh quantization, not active compute. One refresh period is 16.675 ms here, so a submitted frame waits anywhere from near 0 ms to one period for the next safe latch point. Where in that range it lands is set by the phase between frame completion and the refresh edge, which the pixel-clock pacing servo controls (`userspace/docs/video-latency.md`).
+
+### Display and source cadence in this capture
+
+Derived from the per-frame `latraw` marks rather than the summary lines:
+
+| Quantity | Value |
+|---|---:|
+| Panel period, grid fit over 1200 flip events | 16.675 ms (59.97 Hz) |
+| Source period, median of consecutive `pair` marks | 17.40-17.50 ms (57.2 Hz) |
+| Arrival rate over the run, FrameIds contiguous throughout | 56.6 fps |
+| Per-flip submit-to-latch p05 / p50 / p95 | 1.19 / 8.91 / 16.26 ms |
+| Median change in submit-to-latch wait per frame | -0.80 ms |
+
+Pacing was enabled for this run, and the servo was still acquiring throughout it. The submit-to-latch p50 of 8.9 ms is half a refresh period, the signature of a sweeping phase, so it is a free-running figure rather than a paced one. Read `rx2flip` p50 20.5 ms the same way. The 2.8 Hz beat between the two rates accounts for all 213 repeated intervals in the capture.
+
+The PTS carried through the pipeline is synthesised from the FrameId at a fixed 60 fps (`RF_FPS`, `ml-pipeline.h`), so any PTS-derived rate reads 60 fps regardless of the wire rate. The 56.6 fps figure above comes from wall-clock marks.
 
 The measurement stops at latch. Panel scanout to a specific row and LCD response happen after this
 point and are not included in `rx2flip`.

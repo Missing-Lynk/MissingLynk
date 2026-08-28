@@ -29,6 +29,8 @@ PLOTTER="$HERE/goggle-latency-plot.py"
 
 # shellcheck source=../lib/ssh-opts.sh
 . "$HERE/../lib/ssh-opts.sh"
+# shellcheck source=../lib/capture-identity.sh
+. "$HERE/../lib/capture-identity.sh"
 
 mkdir -p "$OUT"
 
@@ -40,11 +42,7 @@ echo "capturing ml-pipeline latency log for ${SECS}s"
     echo "duration_secs: $SECS"
     echo "goggle_ip: $DEVICE_IP"
     echo
-    echo "--- flags ---"
-    sshg 'ls -l /usrdata/missinglynk/latstats /usrdata/missinglynk/latraw /usrdata/missinglynk/pace /usrdata/missinglynk/seam 2>/dev/null || true' 2>&1 || true
-    echo
-    echo "--- pace ---"
-    sshg 'cat /usrdata/missinglynk/pace 2>/dev/null || true; echo' 2>&1 || true
+    capture_identity "$REPO"
     echo
     echo "--- services ---"
     sshg 'rc-service ml-video status 2>/dev/null || true; rc-service ml-hud status 2>/dev/null || true' 2>&1 || true
