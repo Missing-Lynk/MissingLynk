@@ -1,0 +1,32 @@
+{
+  "dsi_int_st1": [
+    "0x00000000"
+  ],
+  "fdt50": 16.7,
+  "fdt99": 18.2,
+  "frames": 5580,
+  "issue_submit": 0.257,
+  "judder": 1,
+  "lines": 93,
+  "pace_hz": null,
+  "pair_event": 16.006500000000003,
+  "pair_issue": 1.152,
+  "pair_skew": 10.4,
+  "phase_forced_us": null,
+  "pixclk_hz": 148500000,
+  "pixclk_hz_asked": 148500000,
+  "pixclk_hz_max": 148500000,
+  "pixclk_hz_min": 148500000,
+  "pixclk_samples": 10,
+  "raw_frames": 5582,
+  "repeats": 1,
+  "rxdec0": 6.6,
+  "rxdec1": 16.8,
+  "rxflip50": 34.9,
+  "rxflip99": 37.8,
+  "seam_mode": 2,
+  "source": "air",
+  "source_fps": 60.0,
+  "subflip": 14.5,
+  "submit_event": 14.493500000000001
+}

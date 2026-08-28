@@ -42,6 +42,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # shellcheck source=../lib/ssh-opts.sh
 . "$HERE/../lib/ssh-opts.sh"
+# shellcheck source=../lib/capture-identity.sh
+. "$HERE/../lib/capture-identity.sh"
 
 LEGS=("$@")
 [ "${#LEGS[@]}" -gt 0 ] || LEGS=("$MODE_HZ" 153646640 "$MODE_HZ")
@@ -80,7 +82,14 @@ HAVE_PEEK=0
 sshg "test -x $PHYPEEK" </dev/null 2>/dev/null && HAVE_PEEK=1
 [ "$HAVE_PEEK" = 1 ] || log "note: $PHYPEEK absent, INT_ST1 not sampled (/tmp is tmpfs; re-push it)"
 
-capture_identity "$REPO" > "$RUNDIR/identity.txt" 2>&1
+# Not 2>&1: a failure here belongs on the console, not written into the artifact as though it were
+# the identity. The header check catches a capture that produced nothing usable, which is worth
+# stopping for - a run nobody can attribute to a build is not worth the air-unit battery.
+if ! capture_identity "$REPO" > "$RUNDIR/identity.txt" ||
+   ! grep -q 'host tree' "$RUNDIR/identity.txt"; then
+    echo "could not record the run identity; fix that before measuring" >&2
+    exit 1
+fi
 
 log "$SECS s per leg, ${#LEGS[@]} legs: ${LEGS[*]}"
 

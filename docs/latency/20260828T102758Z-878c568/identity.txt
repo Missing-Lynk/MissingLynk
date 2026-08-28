@@ -1,0 +1,80 @@
+--- host tree ---
+superproject 878c568
+             878c56817d6902c1e406a26977eb9148c58602e4 2026-08-28 11:55:11 +0200
+             Latency measurement improvements
+kernel       1c62a0e                  ml_dmablit: record the one-jiffy floor that bounds the timeout parameter
+userspace    4e7ace6                  ml-pipeline: mark the latency summary while vblank phase forcing is armed
+rootfs       642c113                  Label the rootfs by the wrapper revision and record the userspace and superproject describes
+android      8025e7e                  safely store the target URLs
+
+--- host tree, uncommitted files ---
+
+--- device build ---
+ML_NAME="MissingLynk open firmware"
+ML_VERSION="878c568"
+ML_FLAVOR="slim"
+ML_DEVICE="betafpv-vr04-goggle"
+ML_KERNEL_VERSION="6.18.36"
+ML_KERNEL_GIT="1c62a0e"
+ML_ROOTFS_GIT="642c113"
+ML_USERSPACE_GIT="4e7ace6"
+ML_SUPERPROJECT_GIT="878c568"
+ML_BUILD_TIME="2026-08-28T10:17:18Z"
+kernel        6.18.36
+ml_dmablit.ko 943ec4338c61e147
+uptime_s      573
+
+--- runtime knobs ---
+pixclk_hz     148500000
+ml-pipeline   pid 863
+ML_* environment the running pipeline was started with:
+  ML_COMPOSE=1
+  ML_COMP_MAX=10
+  ML_HEAP=default_cma_region
+  ML_LATRAW=1
+  ML_LATSTATS=1
+  ML_PMSG=1
+  ML_SEAM=2
+flag files now present in /usrdata/missinglynk:
+  bb_config_gnd.json.normal_cfg.json
+  bb_config_gnd.json.normal_cfg.json.pre-bind
+  bb_config_gnd.json.usr_cfg.json
+  bb_config_gnd.json.usr_cfg.json.pre-bind
+  device.json
+  latraw
+  latstats
+  ml-rec
+  pace.off
+  phase-force.off
+  pmsg
+  rf-band
+  rf-bringup.log
+  rf-channel
+  seam
+
+--- services ---
+ * status: started
+ * status: started
+
+--- rf ---
+sdio0            UP             10.0.0.1/24 
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-1v1)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-1v1)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(ff02)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-1v1)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
+[ml-linkd] write(get-1v1)=-1 (I/O error)
+[ml-linkd] write(ff02)=-1 (I/O error)
+[ml-linkd] write(get-time)=-1 (I/O error)
