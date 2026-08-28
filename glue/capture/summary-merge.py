@@ -33,6 +33,8 @@ CONDITIONS: dict[str, str] = {
 
 # Not an integer, and the one condition that decides whether a run measured the real link at all:
 # the replayer plays a captured dump at its own rate, so its cadence and tile spacing are its own.
+# "air" is asserted from RF ingress actually advancing rather than from the replayer being absent,
+# so a capture taken with nothing feeding the goggle reads "none" instead of claiming a live link.
 TEXT_CONDITIONS: dict[str, str] = {"source": "source"}
 
 
