@@ -72,7 +72,8 @@ an external optical setup.
 
 ## Reproducing the goggle graph
 
-Capture a new goggle-side latency run with:
+Arm the baseline knob set first (see "The measurement baseline" below); the capture script is
+read-only on the device and fails rather than enabling anything itself. Then capture with:
 
 ```sh
 SECS=60 glue/capture/goggle-latency-capture.sh
@@ -98,44 +99,51 @@ python3 glue/capture/goggle-latency-plot.py \
 
 ## Goggle-local latency
 
-![Goggle-side latency timeline](20260825T003432Z-unknown/goggle-latency-timeline.svg)
-
 The goggle-local total is `rx2flip`: first UDP video datagram for a frame in `rf_rx` through the DRM
-flip event, which is the scanout latch.
+flip event, which is the scanout latch. Panel scanout to a specific row and LCD response happen
+after that point and are outside the figure.
 
-| Metric | Value |
-|---|---:|
-| Frames parsed | 3567 |
-| `rx2flip` p50 | 20.5 ms |
-| `rx2flip` p99 | 29.6 ms |
-| tile 0 `rx2dec` p50 | 4.6 ms |
-| tile 1 `rx2dec` p50 | 8.2 ms |
-| tile skew / pair p50 | 3.6 ms |
-| pair complete -> flip ioctl entered p50 | 1.1 ms |
-| flip ioctl entered -> returned p50 | 0.2 ms |
-| flip returned -> latch event p50 | 8.9 ms |
-| pair complete -> latch event p50 | 10.2 ms |
+It decomposes into four terms, and only the last is display-refresh quantization rather than work:
 
-The `scanout latch` wait is display-refresh quantization, not active compute. One refresh period is 16.675 ms here, so a submitted frame waits anywhere from near 0 ms to one period for the next safe latch point. Where in that range it lands is set by the phase between frame completion and the refresh edge, which the pixel-clock pacing servo controls (`userspace/docs/video-latency.md`).
+| Term | What it covers |
+|---|---|
+| `rx2dec` tile 0 | the frame's first datagram through tile 0 leaving the decoder's appsink |
+| `rx2dec` tile 1 | the same for tile 1, which is what the pair waits on |
+| `pair -> submit` | osd burn-in, the latency counter, the dmabuf flush and the flip ioctl |
+| `sub2flip` | the wait for the next latch, which the pacing servo's margin sets |
 
-### Display and source cadence in this capture
+`sub2flip` is a policy choice, not a cost: the servo holds a deliberate margin so frame-ready jitter
+cannot clip the latch, and that margin is the whole of the goggle-side latency the loop can still
+remove. `glue/capture/pace-curve.py` reads the trade out of a run's own log, because the servo
+random-walks its margin and a run of a few minutes has already swept it.
 
-Derived from the per-frame `latraw` marks rather than the summary lines:
+Two things a reader of an old capture should know before comparing it with anything:
 
-| Quantity | Value |
-|---|---:|
-| Panel period, grid fit over 1200 flip events | 16.675 ms (59.97 Hz) |
-| Source period, median of consecutive `pair` marks | 17.40-17.50 ms (57.2 Hz) |
-| Arrival rate over the run, FrameIds contiguous throughout | 56.6 fps |
-| Per-flip submit-to-latch p05 / p50 / p95 | 1.19 / 8.91 / 16.26 ms |
-| Median change in submit-to-latch wait per frame | -0.80 ms |
+- **A sweeping phase flatters the median.** `rx2flip` p50 near 20.5 ms appears in captures taken
+  before the servo locked, because a phase sweeping across the refresh period averages half a
+  period. The tail and the repeat rate stay high. Those captures are not comparable with a paced
+  run, and the pre-fix ones also ran a 56.6 fps replay source against a 60 Hz panel.
+- **The per-second `rep` counter does not see the artefact that matters.** When a frame misses its
+  latch the pipeline parks one frame behind, where the wait pins at a full period until the servo
+  hauls it out, about four seconds later. That counts as one repeat in one second. Count those from
+  the `pace` trace instead, as a `lo` crossing back above 12000 us.
 
-Pacing was enabled for this run, and the servo was still acquiring throughout it. The submit-to-latch p50 of 8.9 ms is half a refresh period, the signature of a sweeping phase, so it is a free-running figure rather than a paced one. Read `rx2flip` p50 20.5 ms the same way. The 2.8 Hz beat between the two rates accounts for all 213 repeated intervals in the capture.
+### The measurement baseline
 
-The PTS carried through the pipeline is synthesised from the FrameId at a fixed 60 fps (`RF_FPS`, `ml-pipeline.h`), so any PTS-derived rate reads 60 fps regardless of the wire rate. The 56.6 fps figure above comes from wall-clock marks.
+Comparable runs need the same knob set, and three of the four flag files are absent after a flash,
+so a fresh unit measures nothing and a capture taken without arming them silently differs from the
+runs it is compared against. Arm it, with the air unit off, then power the air unit:
 
-The measurement stops at latch. Panel scanout to a specific row and LCD response happen after this
-point and are not included in `rx2flip`.
+```sh
+glue/capture/latency-baseline.sh          # arms the set and restarts ml-video
+glue/capture/latency-baseline.sh --check  # reports the state, changes nothing
+```
+
+The set is `latstats`, `latraw`, `pace-dbg` and `seam=2`, at the mode pixel clock of 148,500,000 Hz
+with the pacing servo at its default. `ML_SEAM` unset means seam handling is OFF, so `seam=2` is not
+the flashed default and has to be written. `pmsg` is on unless `no-pmsg` exists, so its per-frame
+cost is inside every published figure. Recording is off; it is a separate configuration measured on
+its own, and it costs about 5 ms on tile 1's `rx2dec` because its encoder is a third wave5 instance.
 
 ## RF network benchmark
 
