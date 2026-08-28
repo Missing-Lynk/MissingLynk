@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-labelledby="title desc">
+  <title id="title">Goggle-side latency, RX to scanout latch</title>
+  <desc id="desc">Grouped timeline from first received UDP datagram to DRM scanout latch, with decode, composition, and display stages.</desc>
+  <style>
+    .bg { fill: #ffffff; }
+    .title { fill: #111827; font: 18px sans-serif; font-weight: 700; }
+    .small { fill: #4b5563; font: 12px sans-serif; }
+    .label { fill: #18212f; font: 14px sans-serif; }
+    .rowlabel { fill: #111827; font: 14px sans-serif; font-weight: 700; dominant-baseline: middle; }
+    .group { fill: #64748b; font: 13px sans-serif; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+    .time { fill: #4b5563; font: 12px sans-serif; text-anchor: middle; }
+    .row { stroke: #e0e5eb; stroke-width: 1.2; }
+    .guide { stroke: #9aa4b2; stroke-width: 1.1; stroke-dasharray: 5 5; }
+    .bracket { stroke: #334155; stroke-width: 1.4; fill: none; }
+    .bar { stroke-width: 10; stroke-linecap: round; }
+    .decode0 { stroke: #0f766e; fill: #0f766e; }
+    .decode1 { stroke: #b45309; fill: #b45309; }
+    .comp { stroke: #7c3aed; fill: #7c3aed; }
+    .flip { stroke: #be123c; fill: #be123c; }
+    .wait { stroke: #334155; fill: #334155; }
+    .rx { fill: #2563eb; }
+    .muted { fill: #eef2f7; stroke: #cbd5e1; stroke-width: 1; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1120" height="560"/>
+  <text class="title" x="72" y="36">Goggle-side latency, RX to scanout latch</text>
+  <text class="small" x="72" y="58">93 summary lines, 5582 summary frames, 5580 raw frames. Median landmarks; segment medians are not additive.</text>
+  <text class="small" x="72" y="76">rx2flip p50 = 33.5 ms, p99 = 36.6 ms.</text>
+
+  <text class="group" transform="translate(28 172) rotate(-90)">RX + decoding</text>
+  <text class="group" transform="translate(28 326) rotate(-90)">Composition</text>
+  <text class="group" transform="translate(28 440) rotate(-90)">Display</text>
+
+  <line class="row" x1="150.0" y1="112" x2="1050.0" y2="112"/>
+  <line class="row" x1="150.0" y1="172" x2="1050.0" y2="172"/>
+  <line class="row" x1="150.0" y1="232" x2="1050.0" y2="232"/>
+  <line class="row" x1="150.0" y1="296" x2="1050.0" y2="296"/>
+  <line class="row" x1="150.0" y1="356" x2="1050.0" y2="356"/>
+  <line class="row" x1="150.0" y1="416" x2="1050.0" y2="416"/>
+  <line class="row" x1="150.0" y1="464" x2="1050.0" y2="464"/>
+
+  <text class="rowlabel" x="72" y="112">RX</text>
+  <text class="rowlabel" x="72" y="172">Tile 0</text>
+  <text class="rowlabel" x="72" y="232">Tile 1</text>
+  <text class="rowlabel" x="72" y="296">Blend</text>
+  <text class="rowlabel" x="72" y="356">Queue</text>
+  <text class="rowlabel" x="72" y="416">Flip</text>
+  <text class="rowlabel" x="72" y="464">Latch</text>
+
+  <line class="guide" x1="150.0" y1="119" x2="150.0" y2="505"/>
+  <line class="guide" x1="354.0" y1="179" x2="354.0" y2="505"/>
+  <line class="guide" x1="666.0" y1="239" x2="666.0" y2="505"/>
+  <line class="guide" x1="700.7" y1="303" x2="700.7" y2="487"/>
+  <line class="guide" x1="708.4" y1="423" x2="708.4" y2="505"/>
+  <line class="guide" x1="1050.0" y1="471" x2="1050.0" y2="505"/>
+
+  <circle class="rx" cx="150.0" cy="112" r="7"/>
+  <text class="label" x="164.0" y="108">first frame datagram</text>
+  <text class="small" x="164.0" y="125">RX start</text>
+
+  <line class="decode0 bar" x1="150.0" y1="172" x2="354.0" y2="172"/>
+  <circle class="decode0" cx="354.0" cy="172" r="7"/>
+  <text class="label" x="368.0" y="166">decoded</text>
+
+  <line class="decode1 bar" x1="150.0" y1="232" x2="666.0" y2="232"/>
+  <circle class="decode1" cx="666.0" cy="232" r="7"/>
+  <text class="label" x="680.0" y="226">decoded</text>
+
+  <line class="comp bar" x1="666.0" y1="296" x2="700.7" y2="296"/>
+  <circle class="comp" cx="700.7" cy="296" r="6"/>
+  <text class="label" x="714.7" y="292">blend / compose</text>
+  <text class="small" x="714.7" y="312">starts when both tiles are ready</text>
+
+  <rect class="muted" x="666.0" y="341" width="34.7" height="30" rx="5"/>
+  <text class="label" x="714.7" y="350">queue is inside pair-to-issue timing</text>
+
+  <line class="flip bar" x1="700.7" y1="416" x2="708.4" y2="416"/>
+  <circle class="flip" cx="708.4" cy="416" r="5"/>
+  <text class="label" x="722.4" y="410">DRM flip ioctl</text>
+
+  <line class="wait bar" x1="708.4" y1="464" x2="1050.0" y2="464"/>
+  <circle class="wait" cx="1050.0" cy="464" r="7"/>
+  <text class="label" x="1064.0" y="460">scanout latch event</text>
+  <text class="small" x="1064.0" y="480">panel scanout and LCD response follow after this</text>
+
+  <text class="time" x="150.0" y="518">0.0 ms</text>
+  <text class="time" x="354.0" y="518">6.8 ms</text>
+  <text class="time" x="666.0" y="518">17.2 ms</text>
+  <text class="time" x="700.7" y="500">18.4 ms</text>
+  <text class="time" x="708.4" y="518">18.6 ms</text>
+  <text class="time" x="1050.0" y="518">33.5 ms</text>
+
+  <path class="bracket" d="M354.0 145 H666.0"/>
+  <path class="bracket" d="M354.0 140 V150"/>
+  <path class="bracket" d="M666.0 140 V150"/>
+  <text class="label" x="372.0" y="139">tile skew = 10.5 ms</text>
+
+  <text class="label" x="442" y="548">event time since first frame UDP datagram on goggle</text>
+</svg>
