@@ -26,8 +26,9 @@ firmware/
 # raw uboot/kernel/userapp/rootfs bytes, proprietary, never commit.
 out/
 
-# Built slot bundles (glue/flash/mlimg.py): embed vendor uboot/env blobs, not redistributable
-mlimg-*.tar
+# Built slot bundles (glue/flash/mlimg.py): embed vendor uboot/env blobs, not redistributable.
+# The glob carries a trailing * so a bundle parked under a suffix stays ignored too.
+mlimg-*.tar*
 
 # Compiled native helpers (build with native/build.sh)
 native/build/
@@ -40,6 +41,9 @@ glue/build/
 
 # Dev scritps
 glue/dev/
+
+# Session working notes
+summaries/
 
 # Local per-machine glue config (copy from glue.env.example)
 glue/glue.env
