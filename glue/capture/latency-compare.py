@@ -21,6 +21,7 @@ from pathlib import Path
 # of the medians is what stops two runs taken under different conditions being read as one result.
 CONDITIONS: list[tuple[str, str, int, str]] = [
     ("source", "source", 8, "s"),
+    ("recording", "rec", 5, "d"),
     ("source_fps", "src fps", 8, ".1f"),
     ("pixclk_hz", "pixclk", 10, "d"),
     ("pace_hz", "pace", 10, "d"),
@@ -103,6 +104,8 @@ def main() -> int:
     print("src fps / pixclk / pace are the conditions: rows only compare when those agree.")
     print("A pace column with a value means the servo was steering the clock, so sub2flip is a "
           "swept figure, not a held one.")
+    print("rec=1 means the DVR was recording: a third wave5 instance beside the two decoders, "
+          "measured at about 5 ms on dec t1 and 4 ms on tile skew.")
     return 0
 
 

@@ -58,6 +58,15 @@ sshg 'p=$(pgrep ml-pipeline | tail -1)
       echo "pace_hz=$(val ML_PACE)"
       echo "seam=$(val ML_SEAM)"
       echo "phase_force_us=$(val ML_PHASE_FORCE)"
+      p=$(pgrep ml-pipeline | tail -1)
+      # The DVR opens a third wave5 instance beside the two decoders and contends with them for
+      # the codec and the MMZ pool; measured at ~5 ms on the second tile. Read from the open file
+      # descriptor, which is what recording is, rather than from a setting held somewhere else.
+      if [ -n "$p" ] && ls -l "/proc/$p/fd" 2>/dev/null | grep -qE "sdcard.*(mp4|mkv)"; then
+          echo "recording=1"
+      else
+          echo "recording=0"
+      fi
       if pgrep ml-rf-replay >/dev/null 2>&1; then
           echo "source=replay"
       else
@@ -66,6 +75,11 @@ sshg 'p=$(pgrep ml-pipeline | tail -1)
           if [ -n "$a" ] && [ -n "$b" ] && [ "$b" -gt "$a" ]; then echo "source=air"
           else echo "source=none"; fi
       fi' </dev/null > "$OUT/conditions.env" 2>/dev/null
+
+# The air unit is the other half of what a goggle-side latency figure measures, so its build belongs
+# in the same summary. Best-effort: absent means it was not reachable, not that it did not matter.
+printf 'air_version=%s\n' \
+    "$(air_identity | sed -n 's/^ML_VERSION="\(.*\)"/\1/p' | head -1)" >> "$OUT/conditions.env"
 
 {
     echo "recorded: $STAMP"
