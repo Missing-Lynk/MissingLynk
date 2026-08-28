@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import statistics
-from dataclasses import dataclass
+import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 LAT_RE = re.compile(
@@ -298,13 +300,33 @@ def main() -> int:
     )
     parser.add_argument("log", type=Path, help="ml-pipeline log containing latency lines")
     parser.add_argument("-o", "--output", type=Path, help="output SVG path")
+    parser.add_argument("--summary", type=Path,
+                        help="also write the parsed medians as JSON (default: summary.json "
+                             "beside the SVG)")
     parser.add_argument("--title", default="Goggle-side latency, RX to scanout latch")
     args = parser.parse_args()
 
-    stats = parse_log(args.log)
+    # A capture taken while no video was flowing is the common case worth reporting plainly: the
+    # log exists and is full of other lines, so the emptiness is only visible here.
+    try:
+        stats = parse_log(args.log)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("       the pipeline logged no latency summaries; check that video was flowing and "
+              "that /usrdata/missinglynk/latstats existed when ml-video started", file=sys.stderr)
+        return 1
+
     output = args.output or args.log.with_name("goggle-latency-timeline.svg")
     output.write_text(render_svg(stats, args.title), encoding="utf-8")
+
+    # The SVG is for reading, not for comparing: put the same medians somewhere a later run can
+    # diff against without re-parsing a log whose format has since moved.
+    summary = args.summary or output.with_name("summary.json")
+    summary.write_text(json.dumps(asdict(stats), indent=2, sort_keys=True) + "\n",
+                       encoding="utf-8")
+
     print(f"wrote {output}")
+    print(f"wrote {summary}")
     if stats.phase_forced_us is not None:
         print(f"WARNING: vblank phase forcing was armed at {stats.phase_forced_us} us during this "
               f"capture; the waits below read high by up to one vsync")

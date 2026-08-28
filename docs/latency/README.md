@@ -3,6 +3,41 @@
 This document summarizes the current measured latency pieces for the MissingLynk video path. It
 separates the RF/network transport benchmark from the goggle-local receive/decode/display timing.
 
+## Where the measurements live
+
+Every goggle-side measurement is published here, one directory per run, named `<capture time>-<build>` so a listing reads in order. The build comes from the device's own `/etc/ml-release` rather than the host checkout, because the goggle can be running an older bundle than the tree and it is the flashed bytes that produced the numbers. `-unknown` marks a run taken before captures recorded a build.
+
+A run holds `identity.txt` (the build and the `ML_*` knobs the measured pipeline was started with) and, where one was written, `RESULT.md`. Each capture under it holds `ml-pipeline.log`, `summary.json` and `goggle-latency-timeline.svg`.
+
+The log is the primary artefact and is why it is kept at full size: every table, graph and summary is derived from it, and a published run whose log is gone can never be re-read with a question the summary did not anticipate. It is stored as plain text so it stays greppable, diffable and reviewable; compressing it would save about 4 percent of packed size and give that up.
+
+Nothing else is published. The clock trace's scalars are folded into each leg's summary as `pixclk_hz_*` and `dsi_int_st1`, the run identity is one set of facts rather than one per leg, and the harness's own stdout only reports whether a run completed, which a published run already did.
+
+### If this directory outgrows its usefulness
+
+A run costs roughly 500 kB per leg, and 98 percent of that is the `latraw` lines, one per flip. Dropping them takes a leg's log from 514,653 bytes to 12,183 and costs exactly five summary fields: `pair_issue`, `issue_submit`, `submit_event`, `pair_event` and `raw_frames`. Those are the per-flip decomposition the timeline's lower half draws, so a pruned run keeps every median in the comparison table and loses the breakdown behind them. Prune old runs, not new ones.
+
+Tabulate the whole history:
+
+```sh
+glue/capture/latency-compare.py docs/latency/*/
+```
+
+A row reading `PHASE-FORCED <n> us, NOT A LATENCY RESULT` was taken with the vblank phase injector armed, which holds the tile-0 submit back by up to a full vsync. Every wait on that row is inflated and it is not comparable with the others.
+
+Publish a run once it is captured:
+
+```sh
+glue/capture/latency-publish.sh out/pinned-clock-latency/<run>
+```
+
+Re-render a published run's timeline and summary from its log:
+
+```sh
+glue/capture/goggle-latency-plot.py docs/latency/<run>/<capture>/ml-pipeline.log \
+  -o docs/latency/<run>/<capture>/goggle-latency-timeline.svg
+```
+
 ## Reproducing the air-unit graph
 
 Air-unit latency instrumentation is opt-in in `ml-air-video`:
@@ -37,8 +72,15 @@ Capture a new goggle-side latency run with:
 SECS=60 glue/capture/goggle-latency-capture.sh
 ```
 
-That creates a timestamped directory under `out/goggle-latency/` containing `ml-pipeline.log`,
-`metadata.txt`, and a generated `goggle-latency-timeline.svg`.
+That creates `out/goggle-latency/<stamp>-<build>/` containing `ml-pipeline.log`, `metadata.txt`, `summary.json` and a generated `goggle-latency-timeline.svg`.
+
+To measure at more than one pixel-clock rate back to back on one boot, which is what separates a panel-rate effect from everything else, use:
+
+```sh
+SECS=90 glue/capture/pinned-clock-latency.sh 148500000 153646640
+```
+
+It sets each rate, verifies the leaf landed, samples the leaf and the DSI `INT_ST1` latch through each leg, and restores the mode rate on exit. It refuses to run while the pacing servo is armed, because the servo walks the leaf off the set rate within seconds.
 
 Render an existing captured log with:
 
@@ -50,7 +92,7 @@ python3 glue/capture/goggle-latency-plot.py \
 
 ## Goggle-local latency
 
-![Goggle-side latency timeline](assets/goggle-latency-timeline-20260825.svg)
+![Goggle-side latency timeline](20260825T003432Z-unknown/goggle-latency-timeline.svg)
 
 The goggle-local total is `rx2flip`: first UDP video datagram for a frame in `rf_rx` through the DRM
 flip event, which is the scanout latch.

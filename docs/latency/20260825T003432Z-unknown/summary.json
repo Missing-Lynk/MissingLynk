@@ -1,0 +1,20 @@
+{
+  "fdt50": 16.7,
+  "fdt99": 33.4,
+  "frames": 3567,
+  "issue_submit": 0.219,
+  "judder": 213,
+  "lines": 63,
+  "pair_event": 10.247,
+  "pair_issue": 1.066,
+  "pair_skew": 3.6,
+  "phase_forced_us": null,
+  "raw_frames": 3567,
+  "repeats": 213,
+  "rxdec0": 4.6,
+  "rxdec1": 8.2,
+  "rxflip50": 20.5,
+  "rxflip99": 29.6,
+  "subflip": 8.8,
+  "submit_event": 8.911
+}

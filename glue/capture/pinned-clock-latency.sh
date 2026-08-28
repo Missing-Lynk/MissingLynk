@@ -39,13 +39,19 @@ SECS="${SECS:-120}"
 SETTLE="${SETTLE:-8}"
 OUT_BASE="${OUT_BASE:-$REPO/out/pinned-clock-latency}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-RUNDIR="${OUT:-$OUT_BASE/$STAMP}"
 
 # shellcheck source=../lib/ssh-opts.sh
 . "$HERE/../lib/ssh-opts.sh"
 
 LEGS=("$@")
 [ "${#LEGS[@]}" -gt 0 ] || LEGS=("$MODE_HZ" 153646640 "$MODE_HZ")
+
+# Name the run by capture time then flashed build, so a listing is in order, so two runs of this script are comparable by directory
+# name alone. Taken from the device: the goggle can be running an older bundle than the checkout.
+# shellcheck disable=SC2016  # ML_VERSION is sourced and expanded on the device, in the remote shell
+DEVICE_VERSION="$(sshg '. /etc/ml-release 2>/dev/null; echo "$ML_VERSION"' </dev/null 2>/dev/null |
+                  tr -cd 'A-Za-z0-9._-')"
+RUNDIR="${OUT:-$OUT_BASE/$STAMP-${DEVICE_VERSION:-unknown}}"
 
 mkdir -p "$RUNDIR"
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$RUNDIR/run.log"; }
@@ -74,6 +80,8 @@ HAVE_PEEK=0
 sshg "test -x $PHYPEEK" </dev/null 2>/dev/null && HAVE_PEEK=1
 [ "$HAVE_PEEK" = 1 ] || log "note: $PHYPEEK absent, INT_ST1 not sampled (/tmp is tmpfs; re-push it)"
 
+capture_identity "$REPO" > "$RUNDIR/identity.txt" 2>&1
+
 log "$SECS s per leg, ${#LEGS[@]} legs: ${LEGS[*]}"
 
 for i in "${!LEGS[@]}"; do
@@ -85,7 +93,6 @@ for i in "${!LEGS[@]}"; do
     sleep "$SETTLE"
     got=$(sshg "cat $PIXCLK" </dev/null 2>/dev/null)
     log "leg $((i + 1)): asked $want, leaf reads ${got:-unknown}"
-    echo "$got" > "$leg/pixclk-landed.txt"
 
     # Sample the leaf and the DSI latch for the whole leg, so a rate that drifted or an overrun
     # that fired midway is visible against the latency numbers rather than assumed absent.
@@ -109,6 +116,11 @@ for i in "${!LEGS[@]}"; do
     wait "$poller" 2>/dev/null
 
     [ "$rc" -eq 0 ] || log "leg $((i + 1)): capture failed with $rc"
+
+    # Fold what the leg's clock did into its own summary. Kept as scalars beside the latency
+    # medians so one file answers both "what was the panel doing" and "what did that cost".
+    ASKED="$want" LEG="$leg" python3 "$HERE/clock-merge.py" || \
+        log "leg $((i + 1)): could not merge the clock trace into summary.json"
 done
 
 log "artifacts in $RUNDIR"

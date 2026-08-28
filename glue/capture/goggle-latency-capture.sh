@@ -21,16 +21,25 @@ REPO="$(cd "$HERE/../.." && pwd)"
 SECS="${SECS:-60}"
 OUT_BASE="${OUT_BASE:-$REPO/out/goggle-latency}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT="${OUT:-$OUT_BASE/$STAMP}"
-LOG="$OUT/ml-pipeline.log"
-META="$OUT/metadata.txt"
-SVG="$OUT/goggle-latency-timeline.svg"
 PLOTTER="$HERE/goggle-latency-plot.py"
 
 # shellcheck source=../lib/ssh-opts.sh
 . "$HERE/../lib/ssh-opts.sh"
 # shellcheck source=../lib/capture-identity.sh
 . "$HERE/../lib/capture-identity.sh"
+
+# Name the run by capture time then the build it measured, so a listing is in
+# chronological order. The build is taken from the device rather than the host tree: the
+# goggle can be running an older bundle than the checkout, and it is the flashed bytes that produced
+# the numbers. ML_VERSION is the wrapper describe for bundles that carry one, and the kernel
+# describe for older ones; either way it is the string that identifies the image.
+# shellcheck disable=SC2016  # ML_VERSION is sourced and expanded on the device, in the remote shell
+DEVICE_VERSION="$(sshg '. /etc/ml-release 2>/dev/null; echo "$ML_VERSION"' </dev/null 2>/dev/null |
+                  tr -cd 'A-Za-z0-9._-')"
+OUT="${OUT:-$OUT_BASE/$STAMP-${DEVICE_VERSION:-unknown}}"
+LOG="$OUT/ml-pipeline.log"
+META="$OUT/metadata.txt"
+SVG="$OUT/goggle-latency-timeline.svg"
 
 mkdir -p "$OUT"
 

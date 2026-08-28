@@ -1,0 +1,92 @@
+recorded: 20260828T082645Z
+duration_secs: 8
+goggle_ip: 192.168.3.101
+
+--- host tree ---
+superproject 1f9b510-dirty
+             1f9b510c0011c13fd279fdf974d74fd869e0504a 2026-08-26 11:35:06 +0200
+             Tooling to improve debugging
+kernel       6f773ba-dirty            dw-axi-dmac: issue a copy batch as one descriptor on one channel enable
+userspace    ae93da6-dirty            Allow passing MTU
+rootfs       08e77af-dirty            Allow setting MTU
+android      e60d016-dirty            Clean up test receiver
+
+--- host tree, uncommitted files ---
+MM android
+ M docs/latency-breakdown.md
+ M glue/capture/goggle-latency-capture.sh
+MM kernel
+ M rootfs
+ M userspace
+ M kernel/docs/clocks.md
+ M kernel/modules/ml_dmablit.c
+ M kernel/overlay/drivers/gpu/drm/artosyn/artosyn_vo.c
+ M userspace/docs/video-latency.md
+ M userspace/gstreamer/src/ml-air-video/mav-capture.c
+ M userspace/gstreamer/src/ml-air-video/mav-encoder.c
+ M userspace/gstreamer/src/ml-air-video/mav-tx.c
+ M userspace/gstreamer/src/ml-air-video/ml-air-video.c
+ M userspace/gstreamer/src/ml-air-video/ml-air-video.h
+ M userspace/gstreamer/src/ml-pipeline/ml-pipeline.c
+ M userspace/gstreamer/src/ml-pipeline/ml-pipeline.h
+ M userspace/gstreamer/src/ml-pipeline/mlp-display.c
+ M userspace/gstreamer/src/ml-pipeline/mlp-pace.c
+ M userspace/gstreamer/src/ml-pipeline/mlp-pmsg.c
+ M userspace/gstreamer/src/ml-pipeline/mlp-rf.c
+ M rootfs/devices/betafpv-vr04-goggle/overlay/usr/local/bin/ml-video-up
+
+--- device build ---
+ML_NAME="MissingLynk open firmware"
+ML_VERSION="6f773ba-dirty"
+ML_FLAVOR="slim"
+ML_DEVICE="betafpv-vr04-goggle"
+ML_KERNEL_VERSION="6.18.36"
+ML_KERNEL_GIT="6f773ba-dirty"
+ML_ROOTFS_GIT="08e77af-dirty"
+ML_BUILD_TIME="2026-08-27T22:20:37Z"
+kernel        6.18.36
+ml_dmablit.ko 943ec4338c61e147
+uptime_s      759
+
+--- runtime knobs ---
+pixclk_hz     148500000
+ml-pipeline   pid 2066
+ML_* environment the running pipeline was started with:
+  ML_COMPOSE=1
+  ML_COMP_MAX=10
+  ML_HEAP=default_cma_region
+  ML_LATRAW=1
+  ML_LATSTATS=1
+  ML_PMSG=1
+  ML_SEAM=2
+flag files now present in /usrdata/missinglynk:
+  bb_config_gnd.json.normal_cfg.json
+  bb_config_gnd.json.normal_cfg.json.pre-bind
+  bb_config_gnd.json.usr_cfg.json
+  bb_config_gnd.json.usr_cfg.json.pre-bind
+  device.json
+  latraw
+  latstats
+  ml-rec
+  pace.off
+  phase-force.off
+  pmsg
+  rf-band
+  rf-bringup.log
+  rf-channel
+  seam
+
+--- services ---
+ * status: started
+ * status: started
+
+--- rf ---
+sdio0            UP             10.0.0.1/24 
+[ml-linkd] rfcmd: standby arm=0
+[ml-linkd] rfcmd: power 200 mW (0x17 dBm)
+[ml-linkd] link: bring-up done, steady cadence
+[ml-linkd] link: MEDIA_PARAMS acked, video should start
+[ml-linkd] clean stop
+[ml-linkd] link: MEDIA_PARAMS acked, video should start
+[ml-linkd] link: bring-up done, steady cadence
+[ml-linkd] link: no :10000 traffic for 5 s
