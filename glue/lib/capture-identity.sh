@@ -40,6 +40,7 @@ capture_identity() {
 
     echo
     echo "--- device build ---"
+    # shellcheck disable=SC2016  # uname, the module path and the uptime read expand on the device
     sshg '
         cat /etc/ml-release 2>/dev/null
         echo "kernel        $(uname -r)"
@@ -50,6 +51,7 @@ capture_identity() {
 
     echo
     echo "--- runtime knobs ---"
+    # shellcheck disable=SC2016  # the pid lookup and /proc read expand on the device
     sshg '
         echo "pixclk_hz     $(cat /sys/kernel/debug/ar9311_pixclk_rate 2>/dev/null)"
         p=$(pgrep ml-pipeline | tail -1)

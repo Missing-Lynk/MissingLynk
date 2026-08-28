@@ -43,6 +43,7 @@ echo "capturing $LOG_PATH for ${SECS}s"
     sshg 'rc-service ml-air-camera status 2>/dev/null || true; rc-service ml-air-link status 2>/dev/null || true' 2>&1 || true
     echo
     echo "--- process ---"
+    # shellcheck disable=SC2016  # the loop variables expand on the device, inside the remote shell
     sshg 'for p in /proc/[0-9]*/comm; do read -r c < "$p" || continue; [ "$c" = ml-air-video ] && echo "${p%/comm}"; done' 2>&1 || true
     echo
     echo "--- rf ---"

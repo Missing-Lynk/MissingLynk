@@ -83,6 +83,12 @@ DEFAULT_DEVICE = "P1_GND_VR04"
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
+# Trees whose contents reach the device, in bundle-label order: the wrapper (native/, devices/,
+# assets/ and this packer) plus the three submodules the components are built from. `git describe`
+# marks a tree with this suffix when its worktree differs from HEAD.
+PROVENANCE_TREES = ("superproject", "kernel", "rootfs", "userspace")
+DIRTY_SUFFIX = "-dirty"
+
 # Slot-relative component layout. `file` is the member name inside the tar; `target` is the
 # slot-relative partition the flasher resolves to *0/*1; `method` is how it gets written.
 KERNEL_FILE = "kernel.otra"
@@ -174,6 +180,27 @@ def git_describe(repo_path: str) -> str | None:
     return None
 
 
+def describe_trees() -> dict[str, str | None]:
+    """`git describe` for every tree that reaches the device, keyed by PROVENANCE_TREES name."""
+    return {name: git_describe(REPO if name == "superproject" else os.path.join(REPO, name))
+            for name in PROVENANCE_TREES}
+
+
+def bundle_version(trees: dict[str, str | None], fallback: str | None) -> str:
+    """
+    Label the bundle by the wrapper repo's revision: it pins every submodule, so that one hash
+    plus `--recurse-submodules` reproduces the whole image. Any dirty tree taints the label,
+    including a moved submodule pointer, which the wrapper's own describe reports: a bundle whose
+    label carries no dirty suffix can always be traced back to one wrapper commit.
+    """
+    version = trees["superproject"] or fallback or "dev"
+    if not version.endswith(DIRTY_SUFFIX) and any(
+            (trees.get(name) or "").endswith(DIRTY_SUFFIX) for name in PROVENANCE_TREES):
+        version += DIRTY_SUFFIX
+
+    return version
+
+
 def resolve_blob(explicit: str | None, blobs_dir: str, patterns: list[str], label: str) -> str:
     """
     Locate a vendor blob: an explicit path wins; else the first match of `patterns` (in order)
@@ -248,10 +275,16 @@ def build(args: argparse.Namespace) -> int:
     env_bytes = read_bytes(env_path)
 
     kernel_ver = kernel_version()
+    # The rootfs carries userspace's and native/'s build products, so an image's behaviour tracks
+    # those revisions as much as the kernel's; without them a rebuilt image cannot be matched back
+    # to the pipeline that produced a measurement.
+    trees = describe_trees()
     provenance: dict[str, object] = {
         "kernel_version": kernel_ver,
-        "kernel_git": git_describe(os.path.join(REPO, "kernel")),
-        "rootfs_git": git_describe(os.path.join(REPO, "rootfs")),
+        "superproject_git": trees["superproject"],
+        "kernel_git": trees["kernel"],
+        "rootfs_git": trees["rootfs"],
+        "userspace_git": trees["userspace"],
         "uboot_source": os.path.relpath(uboot_path, REPO),
         "env_source": os.path.relpath(env_path, REPO),
         "otra_template_source": os.path.relpath(template_path, REPO),
@@ -281,7 +314,7 @@ def build(args: argparse.Namespace) -> int:
         })
 
     device = args.device
-    version = args.version or provenance["kernel_git"] or kernel_ver or "dev"
+    version = args.version or bundle_version(trees, kernel_ver)
     manifest: Manifest = {
         "format_version": FORMAT_VERSION,
         "target_device": device,
@@ -343,7 +376,8 @@ def inspect(args: argparse.Namespace) -> int:
         print(f"  format {manifest.get('format_version')}  device {manifest.get('target_device')}"
               f"  version {manifest.get('version')}")
         provenance = manifest.get("provenance", {})
-        for key in ("kernel_version", "kernel_git", "rootfs_git", "build_time"):
+        for key in ("kernel_version", "superproject_git", "kernel_git", "rootfs_git",
+                    "userspace_git", "build_time"):
             value = provenance.get(key)
             if value is not None:
                 if key == "build_time":
@@ -409,7 +443,8 @@ def main() -> int:
                               help="output tar path (default: repo/mlimg-<device>-<version>.tar)")
     build_parser.add_argument("--device", default=DEFAULT_DEVICE,
                               help=f"target device string, part of the filename (default: {DEFAULT_DEVICE})")
-    build_parser.add_argument("--version", help="bundle version label (default: kernel git describe)")
+    build_parser.add_argument("--version", help="bundle version label (default: the wrapper's git describe, "
+                                   "suffixed -dirty if any tree that reaches the device is)")
     build_parser.add_argument("--build-dir", help="kernel build tree (default: pin.env KERNEL_BUILD_DEFAULT)")
     build_parser.add_argument("--image", help="kernel Image (default: <build-dir>/linux/arch/arm64/boot/Image)")
     build_parser.add_argument("--dtb", help="dtb (default: <build-dir>/.../proxima-9311.dtb)")

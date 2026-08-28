@@ -17,6 +17,7 @@ LAT_RE = re.compile(
     r"pair (?P<pair>[0-9.]+) sub2flip (?P<subflip>[0-9.]+) \| "
     r"fdt p50=(?P<fdt50>[0-9.]+) p99=(?P<fdt99>[0-9.]+) "
     r"jud=(?P<jud>\d+) rep=(?P<rep>\d+) \(ms\)"
+    r"(?: PHASE-FORCED=(?P<forced>\d+)us)?"
 )
 
 LATRAW_RE = re.compile(
@@ -44,6 +45,7 @@ class LatStats:
     issue_submit: float | None
     submit_event: float | None
     pair_event: float | None
+    phase_forced_us: int | None
 
 
 def median(values: list[float]) -> float:
@@ -66,6 +68,7 @@ def parse_log(path: Path) -> LatStats:
     frames = 0
     judder = 0
     repeats = 0
+    phase_forced_us: int | None = None
     pair_issue: list[float] = []
     issue_submit: list[float] = []
     submit_event: list[float] = []
@@ -76,6 +79,8 @@ def parse_log(path: Path) -> LatStats:
             frames += int(match.group("n"))
             judder += int(match.group("jud"))
             repeats += int(match.group("rep"))
+            if match.group("forced"):
+                phase_forced_us = int(match.group("forced"))
             for key in summary:
                 src = "pair" if key == "pair" else key
                 summary[key].append(float(match.group(src)))
@@ -113,6 +118,7 @@ def parse_log(path: Path) -> LatStats:
         issue_submit=median(issue_submit) if issue_submit else None,
         submit_event=median(submit_event) if submit_event else None,
         pair_event=median(pair_event) if pair_event else None,
+        phase_forced_us=phase_forced_us,
     )
 
 
@@ -158,6 +164,11 @@ def render_svg(stats: LatStats, title: str) -> str:
         f"{stats.lines} summary lines, {stats.frames} summary frames, "
         f"{stats.raw_frames} raw frames. Median landmarks; segment medians are not additive."
     )
+    if stats.phase_forced_us is not None:
+        title = (f"{title} [PHASE FORCED {stats.phase_forced_us} us, "
+                 f"NOT A LATENCY RESULT]")
+        subtitle = (f"Vblank phase forcing was armed: the tile-0 submit is held back by up to one "
+                    f"vsync, so every wait below reads high. {subtitle}")
 
     dot_radius = 7
     guide_label_y = 500
@@ -294,6 +305,9 @@ def main() -> int:
     output = args.output or args.log.with_name("goggle-latency-timeline.svg")
     output.write_text(render_svg(stats, args.title), encoding="utf-8")
     print(f"wrote {output}")
+    if stats.phase_forced_us is not None:
+        print(f"WARNING: vblank phase forcing was armed at {stats.phase_forced_us} us during this "
+              f"capture; the waits below read high by up to one vsync")
     print(f"rx2flip p50={stats.rxflip50:.1f} ms p99={stats.rxflip99:.1f} ms")
     return 0
 
