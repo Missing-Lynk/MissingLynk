@@ -67,6 +67,14 @@ sshg 'p=$(pgrep ml-pipeline | tail -1)
       else
           echo "recording=0"
       fi
+      # The HUD is a second process on the two cores and the owner of the OSD overlay, so
+      # whether it ran is a condition of the run: harnesses stop it to keep the restream
+      # CLI-driven, flights have it up.
+      if pgrep ml-hud >/dev/null 2>&1; then
+          echo "hud=1"
+      else
+          echo "hud=0"
+      fi
       if pgrep ml-rf-replay >/dev/null 2>&1; then
           echo "source=replay"
       else

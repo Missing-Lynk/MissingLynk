@@ -14,6 +14,13 @@
 # settles on is per pipeline generation and does not survive a restart, so legs from different
 # boots are not comparable to each other.
 #
+# The HUD is stopped for the whole run. Its rtsp_tick reconciles the pipeline's restream state
+# against the dvr.rtsp_stream setting every second, which reverts any direct MLM_CMD_RTSP; with
+# the HUD down, `ml-rec rtsp on|off` holds and every leg is CLI-driven. The stop is recorded in
+# each leg's conditions.env (hud=0), because the HUD is also a second process on the two cores:
+# runs with and without it are different configurations. The restore follows the CMA order the
+# repo documents: video down, HUD up, video up.
+#
 # The restream is measured with a client attached. An enabled restream with nobody pulling it still
 # runs the encoder but sends nothing, which is not the configuration anyone flies. The server only
 # exists while the restream is enabled, so a client cannot be started ahead of the leg; this runs
@@ -28,6 +35,7 @@
 #   - glue/capture/latency-baseline.sh has armed the measurement knobs
 #   - an SD card mounted at /mnt/sdcard for the recording legs
 #   - ffmpeg on the host, for the restream legs' client
+#   - ml-rec on the device understands `rtsp on|off` (userspace 6c8dd93 or later)
 #
 # The DVR codec is whatever ml-video launched with: the /usrdata/missinglynk/dvr-h264 flag file
 # selects H.264, its absence H.265 (ml-video-up, mlp-record.c ML_DVR_CODEC). It is read at
@@ -48,7 +56,6 @@ SECS="${SECS:-90}"
 LEGS="${LEGS:-base rec stream both}"
 SETTLE="${SETTLE:-12}"
 CLIENT_TRIES="${CLIENT_TRIES:-6}"
-HUD_SETTINGS="${HUD_SETTINGS:-/usrdata/hud/settings.json}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # shellcheck source=../lib/ssh-opts.sh
@@ -77,40 +84,9 @@ set_rec() {   # <on|off>
     sleep 3
 }
 
-# The HUD owns the restream. hud.c rtsp_tick reconciles the pipeline's MLM_STATE_F_RTSP against
-# the dvr.rtsp_stream setting on every tick, so a direct MLM_CMD_RTSP is reverted within a second,
-# tearing the encoder down under any client that was still attaching. Drive the setting instead.
-# settings.c loads the file once at startup and never re-reads it, so the HUD is restarted to pick
-# the change up. Legs are ordered so the two restream legs are adjacent and this costs one restart.
-rtsp_setting() {
-    sshg "cat '$HUD_SETTINGS' 2>/dev/null" </dev/null | "$HERE/hud-setting.py" read
-}
-
+# With the HUD stopped, the restream is an idempotent CLI set and nothing reverts it.
 set_rtsp() {  # <on|off>
-    local want="$1" cur i
-
-    cur="$(rtsp_setting)"
-    if [ "$cur" = "$want" ]; then
-        return 0
-    fi
-
-    device_pull "$HUD_SETTINGS" "$WORK/settings.json" 2>/dev/null || echo '{}' >"$WORK/settings.json"
-    "$HERE/hud-setting.py" write "$want" <"$WORK/settings.json" >"$WORK/settings.new" || return 1
-    mv "$WORK/settings.new" "$WORK/settings.json"
-    device_push_as "$WORK/settings.json" "$HUD_SETTINGS" || return 1
-
-    echo "    dvr.rtsp_stream = $want, restarting ml-hud"
-    sshg 'rc-service ml-hud restart >/dev/null 2>&1' </dev/null
-
-    for i in $(seq 15); do
-        sleep 1
-        if sshg 'pgrep ml-hud >/dev/null' </dev/null; then
-            return 0
-        fi
-    done
-
-    echo "ml-hud did not come back after the settings change" >&2
-    return 1
+    sshg "$MLREC rtsp $1" </dev/null >/dev/null 2>&1
 }
 
 client_attached() {
@@ -165,9 +141,11 @@ leg_state() {  # <leg> -> "<rec> <rtsp>"
 
 RUN="$REPO/out/latency-matrix/$STAMP"
 mkdir -p "$RUN"
-WORK="$(mktemp -d)"
-cleanup() { stop_client; rm -rf "$WORK"; }
+cleanup() { stop_client; }
 trap cleanup EXIT INT TERM
+
+echo "stopping ml-hud for the run (restream stays CLI-driven)"
+sshg 'rc-service ml-hud stop >/dev/null 2>&1' </dev/null
 
 sshg 'if [ -f /usrdata/missinglynk/dvr-h264 ]; then echo h264; else echo h265; fi
       if [ -s /usrdata/missinglynk/dvr-bitrate ]; then cat /usrdata/missinglynk/dvr-bitrate; else echo 0; fi' \
@@ -226,10 +204,18 @@ for leg in $LEGS; do
 done
 
 echo
-echo "=== restoring recording off, restream off"
+echo "=== restoring recording off, restream off, HUD up"
 stop_client
 set_rec off
 set_rtsp off
+
+# CMA order: the HUD's pool wants allocating before the video pipeline's, so the restore cycles
+# video around the HUD start rather than starting the HUD beside a running pipeline.
+sshg 'rc-service ml-video stop >/dev/null 2>&1
+      sleep 3
+      rc-service ml-hud start >/dev/null 2>&1
+      sleep 2
+      rc-service ml-video start >/dev/null 2>&1' </dev/null
 
 echo
 "$HERE/pace-curve.py" "$RUN"/*/ml-pipeline.log
