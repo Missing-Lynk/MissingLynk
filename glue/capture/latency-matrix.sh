@@ -37,8 +37,8 @@
 #   - ffmpeg on the host, for the restream legs' client
 #   - ml-rec on the device understands `rtsp on|off` (userspace 6c8dd93 or later)
 #
-# The DVR codec is whatever ml-video launched with: the /usrdata/missinglynk/dvr-h264 flag file
-# selects H.264, its absence H.265 (ml-video-up, mlp-record.c ML_DVR_CODEC). It is read at
+# The DVR codec is whatever ml-video launched with: the /usrdata/missinglynk/dvr-h265 flag file
+# selects H.265, its absence H.264 (ml-video-up, mlp-record.c ML_DVR_CODEC). It is read at
 # ml-pipeline startup, so changing it needs an ml-video restart and therefore a new pipeline
 # generation. Compare codecs by the rec-minus-base delta within each generation, never by
 # rx2flip across them: the settled panel phase is per generation and offsets every absolute
@@ -147,7 +147,7 @@ trap cleanup EXIT INT TERM
 echo "stopping ml-hud for the run (restream stays CLI-driven)"
 sshg 'rc-service ml-hud stop >/dev/null 2>&1' </dev/null
 
-sshg 'if [ -f /usrdata/missinglynk/dvr-h264 ]; then echo h264; else echo h265; fi
+sshg 'if [ -f /usrdata/missinglynk/dvr-h265 ]; then echo h265; else echo h264; fi
       if [ -s /usrdata/missinglynk/dvr-bitrate ]; then cat /usrdata/missinglynk/dvr-bitrate; else echo 0; fi' \
     </dev/null | tr '\n' ' ' >"$RUN/codec.txt" || echo "unknown 0" >"$RUN/codec.txt"
 echo "dvr codec: $(cat "$RUN/codec.txt")(bitrate 0 = fixed QP)"

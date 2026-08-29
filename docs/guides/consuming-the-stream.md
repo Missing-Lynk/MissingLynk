@@ -13,7 +13,7 @@ Enable **DVR > RTSP Stream** in the goggle menu (persists across reboots; the HU
 
 - It carries exactly what a recording would: the configured DVR resolution/framerate (**DVR > Resolution**) and, with **DVR > Record OSD** on, the OSD burn-in.
 - It works with or without an active recording; starting/stopping a recording while streaming causes a sub-second gap while the encoder graph swaps (players resume at the next keyframe).
-- The codec follows the DVR: H.265 by default, H.264 when the pipeline runs with `ML_DVR_CODEC=h264` (the Android app expects H.265 and will not play the H.264 variant; VLC/ffplay handle both).
+- The codec follows the DVR: H.264 by default, H.265 when the pipeline runs with `ML_DVR_CODEC=h265`. The Android app plays both from the SDP and judges restream destinations by the negotiated codec (Twitch and Kick ingest H.264 only, so the default reaches them without transcoding); VLC/ffplay handle both.
 - Timestamps are real RTP timestamps; UDP and TCP transports both work.
 - Bench levers (env, on the goggle): `ML_RTSP_PORT` overrides port 554, `ML_DVR_GOP` sets the keyframe interval in frames (default 60, i.e. ~1 s; 0 = driver default).
 
