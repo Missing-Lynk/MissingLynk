@@ -143,7 +143,17 @@ The set is `latstats`, `latraw`, `pace-dbg` and `seam=2`, at the mode pixel cloc
 with the pacing servo at its default. `ML_SEAM` unset means seam handling is OFF, so `seam=2` is not
 the flashed default and has to be written. `pmsg` is on unless `no-pmsg` exists, so its per-frame
 cost is inside every published figure. Recording is off; it is a separate configuration measured on
-its own, and it costs about 5 ms on tile 1's `rx2dec` because its encoder is a third wave5 instance.
+its own. With the codec clock at 500 MHz its decode cost is zero (`rx2dec` is identical with and
+without the encoder); what recording costs is vsync phase, because the pacing servo holds
+`sub2flip` above its target while the encoder runs.
+
+### The current baseline
+
+`20260829T210626Z-604e67c` is the reference run every later run compares against: image `604e67c`
+flashed, the codec clock at 500 MHz as board policy in the DTB, the pacing servo on by default, DVR
+H.264 fixed QP. Base leg `rx2flip` p50 21.2 / p99 23.8 ms; recording leg 28.2 / 33.7 ms, where the
+whole gap is servo phase (`sub2flip` 14.6 against a 9 ms target) and a same-boot re-run read
+26.2 / 31.4.
 
 ## RF network benchmark
 
