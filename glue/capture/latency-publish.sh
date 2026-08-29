@@ -29,7 +29,11 @@ DEST_BASE="${DEST_BASE:-$REPO/docs/latency}"
 # conclusion drawn from it. Not published: the clock trace, whose scalars are folded into each leg's
 # summary as pixclk_hz_* and dsi_int_st1; the run identity repeated per leg, when the legs share one
 # boot; and the harness's own stdout, which only says whether the run completed.
-KEEP_RUN=(identity.txt metadata.txt RESULT.md)
+#
+# codec.txt rides along for latency-matrix runs: the DVR codec is read at ml-pipeline startup, so it
+# is a property of the whole run rather than of a leg, and it is the condition that decides whether
+# two runs' encoder deltas can be read against each other.
+KEEP_RUN=(identity.txt metadata.txt RESULT.md codec.txt)
 KEEP_CAPTURE=(summary.json goggle-latency-timeline.svg)
 LOG=ml-pipeline.log
 

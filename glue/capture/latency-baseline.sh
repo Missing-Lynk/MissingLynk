@@ -38,6 +38,7 @@ CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
 
 report() {
+    # shellcheck disable=SC2016  # $f and $(cat) expand on the device, not here
     sshg 'cd /usrdata/missinglynk 2>/dev/null || exit 1
           for f in latstats latraw pace-dbg pace phase-force stats no-pmsg; do
               [ -e "$f" ] && printf "  %-12s present\n" "$f" || printf "  %-12s absent\n" "$f"
