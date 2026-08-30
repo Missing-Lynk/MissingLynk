@@ -18,13 +18,17 @@ LAT_RE = re.compile(
     r"rx2dec (?P<rxdec0>[0-9.]+)/(?P<rxdec1>[0-9.]+) "
     r"pair (?P<pair>[0-9.]+) sub2flip (?P<subflip>[0-9.]+) \| "
     r"fdt p50=(?P<fdt50>[0-9.]+) p99=(?P<fdt99>[0-9.]+) "
-    r"jud=(?P<jud>\d+) rep=(?P<rep>\d+) \(ms\)"
+    r"jud=(?P<jud>\d+) rep=(?P<rep>\d+)"
+    r"(?: q=(?P<q0>\d+)/(?P<q1>\d+))? \(ms\)"
     r"(?: PHASE-FORCED=(?P<forced>\d+)us)?"
 )
 
 LATRAW_RE = re.compile(
     r"ml-pipeline: latraw pts=(?P<pts>\d+) pair=(?P<pair>\d+) "
     r"issue=(?P<issue>\d+) sub=(?P<sub>\d+) evt=(?P<evt>\d+)"
+    r"(?: rx0=(?P<rx0>-?\d+) rx1=(?P<rx1>-?\d+)"
+    r" psh0=(?P<psh0>-?\d+) psh1=(?P<psh1>-?\d+)"
+    r" dec0=(?P<dec0>-?\d+) dec1=(?P<dec1>-?\d+))?"
 )
 
 
