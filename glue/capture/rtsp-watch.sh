@@ -10,9 +10,13 @@
 # file nothing. Recording here starts nothing on the goggle, unlike a DVR recording, which restarts
 # the encoder.
 #
-# Usage: glue/capture/rtsp-watch.sh [--out FILE] [--secs N]
+# Usage: glue/capture/rtsp-watch.sh [--out FILE] [--secs N] [--codec h264|h265]
 #   --secs bounds the run; without it, watch until Ctrl-C.
 #   --out names the file; it is always written as MPEG-TS, so any other extension is corrected.
+#   --codec must match the goggle's dvr.codec, which is h264 by default (mlp-record.c; the
+#     dvr-h265 flag file is the opt-in). A mismatch fails as "failed delayed linking some pad of
+#     GstRTSPSrc to some pad of GstRtpH26xDepay", because the depayloader is chosen here while the
+#     codec is named by the SDP.
 # Env: GOGGLE_IP / GOGGLE_PASS override the goggle address; NOWINDOW=1 records without a window.
 #
 # Ctrl-C (or --secs elapsing) becomes an EOS through gst-launch's -e, which is what writes the MP4
@@ -37,15 +41,24 @@ fi
 
 OUT=""
 SECS=""
+# Matches the goggle's own default (mlp-record.c records H.264 unless the dvr-h265 flag file is
+# present), so the common case needs no argument.
+CODEC="h264"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --out)  OUT="$2"; shift 2 ;;
         --secs) SECS="$2"; shift 2 ;;
+        --codec) CODEC="$2"; shift 2 ;;
         -h|--help) sed -n '2,/^set -/p' "$0" | sed 's/^# \?//; s/^set -.*//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+case "$CODEC" in
+    h264|h265) ;;
+    *) echo "--codec takes h264 or h265, not '$CODEC'" >&2; exit 2 ;;
+esac
 
 command -v gst-launch-1.0 >/dev/null || { echo "gst-launch-1.0 is not installed" >&2; exit 1; }
 
@@ -75,11 +88,11 @@ fi
 PIPELINE=(
     gst-launch-1.0 -e
     rtspsrc "location=$URL" latency=0 protocols=tcp
-    ! rtph265depay
-    ! h265parse config-interval=-1
+    ! "rtp${CODEC}depay"
+    ! "${CODEC}parse" config-interval=-1
     ! tee name=t
-    t. ! queue ! avdec_h265 ! videoconvert ! "${SINK[@]}"
-    t. ! queue ! h265parse ! mpegtsmux ! filesink "location=$OUT"
+    t. ! queue ! "avdec_${CODEC}" ! videoconvert ! "${SINK[@]}"
+    t. ! queue ! "${CODEC}parse" ! mpegtsmux ! filesink "location=$OUT"
 )
 
 echo "goggle: $DEVICE_IP"
