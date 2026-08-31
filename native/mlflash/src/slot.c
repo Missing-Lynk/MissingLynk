@@ -313,39 +313,100 @@ int gpt_set_active(int slot)
     return rc;
 }
 
-int slot_resolve_target(const char *base, int slot, unsigned long min_size,
-                        char *dev_path, size_t dev_sz)
+enum slot_target_status slot_target_judge(const char *base, int slot, unsigned long min_size,
+                                          int *num, unsigned long *size)
 {
     char name[48], sibling[48];
-    int num, sib_num;
-    unsigned long size, sib_size;
+    int sib_num;
+    unsigned long sib_size;
+
+    *num = -1;
+    *size = 0;
 
     snprintf(name, sizeof name, "%s%d", base, slot ? 1 : 0);
-    if (mtd_by_name(name, &num, &size) != 0) {
-        fprintf(stderr, "flash: target %s not found in /proc/mtd\n", name);
-        return -1;
+    if (mtd_by_name(name, num, size) != 0) {
+        return SLOT_TARGET_MISSING;
     }
 
     /* Never let the target collide with its 0/1 sibling (a partition-table surprise). */
     snprintf(sibling, sizeof sibling, "%s%d", base, slot ? 0 : 1);
-    if (mtd_by_name(sibling, &sib_num, &sib_size) == 0 && sib_num == num) {
-        fprintf(stderr, "flash: %s and %s both resolve to mtd%d - refusing\n",
-                name, sibling, num);
-        return -1;
+    if (mtd_by_name(sibling, &sib_num, &sib_size) == 0 && sib_num == *num) {
+        return SLOT_TARGET_SIBLING;
     }
 
     /* Never the whole-flash device alias. */
-    if (num == 0) {
-        fprintf(stderr, "flash: %s resolved to mtd0 (whole flash) - refusing\n", name);
-        return -1;
+    if (*num == 0) {
+        return SLOT_TARGET_WHOLE_FLASH;
     }
 
-    /* The partition must hold the image. */
-    if (size < min_size) {
+    /* The partition must hold the image. min_size 0 means no image is in hand yet. */
+    if (*size < min_size) {
+        return SLOT_TARGET_TOO_SMALL;
+    }
+
+    return SLOT_TARGET_OK;
+}
+
+const char *slot_target_status_name(enum slot_target_status status)
+{
+    switch (status) {
+    case SLOT_TARGET_OK:
+        return "ok";
+
+    case SLOT_TARGET_MISSING:
+        return "missing";
+
+    case SLOT_TARGET_SIBLING:
+        return "sibling";
+
+    case SLOT_TARGET_WHOLE_FLASH:
+        return "whole-flash";
+
+    case SLOT_TARGET_TOO_SMALL:
+        return "small";
+    }
+
+    return "unknown";
+}
+
+const char *const *slot_component_bases(void)
+{
+    static const char *const bases[] = { "uboot", "env", "kernel", "dtb", "userapp", NULL };
+
+    return bases;
+}
+
+int slot_resolve_target(const char *base, int slot, unsigned long min_size,
+                        char *dev_path, size_t dev_sz)
+{
+    char name[48];
+    int num;
+    unsigned long size;
+
+    snprintf(name, sizeof name, "%s%d", base, slot ? 1 : 0);
+
+    switch (slot_target_judge(base, slot, min_size, &num, &size)) {
+    case SLOT_TARGET_OK:
+        snprintf(dev_path, dev_sz, "/dev/mtd%d", num);
+        return 0;
+
+    case SLOT_TARGET_MISSING:
+        fprintf(stderr, "flash: target %s not found in /proc/mtd\n", name);
+        return -1;
+
+    case SLOT_TARGET_SIBLING:
+        fprintf(stderr, "flash: %s and %s%d both resolve to mtd%d - refusing\n",
+                name, base, slot ? 0 : 1, num);
+        return -1;
+
+    case SLOT_TARGET_WHOLE_FLASH:
+        fprintf(stderr, "flash: %s resolved to mtd0 (whole flash) - refusing\n", name);
+        return -1;
+
+    case SLOT_TARGET_TOO_SMALL:
         fprintf(stderr, "flash: %s is %lu B, image needs %lu B\n", name, size, min_size);
         return -1;
     }
 
-    snprintf(dev_path, dev_sz, "/dev/mtd%d", num);
-    return 0;
+    return -1;
 }

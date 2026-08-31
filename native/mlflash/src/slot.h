@@ -34,12 +34,45 @@ int gpt_active_slot(void);
  */
 int gpt_set_active(int slot);
 
+/** @brief Why a slot-relative partition is not a usable write target. */
+enum slot_target_status {
+    SLOT_TARGET_OK,          /**< resolved and passes every guard */
+    SLOT_TARGET_MISSING,     /**< no partition of that name in /proc/mtd */
+    SLOT_TARGET_SIBLING,     /**< the 0/1 sibling resolves to the same mtd */
+    SLOT_TARGET_WHOLE_FLASH, /**< resolved to mtd0, the whole-flash alias */
+    SLOT_TARGET_TOO_SMALL    /**< smaller than the image it must hold */
+};
+
+/**
+ * @brief Judge slot-relative `base` (e.g. "kernel") for `slot` (0/1) against the destructive-write
+ *        guards, silently.
+ *
+ * A target is usable when the partition exists, differs from its 0/1 sibling, is not the
+ * whole-flash mtd0, and is at least `min_size` bytes (pass 0 to skip the size guard, which is the
+ * image-free preflight's case). `num` and `size` are filled whenever the name resolved at all, so
+ * a caller can report the geometry alongside a rejection.
+ * @return the status; `num`/`size` set to -1/0 when the name did not resolve.
+ */
+enum slot_target_status slot_target_judge(const char *base, int slot, unsigned long min_size,
+                                          int *num, unsigned long *size);
+
+/** @brief The wire name of a target status: "ok", "missing", "sibling", "whole-flash", "small". */
+const char *slot_target_status_name(enum slot_target_status status);
+
+/**
+ * @brief The slot-relative partition bases every slot owns, in flash order, NULL-terminated.
+ *
+ * The set a complete slot image covers ("uboot", "env", "kernel", "dtb", "userapp"). The
+ * image-free preflight walks it to report whether a slot is writable at all; a flash walks the
+ * manifest's own component list instead, which names the same partitions.
+ */
+const char *const *slot_component_bases(void);
+
 /**
  * @brief Resolve slot-relative `base` (e.g. "kernel") for `slot` (0/1) to its mtd device path,
  *        applying the destructive-write guards.
  *
- * Refuses unless the partition exists, differs from its 0/1 sibling, is not the whole-flash
- * mtd0, and is at least `min_size` bytes. On success writes "/dev/mtdN" into `dev_path`.
+ * Refuses unless slot_target_judge() passes. On success writes "/dev/mtdN" into `dev_path`.
  * @return 0 on success, -1 (message printed) on any guard failure.
  */
 int slot_resolve_target(const char *base, int slot, unsigned long min_size,

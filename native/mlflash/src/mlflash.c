@@ -26,6 +26,9 @@
  *                                      readback), no component writes
  *   mlflash --slots                    print the A/B slot state and a read-only classification
  *                                      of the flip target's contents as one JSON object
+ *   mlflash --preflight                print, as one JSON object, whether the inactive slot can be
+ *                                      flashed at all: slot state plus the guard verdict for every
+ *                                      partition that slot owns; needs no image
  *   mlflash --record [--slot a|b]      read device.json and re-hash the target slot's kernel/dtb
  *                                      to print the boot-proof verdict as one JSON object
  *
@@ -84,6 +87,55 @@ static int cmd_slots(void)
     printf("}\n");
 
     return probed ? 0 : 1;
+}
+
+/*
+ * Report whether this device can flash its inactive slot AT ALL, as one JSON object on stdout, with
+ * no image in hand: the running slot, the GPT-active slot, whether they agree, the slot a flash
+ * would target (the complement of the RUNNING slot, which is what cmd_flash picks), and the guard
+ * verdict for every partition that slot owns. Nothing is written, and no policy is applied: the
+ * host decides what the facts mean and words the sentence the user reads.
+ *
+ * This is the gate the host runs before it will even let an image be selected. The image-specific
+ * half of the preflight - manifest hashes, per-component sizes, board identity - stays in
+ * --dry-run, which needs the bundle.
+ *
+ * Returns 0 when the running slot resolved (the report is complete), 1 otherwise.
+ */
+static int cmd_preflight(void)
+{
+    int running = running_slot();
+    int gpt = gpt_active_slot();
+    int consistent = (running >= 0 && gpt >= 0 && running == gpt);
+    int target = (running >= 0) ? !running : -1;
+
+    printf("{\"running\":\"%s\",\"gpt_active\":\"%s\",\"consistent\":%s,\"flash_slot\":\"%s\"",
+           slot_letter(running), slot_letter(gpt), consistent ? "true" : "false",
+           slot_letter(target));
+
+    /* The target list is reported only once the flash slot is known: without it there is no
+     * partition to name, and naming the other slot's would be a lie. */
+    printf(",\"targets\":[");
+    const char *const *bases = slot_component_bases();
+    int all_ok = (target >= 0);
+    for (int i = 0; target >= 0 && bases[i]; i++) {
+        int num = -1;
+        unsigned long size = 0;
+        /* min_size 0: without an image there is no length to hold, so the size guard is
+         * --dry-run's to apply. */
+        enum slot_target_status status = slot_target_judge(bases[i], target, 0, &num, &size);
+
+        printf("%s{\"name\":\"%s%d\",\"status\":\"%s\",\"mtd\":%d,\"bytes\":%lu}",
+               i ? "," : "", bases[i], target, slot_target_status_name(status), num, size);
+
+        if (status != SLOT_TARGET_OK) {
+            all_ok = 0;
+        }
+    }
+
+    printf("],\"targets_resolved\":%s}\n", all_ok ? "true" : "false");
+
+    return running >= 0 ? 0 : 1;
 }
 
 /*
@@ -580,6 +632,8 @@ static void usage(void)
             "  mlflash --flip                  [--slot a|b] make the non-active slot active, no write\n"
             "  mlflash --slots                              print the A/B slot state + flip-target\n"
             "                                               classification as JSON, no write\n"
+            "  mlflash --preflight                          print whether the inactive slot can be\n"
+            "                                               flashed at all, as JSON, no write\n"
             "  mlflash --record                [--slot a|b] print the device.json boot-proof\n"
             "                                               verdict for a slot as JSON, no write\n"
             "    --flip     (with --flash) after a verified flash, set it active; or standalone\n"
@@ -600,7 +654,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--inspect") || !strcmp(argv[i], "--dry-run") ||
             !strcmp(argv[i], "--flash") || !strcmp(argv[i], "--slots") ||
-            !strcmp(argv[i], "--record")) {
+            !strcmp(argv[i], "--preflight") || !strcmp(argv[i], "--record")) {
             mode = argv[i];
         } else if (!strcmp(argv[i], "--slot") && i + 1 < argc) {
             slot = argv[++i];
@@ -631,6 +685,17 @@ int main(int argc, char **argv)
         }
 
         return cmd_slots();
+    }
+
+    /* Read-only writability report: no image, no write flags, no slot override (the target is the
+     * complement of the running slot, which is the only slot a flash may write). */
+    if (mode && !strcmp(mode, "--preflight")) {
+        if (image || want_flip || force_a || slot) {
+            fprintf(stderr, "--preflight takes no image and no other flags\n");
+            return 2;
+        }
+
+        return cmd_preflight();
     }
 
     /* Read-only device-record report: no image, no write flags (--slot is allowed). */
