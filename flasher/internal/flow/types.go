@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/mlflash"
 )
 
 // Level classifies an event for rendering.
@@ -70,8 +71,7 @@ type BootProof struct {
 }
 
 // DeviceInfo is what Detect learns about the connected unit: facts, and no rendered
-// sentences. The wording shown to the user is built from these fields by the present
-// package, so there is one place where a status line or a warning is worded.
+// sentences.
 type DeviceInfo struct {
 	Unit     string // "P1_GND" (goggle), "P1_SKY" (air), "unknown"
 	Product  string // product_version
@@ -99,10 +99,30 @@ type DeviceInfo struct {
 	// never changes Switchable, it just says what is known about that slot. A zero
 	// value means no record could be read.
 	Proof BootProof
+
+	// Preflight is the image-free flash gate (mlflash --preflight): whether the
+	// device, as it stands, may be flashed at all. nil when the scan never got far
+	// enough to ask, which keeps the gate shut.
+	Preflight *Preflight
 }
 
-// IsFlashable reports whether this unit may be written to.
-func (i *DeviceInfo) IsFlashable() bool { return i.Verdict == VerdictReady }
+// IsFlashable reports whether this unit may be written to: a whitelisted unit AND a
+// device state that permits a flash. Both halves must hold, so a stock unit running
+// the wrong slot is not offered an image to flash at it.
+func (i *DeviceInfo) IsFlashable() bool {
+	return i.Verdict == VerdictReady && i.Preflight.IsGateOpen()
+}
+
+// FlashBlocker is why this device may not be flashed as it stands, BlockerNone when
+// nothing is in the way. A device the scan refused before it ever reached the gate
+// reports BlockerUnprobed, which the card never shows: its verdict already says why.
+func (i *DeviceInfo) FlashBlocker() Blocker {
+	if i.Preflight == nil {
+		return BlockerUnprobed
+	}
+
+	return i.Preflight.Blocker
+}
 
 // IsAlreadyOpen reports whether the unit is already running our open firmware.
 func (i *DeviceInfo) IsAlreadyOpen() bool { return i.Verdict == VerdictAlreadyOpen }
@@ -114,20 +134,6 @@ func (i *DeviceInfo) IsAlreadyOpen() bool { return i.Verdict == VerdictAlreadyOp
 type SwitchTarget struct {
 	Slot    string // "A" or "B"
 	Content string // "open" or "vendor"
-}
-
-// slotState mirrors the JSON object mlflash --slots prints. Target* describes the
-// slot a flip would activate: the complement of the GPT-active slot, which is not
-// the complement of the running slot during a flash-boot. Consistent reports
-// whether the running and active slots agree (false = flash-boot).
-type slotState struct {
-	Running        string `json:"running"`
-	GptActive      string `json:"gpt_active"`
-	Consistent     bool   `json:"consistent"`
-	TargetSlot     string `json:"target_slot"`
-	TargetContent  string `json:"target_content"`
-	TargetModel    string `json:"target_model"`
-	TargetComplete bool   `json:"target_complete"`
 }
 
 // Defaults for the fixed gadget link.
@@ -148,9 +154,9 @@ func (i *DeviceInfo) SwitchTarget() SwitchTarget {
 // flip step of flash -> flashboot -> flip runs in. mlflash only names a target slot
 // when it could read the GPT active bit, so a resolved TargetSlot is the guarantee
 // that the flip has a defined direction.
-func (s *slotState) isSwitchTarget() bool {
-	return s.TargetSlot != "" && s.TargetSlot != "unknown" && s.TargetComplete &&
-		(s.TargetContent == ContentOpen || s.TargetContent == ContentVendor)
+func isSwitchTarget(report *mlflash.SlotReport) bool {
+	return report.TargetSlot != "" && report.TargetSlot != mlflash.SlotUnknown && report.TargetComplete &&
+		(report.TargetContent == ContentOpen || report.TargetContent == ContentVendor)
 }
 
 // applyDefaults fills the unset options and rejects malformed ones. The addresses

@@ -1,4 +1,4 @@
-// Staging the payload on the device, streaming it up atomically, and running mlflash.
+// Staging the image on the device and streaming it up atomically.
 package flow
 
 import (
@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
-	"github.com/Missing-Lynk/MissingLynk/flasher/internal/payload"
 )
 
 // Digest applets that may be present, best first. sha256sum is not assumed: the
@@ -29,10 +28,6 @@ var digestApplets = []struct {
 	{"sha256sum", sha256.New},
 	{"md5sum", md5.New},
 }
-
-// Where the on-device flasher is uploaded to. Small enough for the tmpfs /tmp,
-// unlike the image (see stageDir).
-const remoteMlflash = "/tmp/mlflash"
 
 // imageSize returns the byte size of path, or 0 if unavailable.
 func imageSize(path string) int64 {
@@ -109,28 +104,13 @@ func tmpStageDir(client deviceClient, minBytes int64) (string, error) {
 	return "/tmp", nil
 }
 
-// pushMlflash uploads the embedded on-device flasher to /tmp on the device.
-func pushMlflash(client deviceClient, emit Emit) error {
-	mlflashBin, mlflashSize := payload.Mlflash()
-	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Uploading mlflash (%d KiB)", mlflashSize/1024)})
-	if err := client.Push(mlflashBin, remoteMlflash, "755"); err != nil {
-		return fmt.Errorf("uploading mlflash: %w", err)
-	}
-
-	return nil
-}
-
-// pushPayload uploads the embedded mlflash (to /tmp) and the image (to stageDir,
-// an SD-card mount) over cat streams and returns the remote image path.
+// pushPayload streams the image up to stageDir (an SD-card mount) and returns the
+// remote image path.
 //
 // The image lands on a ".part" name and is renamed into place only after the stream
 // closes cleanly, so an interrupted run leaves nothing at the final name. The
 // temporary sits in stageDir because FAT and exFAT rename only within a directory.
 func pushPayload(client deviceClient, imagePath, stageDir string, emit Emit) (string, error) {
-	if err := pushMlflash(client, emit); err != nil {
-		return "", err
-	}
-
 	imageFile, err := os.Open(imagePath)
 	if err != nil {
 		return "", err
@@ -260,25 +240,4 @@ func isFatFilesystem(fstype string) bool {
 // removeRemote best-effort deletes a remote path (the staged image after flashing).
 func removeRemote(client deviceClient, remotePath string) {
 	_, _ = client.Run("rm -f " + device.ShellQuote(remotePath))
-}
-
-// runMlflash runs the on-device flasher with args and relays its output as info
-// events, so the user sees mlflash's own per-component messages.
-func runMlflash(client deviceClient, emit Emit, args ...string) error {
-	cmd := remoteMlflash
-	for _, a := range args {
-		cmd += " " + device.ShellQuote(a)
-	}
-
-	return client.RunStream(cmd, func(line string) {
-		// ubiformat/libscan redraw a per-eraseblock "... N % complete" counter
-		// hundreds of times; drop it (the activity bar shows progress) and skip the
-		// empty tokens left by "\r\n" pairs. The phase summary lines still come through.
-		line = strings.TrimRight(line, " ")
-		if line == "" || strings.Contains(line, "% complete") {
-			return
-		}
-
-		emit(Event{Level: LevelInfo, Msg: line})
-	})
 }

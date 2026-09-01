@@ -6,6 +6,7 @@ package present
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/flow"
 )
@@ -77,7 +78,7 @@ func Render(s State) View {
 		Busy:          busy,
 		RescanEnabled: !busy,
 		SwitchLabel:   switchLabel,
-		FlashDialog:   flashDialog(),
+		FlashDialog:   flashDialog(s.Info),
 	}
 
 	switch {
@@ -94,11 +95,17 @@ func Render(s State) View {
 
 	view.Title = title(s.Info)
 	view.Status = status(s.Info)
-	view.IsStatusWarning = isRefusal(s.Info.Verdict)
+	view.IsStatusWarning = isRefusal(s.Info.Verdict) || isGateShut(s.Info)
 
+	// Choosing an image is gated on the same thing flashing is. Handing the user a
+	// file picker for a device that cannot be flashed invites them to pick an image,
+	// press Flash, and meet the refusal only then.
 	flashable := s.Info.IsFlashable()
 	view.ChooseEnabled = flashable && !busy
 	view.FlashEnabled = flashable && !busy && s.Image != ""
+
+	// The switch stays offered whatever the flash gate says: on a device running the
+	// wrong slot it is the step that opens the gate.
 	view.SwitchEnabled = s.Info.Switchable && !busy
 
 	if s.Info.TargetSlot != "" {
@@ -170,16 +177,20 @@ func title(info *flow.DeviceInfo) string {
 
 // status is the summary sentence, with the switch line below it when one is offered.
 func status(info *flow.DeviceInfo) string {
-	summary := verdictSentence(info)
-	detail := switchDetail(info)
-	if detail == "" {
-		return summary
+	lines := []string{verdictSentence(info)}
+	if gate := gateSentence(info); gate != "" {
+		lines = append(lines, gate)
 	}
 
-	return summary + "\n" + detail
+	if detail := switchDetail(info); detail != "" {
+		lines = append(lines, detail)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
-// verdictSentence states what the scan concluded.
+// verdictSentence states what the scan concluded about the unit's identity. Whether
+// the device is in a state that permits a flash is gateSentence's to say.
 func verdictSentence(info *flow.DeviceInfo) string {
 	switch info.Verdict {
 	case flow.VerdictAlreadyOpen:
@@ -192,9 +203,61 @@ func verdictSentence(info *flow.DeviceInfo) string {
 		return fmt.Sprintf("Firmware %s (hardware %s) is not on the validated list; refusing for safety.",
 			info.Firmware, info.Hardware)
 
-	default:
+	case flow.VerdictReady:
+		if isGateShut(info) {
+			return "This device cannot be flashed as it is."
+		}
+
 		return "Ready to flash."
 	}
+
+	return ""
+}
+
+// gateSentence explains a shut flash gate and names the step that opens it. The
+// explanation of what is wrong comes from the flow layer, so the log and the card
+// carry the same words; only the next step is added here, because which step applies
+// depends on whether the other slot can actually be switched to.
+func gateSentence(info *flow.DeviceInfo) string {
+	if !isGateShut(info) {
+		return ""
+	}
+
+	return strings.TrimSpace(info.Preflight.Reason() + " " + nextStep(info))
+}
+
+// nextStep is the one action that moves this device towards a flashable state. A
+// blocker with no step the user can take says so plainly rather than leaving them to
+// guess: on this hardware a slot A that holds no complete image is a recovery job,
+// not something this tool can repair.
+func nextStep(info *flow.DeviceInfo) string {
+	switch info.FlashBlocker() {
+	case flow.BlockerNotOnSlotA:
+		if info.Switchable && info.TargetSlot == flow.SlotA {
+			return fmt.Sprintf("Use \"Switch to slot %s\" below, then flash.", info.TargetSlot)
+		}
+
+		return fmt.Sprintf("Slot %s does not hold a complete recognized firmware, so it cannot be "+
+			"switched to; the device needs recovery before it can be flashed.", flow.SlotA)
+
+	case flow.BlockerFlashBoot:
+		return "Power-cycle the device so it boots its active slot, then re-scan."
+
+	case flow.BlockerSlotUnknown:
+		return "Power-cycle the device and re-scan."
+
+	case flow.BlockerTargetUnfit:
+		return "The device needs recovery before it can be flashed."
+	}
+
+	return ""
+}
+
+// isGateShut reports whether a unit that passed the identity gate is nonetheless in a
+// state that forbids a flash. Only meaningful for a unit whose identity was accepted:
+// one refused earlier never reached the gate, and its verdict already says why.
+func isGateShut(info *flow.DeviceInfo) bool {
+	return info.Verdict == flow.VerdictReady && !info.Preflight.IsGateOpen()
 }
 
 // isRefusal reports whether a verdict is a refusal to flash.
@@ -233,7 +296,8 @@ func switchDetail(info *flow.DeviceInfo) string {
 // collapsed: no record at all, proven, booted but unverifiable (the slot was
 // installed outside this tool, so no digests were ever recorded), and a genuine
 // digest mismatch. Only the last describes bytes that actually changed. Empty for a
-// stock target, which is the untouched factory install this tool never writes.
+// stock target: the record is written at flash time, so a slot this tool never
+// installed has no record to read, whatever condition that slot is in.
 func proofSentence(info *flow.DeviceInfo) string {
 	if info.TargetContent != flow.ContentOpen {
 		return ""
@@ -286,14 +350,16 @@ func contentDescription(content string) string {
 }
 
 // switchDialog is the switch-slot confirmation. It names the slot being activated
-// and spells out the direction-specific risk: switching to the stock slot is the
-// low-risk direction, while switching to the open slot activates it without
-// re-verification. Out of a flash-boot the firmware being activated is the one
-// already running, which is worth saying, because the reboot still exercises that
-// slot's own bootloader for the first time.
+// and, for the open direction, that the slot is activated without re-verification.
+// Out of a flash-boot the firmware being activated is the one already running, which
+// is worth saying, because the reboot still exercises that slot's own bootloader for
+// the first time.
+//
+// The stock direction makes no claim about the slot's condition. A slot classifies as
+// stock on its device tree's model string plus a kernel and a rootfs being present;
+// that says what the slot holds, not that it is unmodified, current, or bootable.
 func switchDialog(info *flow.DeviceInfo) DialogText {
 	body := fmt.Sprintf("This makes slot %s (stock firmware) the active boot slot and reboots into it. "+
-		"That slot is the untouched factory install, so this is the low-risk direction. "+
 		"You can switch back to the MissingLynk firmware the same way afterwards.", info.TargetSlot)
 
 	if info.TargetContent == flow.ContentOpen {
@@ -321,14 +387,23 @@ func switchDialog(info *flow.DeviceInfo) DialogText {
 	}
 }
 
-// flashDialog offers the two flash modes.
-func flashDialog() DialogText {
+// flashDialog offers the two flash modes. It names the slot being written and the
+// slot being kept, from the gate that let the user get this far, so the last thing
+// read before a write says which half of the device is at stake. Both slots are named
+// only when the gate reported them; the dialog never guesses.
+func flashDialog(info *flow.DeviceInfo) DialogText {
+	written, kept := "the device's inactive slot", "the other slot"
+	if info != nil && info.Preflight.IsGateOpen() {
+		written = "slot " + info.Preflight.FlashSlot
+		kept = "slot " + info.Preflight.Running
+	}
+
 	return DialogText{
 		Title: "Flash open firmware?",
-		Body: "This writes the open firmware to the device's inactive slot. The stock firmware on the " +
-			"other slot is left untouched.\n\n" +
-			"Flash and switch: activate the newly written slot and reboot into it now.\n\n" +
-			"Flash only: leave the device on its current slot. The new slot is written but not " +
-			"activated; use the switch button to boot it once you are ready.",
+		Body: fmt.Sprintf("This writes the open firmware to %s. The stock firmware on %s, which the "+
+			"device is running now, is left untouched.\n\n"+
+			"Flash and switch: activate the newly written slot and reboot into it now.\n\n"+
+			"Flash only: leave the device on its current slot. The new slot is written but not "+
+			"activated; use the switch button to boot it once you are ready.", written, kept),
 	}
 }

@@ -1,15 +1,39 @@
 # ml-flasher - host-side open-firmware flasher
 
-A native-window GUI (Go + Fyne) that flashes a validated MissingLynk release image onto a supported Artosyn device over its USB gadget network and SSH. It drives the on-device `mlflash` binary (`native/mlflash/`), which owns every byte-level decision; this tool orchestrates and never touches partitions, GPT, or UBI directly. It writes only the inactive slot, so the firmware in the running slot stays intact. Runs on Linux and Windows; ships as one self-contained binary (links only the ubiquitous `libGL`/`libX11` at runtime).
+A native-window GUI (Go + Fyne) that flashes a validated MissingLynk release image onto a supported Artosyn device over its USB gadget network and SSH. It drives the on-device `mlflash` binary (`native/mlflash/`), which owns every byte-level decision; this tool orchestrates and never touches partitions, GPT, or UBI directly. Everything about reaching that binary - where it is uploaded to, its flag grammar, its shell quoting, and the contract where its read-only modes print JSON and still exit non-zero - lives in `internal/mlflash`. It writes only the inactive slot, so the firmware in the running slot stays intact. Runs on Linux and Windows; ships as one self-contained binary (links only the ubiquitous `libGL`/`libX11` at runtime).
 
 ## How it works
 
 1. Detects the connected device over the USB-ethernet gadget (device at `192.168.3.100`; host takes `192.168.3.222/24`, assigned by the tool since stock firmware serves no DHCP).
 2. Reads `sdk_version.json` and gates on the firmware whitelist (see Supported devices).
-3. Streams the embedded `mlflash` to `/tmp` and the chosen `.mlimg` to the device over the SSH channel. A mounted SD card is preferred for the image, because it keeps a large bundle out of RAM on the goggle; devices without an SD card path fall back to `/tmp` only when enough free tmpfs space is available.
-4. Runs `mlflash`: `--inspect` (verify hashes) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
+3. Streams the embedded `mlflash` to `/tmp` and runs `mlflash --preflight` (read-only), gating on the device's state: see Flash gating below. Choosing an image is disabled until it passes. The binary goes up once per connection and every later call reuses it.
+4. Streams the chosen `.mlimg` to the device over the SSH channel. A mounted SD card is preferred, because it keeps a large bundle out of RAM on the goggle; devices without an SD card path fall back to `/tmp` only when enough free tmpfs space is available.
+5. Runs `mlflash`: `--dry-run` (verify every component hash and resolve each to the partition it would be written to) -> `--flash` (write the inactive slot, readback-verified) -> `--flip` (set it active) -> watchdog reboot, then waits for the device to return on the open firmware.
 
 The GUI is the end-user path: it is intended for release `.mlimg` bundles that were already proven on matching hardware, so "Flash and switch" activates the newly written slot after readback verification. Users do not need a serial adapter or RAM-boot setup. "Flash only" stops after `--flash`: the inactive slot is written but not activated, and the device stays on its current slot. Use it for development images, lab verification, or any bundle whose bootability has not already been signed off; activate it later with the Switch slot button or the manual flash ladder.
+
+## Flash gating
+
+A flash may run only from **slot A**, with slot A also the GPT-active slot, and with every slot-B partition resolving to its own usable MTD device. The tool assumes slot A holds the recommended version of the vendor firmware, so that there is a safe slot to fall back to if a flashed slot B does not boot; it does not verify this, and never probes slot A's partitions. On that assumption the rule is positional: `mlflash` writes the slot that is *not* running, so a flash from slot B would target slot A. The tool refuses that rather than relying on `mlflash`'s own slot-A guard, which only fires after the whole bundle has been uploaded.
+
+The gate splits in two, because the checks that need the image cannot decide whether the user may pick one:
+
+- **`mlflash --preflight`** (read-only, no image) runs on every scan and again immediately before the upload, since a device can be switched between the scan and the click. It reports the running slot, the GPT-active slot, whether they agree, the slot a flash would write, and the guard verdict for every partition that slot owns. The host classifies that into a single blocker; `mlflash` reports facts and applies no policy.
+- **`mlflash --dry-run <image>`** runs after the upload and before any write. It verifies every component hash, matches the manifest's `target_device` against the board, resolves each component to its target partition, and re-checks the slot state with the bundle's own sizes in hand. It supersedes the older `--inspect` step.
+
+While the gate is shut, both **Choose image** and **Flash** are disabled: offering a file picker to a device that cannot be flashed only invites the refusal later. **Switch slot** stays enabled, because on a device booted from slot B it is the step that opens the gate. The device card states what is wrong and the one action that fixes it:
+
+| Device state | What the card says to do |
+|---|---|
+| Running slot B, stock firmware intact on A | Switch to slot A, then flash |
+| Running slot B, nothing complete on A | The device needs recovery; the switch is not offered either |
+| Running slot differs from the active slot (flash-boot) | Power-cycle so it boots its active slot, then re-scan |
+| Running slot or GPT active bit unreadable | Power-cycle and re-scan |
+| A slot-B partition missing, aliased to its slot-A sibling, or resolving to mtd0 | The device needs recovery |
+
+A consequence worth knowing: a device already running the MissingLynk firmware (slot B) cannot be flashed in one step. Switch it to slot A first, then flash. That was already the behaviour; the gate now says so instead of stopping silently.
+
+The second row is the state a vendor updater leaves behind if it writes and activates slot B while slot A is stale, and this tool has nothing to offer it: restoring slot A is `glue/docs/clone-a-slot.md` by hand, whose rootfs step has no tooling yet.
 
 ## Switching slots without reflashing
 

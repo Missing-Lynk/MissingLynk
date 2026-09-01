@@ -16,6 +16,10 @@ import (
 
 // deviceClient is the device-side surface these flows use, as an interface so tests
 // can substitute a fake. *device.Client is the only production implementation.
+//
+// RunStream has no caller in this package: it is here because a deviceClient is handed
+// to mlflash.New, and mlflash streams a write's output as it arrives. Dropping it
+// stops this package satisfying mlflash.Runner.
 type deviceClient interface {
 	Run(cmd string) (string, error)
 	RunStream(cmd string, onLine func(string)) error

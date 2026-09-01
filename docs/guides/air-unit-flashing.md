@@ -74,6 +74,7 @@ Confirm:
 The GUI now recognizes the air unit and will:
 
 - connect at `192.168.3.100` (stock) or `192.168.3.102` (open slot B)
+- check the slot state before offering the file picker, and refuse unless the unit is running slot A with the GPT agreeing and every slot-B partition resolving
 - stage the image on a card if one is mounted, otherwise in `/tmp`, which it accepts only when the free space there covers the image plus a 20 MiB margin. The air unit stages in `/tmp`, and the bundle is stored compressed to fit: about 19 MB against the roughly 53 MiB free, where an uncompressed bundle was refused.
 - flash slot B, then reboot to `192.168.3.102`
 

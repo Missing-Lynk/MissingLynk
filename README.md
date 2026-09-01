@@ -165,7 +165,7 @@ Notes:
 
 ### Part 2, flash + verify + flip to slot B
 
-> **Just want the open firmware on your device?** Use the flasher GUI (`make flasher`, then run `ml-flasher`). It flashes a known-good image, only ever writes the **inactive** slot (so the running firmware is never at risk), verifies by readback, and offers "Flash only" (write without committing) plus a one-click slot switch. No serial needed. The manual chain below is the from-source / developer path.
+> **Just want the open firmware on your device?** Use the flasher GUI (`make flasher`, then run `ml-flasher`). It flashes a known-good image, only ever writes the **inactive** slot (so the running firmware is never at risk), verifies by readback, and offers "Flash only" (write without committing) plus a one-click slot switch. It refuses to flash from anywhere but slot A, and says which step gets you there. No serial needed. The manual chain below is the from-source / developer path.
 
 Do NOT start the manual chain without the debug UART wired up ([`docs/guides/serial-and-debug-access.md`](docs/guides/serial-and-debug-access.md)) and the A/B safety ladder read ([`glue/docs/flash-and-verify-slots.md`](glue/docs/flash-and-verify-slots.md)). Flashing runs over USB, but the mandatory RAM-boot verification uses the serial console. Nothing becomes the active slot until it is proven to boot end-to-end from RAM.
 

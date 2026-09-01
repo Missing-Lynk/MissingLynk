@@ -14,6 +14,7 @@ import (
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/manifest"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/mlflash"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/whitelist"
 )
 
@@ -63,13 +64,24 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 	}
 
 	defer client.Close()
+
+	// One Tool per connection: it uploads mlflash on the first call that needs it and
+	// every later call reuses that upload.
+	tool := mlflash.New(client, func(line string) {
+		emit(Event{Level: LevelInfo, Msg: line})
+	})
+
 	if alreadyOpen {
 		info := &DeviceInfo{
 			Verdict: VerdictAlreadyOpen,
 			Name:    deviceName(client),
 		}
 
-		fillSwitchTarget(client, info, emit)
+		// The open firmware runs from slot B, so the gate is shut here by definition.
+		// Probe it anyway: the card's next step ("switch to slot A") comes from the same
+		// slot state, and a device in an odd state should say which one it is in.
+		fillPreflight(tool, info, emit)
+		fillSwitchTarget(tool, info, emit)
 
 		return info, nil
 	}
@@ -97,10 +109,13 @@ func Detect(ctx context.Context, opt Options, emit Emit) (*DeviceInfo, error) {
 		info.Verdict = VerdictReady
 	}
 
-	// A previously flashed open image may still be intact on the non-active slot; if
-	// it is, the device can be switched to it without reflashing.
-	if info.IsFlashable() {
-		fillSwitchTarget(client, info, emit)
+	// Both probes hang off the identity verdict, not off IsFlashable: the flash gate
+	// is one of the things IsFlashable reports, so it has to be filled before it can
+	// be asked. A previously flashed open image may still be intact on the non-active
+	// slot; if it is, the device can be switched to it without reflashing.
+	if info.Verdict == VerdictReady {
+		fillPreflight(tool, info, emit)
+		fillSwitchTarget(tool, info, emit)
 	}
 
 	return info, nil
@@ -134,6 +149,12 @@ func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit
 
 	defer client.Close()
 
+	// One Tool per connection: it uploads mlflash on the first call that needs it and
+	// every later call reuses that upload.
+	tool := mlflash.New(client, func(line string) {
+		emit(Event{Level: LevelInfo, Msg: line})
+	})
+
 	// The open slot has no sdk_version.json, so infer the product from its IP.
 	product := productFromOpenIP(connectedIP)
 	if !runningOpen {
@@ -146,12 +167,12 @@ func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Re-checking the slots"})
-	state, err := probeSlots(client, emit)
+	state, err := tool.Slots()
 	if err != nil {
 		return fail(emit, err)
 	}
 
-	if !state.isSwitchTarget() {
+	if !isSwitchTarget(state) {
 		return fail(emit, fmt.Errorf("slot %s does not hold a complete recognized image (found: %s); "+
 			"refusing to switch", state.TargetSlot, slotContentDescription(state.TargetContent)))
 	}
@@ -164,7 +185,7 @@ func SwitchSlot(ctx context.Context, opt Options, target SwitchTarget, emit Emit
 	}
 
 	emit(Event{Level: LevelStep, Msg: fmt.Sprintf("Making slot %s the active boot slot", state.TargetSlot)})
-	if err := runMlflash(client, emit, "--flip"); err != nil {
+	if err := tool.Flip(); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 
@@ -230,6 +251,13 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	}
 
 	defer client.Close()
+
+	// One Tool per connection: it uploads mlflash on the first call that needs it and
+	// every later call reuses that upload.
+	tool := mlflash.New(client, func(line string) {
+		emit(Event{Level: LevelInfo, Msg: line})
+	})
+
 	if alreadyOpen {
 		emit(Event{Level: LevelDone, Msg: "This device is already running the open firmware - nothing to do."})
 		return nil
@@ -259,6 +287,22 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 			image.TargetDevice, sdk.ProductVersion))
 	}
 
+	// Re-run the flash gate here, not just at scan time: the device can be switched,
+	// rebooted, or unplugged between the scan the user acted on and this click, and
+	// this is the last point before the upload where that costs nothing.
+	emit(Event{Level: LevelStep, Msg: "Checking the device is ready to flash"})
+	report, err := runPreflight(tool)
+	if err != nil {
+		return fail(emit, err)
+	}
+
+	if !report.IsGateOpen() {
+		return fail(emit, blockerError(report))
+	}
+
+	emit(Event{Level: LevelInfo, Msg: fmt.Sprintf("Running slot %s; flashing slot %s",
+		report.Running, report.FlashSlot)})
+
 	// Stage on a mounted card where there is one, otherwise in /tmp. The image must
 	// not live in RAM on low-memory units, so /tmp is only accepted when it has
 	// enough free space.
@@ -273,13 +317,18 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 		return fail(emit, err)
 	}
 
-	emit(Event{Level: LevelStep, Msg: "Verifying image"})
-	if err := runMlflash(client, emit, "--inspect", remoteImg); err != nil {
-		return fail(emit, fmt.Errorf("mlflash --inspect failed: %w", err))
+	// --dry-run is the image half of the gate, and it supersedes --inspect: it verifies
+	// every component hash the way --inspect does, and then also resolves each one to
+	// the partition it would be written to and re-checks the slot state with the
+	// bundle's own sizes in hand. It writes nothing, so a blocker here still leaves the
+	// device untouched.
+	emit(Event{Level: LevelStep, Msg: "Verifying the image against this device"})
+	if err := tool.DryRun(remoteImg); err != nil {
+		return fail(emit, fmt.Errorf("mlflash --dry-run found blockers, refusing to flash: %w", err))
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Flashing open firmware to the inactive slot"})
-	if err := runMlflash(client, emit, "--flash", remoteImg); err != nil {
+	if err := tool.Flash(remoteImg); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flash failed: %w", err))
 	}
 
@@ -295,7 +344,7 @@ func Flash(ctx context.Context, opt Options, emit Emit) error {
 	}
 
 	emit(Event{Level: LevelStep, Msg: "Activating the new firmware"})
-	if err := runMlflash(client, emit, "--flip"); err != nil {
+	if err := tool.Flip(); err != nil {
 		return fail(emit, fmt.Errorf("mlflash --flip failed: %w", err))
 	}
 

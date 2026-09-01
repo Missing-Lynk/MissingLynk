@@ -17,6 +17,7 @@ import (
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/manifest"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/mlflash"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/netcfg"
 )
 
@@ -94,7 +95,18 @@ func (f *fakeClient) Run(cmd string) (string, error) {
 		}
 	}
 
-	return "", nil
+	return defaultReply(cmd), nil
+}
+
+// defaultReply answers the commands every flow runs on the way to what a test is
+// actually about, so only the command under test needs registering. A test that cares
+// registers its own handler, which wins: handlers are consulted first.
+func defaultReply(cmd string) string {
+	if strings.Contains(cmd, "--preflight") {
+		return preflightJSON
+	}
+
+	return ""
 }
 
 func (f *fakeClient) RunStream(cmd string, onLine func(string)) error {
@@ -244,9 +256,60 @@ func logOf(events *[]Event) string {
 	return b.String()
 }
 
+// The device reports these tests hand to the fake, built from the module's own types
+// so the wire spelling reaches them through the code rather than through a literal
+// copied into this package. The literal wire format is pinned in the mlflash package's
+// own tests, where it is the contract under test rather than a fixture.
+func mustReport(report any) string {
+	body, err := json.Marshal(report)
+	if err != nil {
+		panic("marshalling a test fixture: " + err.Error())
+	}
+
+	return string(body)
+}
+
+// slotBTargets is what every slot-B partition looks like when the flash slot resolves.
+func slotBTargets() []mlflash.Target {
+	return []mlflash.Target{
+		{Name: "uboot1", Status: mlflash.StatusOK, Mtd: 12, Bytes: 786432},
+		{Name: "env1", Status: mlflash.StatusOK, Mtd: 10, Bytes: 393216},
+		{Name: "kernel1", Status: mlflash.StatusOK, Mtd: 14, Bytes: 6291456},
+		{Name: "dtb1", Status: mlflash.StatusOK, Mtd: 16, Bytes: 393216},
+		{Name: "userapp1", Status: mlflash.StatusOK, Mtd: 18, Bytes: 47185920},
+	}
+}
+
+// slotATargets is the same for slot A, which is what a unit booted on B would report.
+func slotATargets() []mlflash.Target {
+	return []mlflash.Target{
+		{Name: "uboot0", Status: mlflash.StatusOK, Mtd: 11, Bytes: 786432},
+		{Name: "env0", Status: mlflash.StatusOK, Mtd: 9, Bytes: 393216},
+		{Name: "kernel0", Status: mlflash.StatusOK, Mtd: 13, Bytes: 6291456},
+		{Name: "dtb0", Status: mlflash.StatusOK, Mtd: 15, Bytes: 393216},
+		{Name: "userapp0", Status: mlflash.StatusOK, Mtd: 17, Bytes: 47185920},
+	}
+}
+
 // A stock unit on slot A with a complete open image on B: the switchable state.
-const slotsJSON = `{"running":"A","gpt_active":"A","consistent":true,` +
-	`"target_slot":"B","target_content":"open","target_model":"open","target_complete":true}`
+var slotsJSON = mustReport(mlflash.SlotReport{
+	Running: "A", GptActive: "A", Consistent: true,
+	TargetSlot: "B", TargetContent: "open", TargetModel: "open", TargetComplete: true,
+})
+
+// The same unit's flash gate: running slot A, agreeing with the GPT, every slot-B
+// partition resolved. This is the only state the tool will flash from.
+var preflightJSON = mustReport(mlflash.PreflightReport{
+	Running: "A", GptActive: "A", Consistent: true, FlashSlot: "B",
+	Targets: slotBTargets(), TargetsResolved: true,
+})
+
+// preflightOnSlotB is the same report from a unit booted on slot B: a flash from here
+// would target slot A, which the gate refuses.
+var preflightOnSlotB = mustReport(mlflash.PreflightReport{
+	Running: "B", GptActive: "B", Consistent: true, FlashSlot: "A",
+	Targets: slotATargets(), TargetsResolved: true,
+})
 
 // writeBundle writes a .mlimg-shaped tar: manifest.json first, uncompressed.
 func writeBundle(t *testing.T, targetDevice string) string {

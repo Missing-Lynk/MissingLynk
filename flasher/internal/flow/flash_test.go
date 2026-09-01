@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/mlflash"
 )
 
 // The gate must run BEFORE the upload, so the assertion is not just that Flash
@@ -246,8 +248,10 @@ func TestSwitchSlotRefusesWhenTheSlotStateChanged(t *testing.T) {
 	h := (&harness{}).install(t)
 	// The scan offered slot B holding the open firmware; the device now reports the
 	// other direction, as it would after something else flipped the slot in between.
-	h.client.on("--slots", `{"running":"B","gpt_active":"B","consistent":true,`+
-		`"target_slot":"A","target_content":"vendor","target_complete":true}`, nil)
+	h.client.on("--slots", mustReport(mlflash.SlotReport{
+		Running: "B", GptActive: "B", Consistent: true,
+		TargetSlot: "A", TargetContent: "vendor", TargetComplete: true,
+	}), nil)
 
 	emit, _ := collect()
 	err := SwitchSlot(context.Background(), Options{}, SwitchTarget{Slot: "B", Content: "open"}, emit)
@@ -267,8 +271,10 @@ func TestSwitchSlotRefusesWhenTheSlotStateChanged(t *testing.T) {
 // An incomplete target is refused whatever the user confirmed.
 func TestSwitchSlotRefusesAnIncompleteTarget(t *testing.T) {
 	h := (&harness{}).install(t)
-	h.client.on("--slots", `{"running":"A","gpt_active":"A","consistent":true,`+
-		`"target_slot":"B","target_content":"empty","target_complete":false}`, nil)
+	h.client.on("--slots", mustReport(mlflash.SlotReport{
+		Running: "A", GptActive: "A", Consistent: true,
+		TargetSlot: "B", TargetContent: "empty", TargetComplete: false,
+	}), nil)
 
 	emit, _ := collect()
 	err := SwitchSlot(context.Background(), Options{}, SwitchTarget{Slot: "B", Content: "empty"}, emit)

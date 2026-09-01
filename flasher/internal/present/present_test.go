@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/flow"
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/mlflash"
 )
 
-// readyGoggle is a whitelisted unit on slot A with a complete open image on B.
+// readyGoggle is a whitelisted unit on slot A with a complete open image on B: the
+// one state the tool flashes from.
 func readyGoggle() *flow.DeviceInfo {
 	return &flow.DeviceInfo{
 		Unit:          "P1_GND",
@@ -22,6 +24,41 @@ func readyGoggle() *flow.DeviceInfo {
 		TargetContent: flow.ContentOpen,
 		Switchable:    true,
 		Proof:         flow.BootProof{Present: true, Boots: 3, DigestsRecorded: true, Verified: true},
+		Preflight:     openGate(),
+	}
+}
+
+// openGate is a flash gate that found nothing in the way. The blocker is set
+// explicitly rather than derived: how slot facts become a blocker is the flow
+// package's to test, and what a blocker looks like on screen is this one's.
+func openGate() *flow.Preflight {
+	return &flow.Preflight{
+		Running: "A", Active: "A", Consistent: true, FlashSlot: "B",
+		TargetsResolved: true,
+		Blocker:         flow.BlockerNone,
+	}
+}
+
+// onSlotB is a whitelisted unit booted on slot B, with stock firmware intact on A:
+// the state a vendor updater leaves behind when it writes and activates B. The unit
+// is fine, the slot it is running is not.
+func onSlotB() *flow.DeviceInfo {
+	info := readyGoggle()
+	info.ActiveSlot = "B"
+	info.RunningSlot = "B"
+	info.TargetSlot = "A"
+	info.TargetContent = flow.ContentVendor
+	info.Preflight = shutGate()
+
+	return info
+}
+
+// shutGate is a unit booted on slot B, where a flash would target slot A.
+func shutGate() *flow.Preflight {
+	return &flow.Preflight{
+		Running: "B", Active: "B", Consistent: true, FlashSlot: "A",
+		TargetsResolved: true,
+		Blocker:         flow.BlockerNotOnSlotA,
 	}
 }
 
@@ -68,8 +105,13 @@ func TestRenderStatusReportsTheVerdict(t *testing.T) {
 		isWarning bool
 	}{
 		{
-			name: "ready", info: &flow.DeviceInfo{Verdict: flow.VerdictReady},
+			name: "ready", info: &flow.DeviceInfo{Verdict: flow.VerdictReady, Preflight: openGate()},
 			want: "Ready to flash.",
+		},
+		{
+			name: "whitelisted but running the wrong slot",
+			info: &flow.DeviceInfo{Verdict: flow.VerdictReady, Preflight: shutGate()},
+			want: "This device is running slot B", isWarning: true,
 		},
 		{
 			name: "unidentified",
@@ -135,6 +177,17 @@ func TestRenderEnablesActions(t *testing.T) {
 		{
 			"off the whitelist: nothing but a re-scan",
 			State{Info: &flow.DeviceInfo{Verdict: flow.VerdictNotWhitelisted}, Image: "/tmp/test.mlimg"},
+			true, false, false, false, false,
+		},
+		{
+			// The switch is what opens the gate, so it stays live while the flash does not.
+			"running slot B: no image may even be chosen, but the switch is offered",
+			State{Info: onSlotB(), Image: "/tmp/test.mlimg"},
+			true, false, false, true, false,
+		},
+		{
+			"a gate that was never probed refuses everything but a re-scan",
+			State{Info: &flow.DeviceInfo{Verdict: flow.VerdictReady}, Image: "/tmp/test.mlimg"},
 			true, false, false, false, false,
 		},
 	}
@@ -225,8 +278,13 @@ func TestSwitchDialogWarnsPerDirection(t *testing.T) {
 	vendor.ActiveSlot = "B"
 	vendor.RunningSlot = "B"
 	body := Render(State{Info: vendor}).SwitchDialog.Body
-	if !strings.Contains(body, "low-risk direction") {
-		t.Errorf("the stock-slot dialog does not name the low-risk direction:\n%s", body)
+	// The classification is a device-tree model string plus a kernel and a rootfs being
+	// present. It says what the slot holds, so the dialog must not talk about what
+	// condition it is in.
+	for _, claim := range []string{"untouched", "factory", "low-risk", "safe"} {
+		if strings.Contains(strings.ToLower(body), claim) {
+			t.Errorf("the stock-slot dialog claims %q about a slot nothing verified:\n%s", claim, body)
+		}
 	}
 
 	if strings.Contains(body, "WITHOUT rewriting") {
@@ -295,7 +353,7 @@ func TestProofSentencePerOutcome(t *testing.T) {
 	}
 }
 
-// A stock target is the untouched factory install, so it carries no boot proof.
+// A stock target carries no boot proof: the record only covers slots this tool flashed.
 func TestProofSentenceIsOnlyForTheOpenSlot(t *testing.T) {
 	info := readyGoggle()
 	info.TargetContent = flow.ContentVendor
@@ -325,5 +383,96 @@ func TestCompletionMessages(t *testing.T) {
 
 	if body := SwitchDone("A").Body; !strings.Contains(body, "slot A") {
 		t.Errorf("the switch message does not name the slot: %q", body)
+	}
+}
+
+// A shut gate has to say what is wrong AND what to do about it. A user who does not
+// know what a boot slot is still has to be able to act on the card.
+func TestGateSentenceNamesTheNextStep(t *testing.T) {
+	tests := []struct {
+		name string
+		info *flow.DeviceInfo
+		want []string
+	}{
+		{
+			name: "on slot B with stock intact on A: switch back",
+			info: onSlotB(),
+			want: []string{"running slot B", "Switch to slot A"},
+		},
+		{
+			// Nothing to switch to. Saying "switch to slot A" here would send the user at a
+			// disabled button.
+			name: "on slot B with nothing usable on A: recovery",
+			info: func() *flow.DeviceInfo {
+				info := onSlotB()
+				info.TargetContent = "empty"
+				info.Switchable = false
+
+				return info
+			}(),
+			want: []string{"running slot B", "needs recovery"},
+		},
+		{
+			name: "mid flash-boot: reboot first",
+			info: func() *flow.DeviceInfo {
+				info := readyGoggle()
+				info.Preflight = &flow.Preflight{
+					Running: "A", Active: "B", FlashSlot: "B", Blocker: flow.BlockerFlashBoot,
+				}
+
+				return info
+			}(),
+			want: []string{"flash-boot", "Power-cycle"},
+		},
+		{
+			name: "an unusable partition layout: recovery",
+			info: func() *flow.DeviceInfo {
+				info := readyGoggle()
+				info.Preflight = &flow.Preflight{
+					Running: "A", Active: "A", Consistent: true, FlashSlot: "B",
+					Targets: []flow.PreflightTarget{{Name: "userapp1", Status: mlflash.StatusMissing, Mtd: -1}},
+					Blocker: flow.BlockerTargetUnfit,
+				}
+
+				return info
+			}(),
+			want: []string{"userapp1", "needs recovery"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := Render(State{Info: tt.info})
+			for _, want := range tt.want {
+				if !strings.Contains(view.Status, want) {
+					t.Errorf("status = %q, want it to contain %q", view.Status, want)
+				}
+			}
+
+			if strings.Contains(view.Status, "Ready to flash") {
+				t.Errorf("status = %q, want no readiness claim behind a shut gate", view.Status)
+			}
+
+			if !view.IsStatusWarning {
+				t.Error("a shut gate was not marked as a warning")
+			}
+		})
+	}
+}
+
+// The card must not tell a user their device is ready and then refuse the flash.
+func TestReadyStatusMeansTheButtonsWork(t *testing.T) {
+	view := Render(State{Info: readyGoggle(), Image: "/tmp/test.mlimg"})
+	if !strings.Contains(view.Status, "Ready to flash.") {
+		t.Fatalf("status = %q, want the ready sentence", view.Status)
+	}
+
+	if !view.ChooseEnabled || !view.FlashEnabled {
+		t.Errorf("choose = %v, flash = %v; want both enabled behind a ready status",
+			view.ChooseEnabled, view.FlashEnabled)
+	}
+
+	if view.IsStatusWarning {
+		t.Error("a ready device was marked as a warning")
 	}
 }
