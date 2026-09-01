@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/device"
@@ -26,6 +27,13 @@ import (
 // remotePath is where the binary is uploaded to. /tmp is a small tmpfs on both slots,
 // which the roughly 1 MiB binary fits in and a firmware image would not.
 const remotePath = "/tmp/mlflash"
+
+// debugReports relays every read-only mode's raw stdout and exit status to the progress
+// sink. A report that parses is normally silent, so a device whose answer the host
+// cannot explain (an unknown slot, an unresolved target) leaves nothing to read; this
+// is the switch that shows what mlflash actually printed. Set ML_FLASHER_DEBUG to turn
+// it on, since the tool has no command line.
+var debugReports = os.Getenv("ML_FLASHER_DEBUG") != ""
 
 // Runner is the device-side surface this package needs: run a command, run one and
 // watch its output arrive, and stream a file up. *device.Client satisfies it.
@@ -191,6 +199,13 @@ func (tool *Tool) readReport(out any, args ...string) error {
 
 	stdout, runErr := tool.runner.Run(command(args...))
 	line := strings.TrimSpace(stdout)
+	if debugReports {
+		tool.say(fmt.Sprintf("debug: mlflash %s printed %q", strings.Join(args, " "), line))
+		if runErr != nil {
+			tool.say(fmt.Sprintf("debug: mlflash %s exited: %v", strings.Join(args, " "), runErr))
+		}
+	}
+
 	if err := json.Unmarshal([]byte(line), out); err != nil {
 		if runErr != nil {
 			return fmt.Errorf("mlflash %s failed: %w", args[0], runErr)

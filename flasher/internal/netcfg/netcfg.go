@@ -21,4 +21,10 @@ type Backend interface {
 	// returning a cleanup that removes the address again. An address that is
 	// already present is not an error.
 	Assign(iface, hostCIDR string) (cleanup func() error, err error)
+
+	// Diagnose reports what the host saw when Candidates found nothing, as lines for
+	// the log: the interfaces that were considered, and any host-side fault that hides
+	// a device which is physically plugged in. It runs on a failure path, so it never
+	// returns an error: a probe it could not run is reported as one of the lines.
+	Diagnose() []string
 }

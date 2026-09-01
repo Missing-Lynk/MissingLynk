@@ -308,6 +308,11 @@ check-native:
 #     The GUI is compiled by the container build (make flasher); this target covers the packages
 #     that hold the logic and need no display stack. GOFLAGS keeps the tags aligned with that
 #     build so vet sees the same code.
+#
+# The last step vets the same packages again as GOOS=windows. netcfg's Windows backend is behind a
+# build tag, so a Linux-only vet compiles neither it nor its tests, and a break in it surfaces only
+# in the release container. The tests themselves still run on Linux alone: cross-compiling type-checks
+# that code, it does not execute it.
 GO_CHECK_PKGS := ./internal/device/... ./internal/devconf/... ./internal/flow/... \
                  ./internal/manifest/... ./internal/netcfg/... ./internal/present/... \
                  ./internal/whitelist/...
@@ -333,7 +338,8 @@ check-go:
 	script='cd flasher && \
 	    unformatted=$$(gofmt -l .) && \
 	    { [ -z "$$unformatted" ] || { echo "gofmt needed:"; echo "$$unformatted"; exit 1; }; } && \
-	    go vet $(GO_CHECK_PKGS) && go test $(GO_CHECK_PKGS)'; \
+	    go vet $(GO_CHECK_PKGS) && go test $(GO_CHECK_PKGS) && \
+	    GOOS=windows go vet $(GO_CHECK_PKGS)'; \
 	rc=0; \
 	if [ -n "$(GO)" ]; then \
 	    sh -c "$$script" || rc=$$?; \

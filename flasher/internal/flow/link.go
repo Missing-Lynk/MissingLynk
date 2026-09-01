@@ -183,6 +183,14 @@ func ensureLink(ctx context.Context, opt Options, emit Emit) error {
 			return nil
 		}
 
+		// The host, not the device, is the usual reason nothing was found: an adapter
+		// whose description does not match, or a gadget Windows enumerated and could not
+		// bind a driver to. Report what the host saw before failing, so the log says which
+		// one it was instead of only that the list was empty.
+		for _, line := range backend.Diagnose() {
+			emit(Event{Level: LevelInfo, Msg: line})
+		}
+
 		return fail(emit, fmt.Errorf("no device found - is it plugged in over USB and powered on?"))
 	}
 

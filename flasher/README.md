@@ -64,6 +64,24 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls both build 
 
 The window scans on open and shows the detected device. Choose an `.mlimg`, then Flash. Run it as your normal user: configuring the host IP on a fresh gadget interface needs privileges, which the tool requests via a graphical prompt (`pkexec`) only when needed - against an already-reachable interface no prompt appears.
 
+## When no device is found
+
+A scan that finds nothing prints what the host itself saw before it fails: on Windows every adapter `Get-NetAdapter` returned, and every present device whose Device Manager status is not OK with its problem code; on Linux every non-loopback interface and whether a USB device sits behind it. That report is what tells a device that is not plugged in apart from one that is plugged in and unusable.
+
+The common Windows case is the second: `Get-NetAdapter` lists an adapter only after Windows has bound and started a network driver for it, so a stock gadget Windows did not bind RNDIS to is not on the list at all, and shows in Device Manager with a yellow warning and problem 28. Bind it by hand: right-click the device, Update driver, Browse my computer for drivers, Let me pick from a list, Network adapters, manufacturer Microsoft, model **Remote NDIS Compatible Device**. It then appears as an adapter and a re-scan finds it.
+
+## Debug output
+
+Set `ML_FLASHER_DEBUG` to any value and every read-only `mlflash` call relays its raw stdout and exit status into the log pane. The read-only modes normally print nothing unless they fail, so this is what to turn on when the device answers but its answer is not what the card describes (an unknown slot, an unresolved target). The tool has no command line, so the switch is an environment variable:
+
+```
+ML_FLASHER_DEBUG=1 ./flasher/build/ml-flasher
+```
+
+```
+set ML_FLASHER_DEBUG=1 && ml-flasher.exe
+```
+
 ## Supported devices
 
 The whitelist lives in `internal/whitelist` (edit `Devices` there to add one); a device on a version not listed is reported and left untouched.

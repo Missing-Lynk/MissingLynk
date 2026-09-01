@@ -47,6 +47,41 @@ func (linux) Candidates() ([]Candidate, error) {
 	return candidates, nil
 }
 
+// Diagnose reports the interface list discovery worked from, with the USB verdict for
+// each, so an interface that is present but was not recognized as a gadget can be told
+// apart from a device that never enumerated. It runs on a failure path, so a probe it
+// could not run is reported as one of the lines.
+func (linux) Diagnose() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return []string{fmt.Sprintf("Could not list network interfaces: %v", err)}
+	}
+
+	var named []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		verdict := "not USB-backed"
+		if isUSBNet(iface.Name) {
+			verdict = "USB-backed"
+		}
+
+		named = append(named, fmt.Sprintf("  %s [%s] %s", iface.Name, iface.Flags, verdict))
+	}
+
+	if len(named) == 0 {
+		return []string{"The host has no non-loopback network interfaces."}
+	}
+
+	lines := []string{fmt.Sprintf("Host network interfaces (%d):", len(named))}
+	lines = append(lines, named...)
+
+	return append(lines, "A gadget is recognized by its interface having a USB device behind it in "+
+		"/sys/class/net, or an enx/usb name prefix.")
+}
+
 // Assign puts hostCIDR on iface and brings it up. It needs root (CAP_NET_ADMIN):
 // if the tool is not already root it runs the change through pkexec, which shows a
 // graphical authorization prompt, so the GUI itself stays unprivileged. Both steps

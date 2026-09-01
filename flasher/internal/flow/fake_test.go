@@ -47,6 +47,7 @@ type handler struct {
 // fakeBackend reports one gadget interface and never touches the host network.
 type fakeBackend struct {
 	candidates []netcfg.Candidate
+	diagnosis  []string
 	assigned   []string
 }
 
@@ -180,6 +181,8 @@ func (f *fakeClient) pushedPaths() []string {
 }
 
 func (b *fakeBackend) Candidates() ([]netcfg.Candidate, error) { return b.candidates, nil }
+
+func (b *fakeBackend) Diagnose() []string { return b.diagnosis }
 
 func (b *fakeBackend) Assign(iface, hostCIDR string) (func() error, error) {
 	b.assigned = append(b.assigned, iface)
