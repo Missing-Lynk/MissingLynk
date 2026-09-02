@@ -73,9 +73,14 @@ func New(runner Runner, progress Progress) *Tool {
 // whether they agree, and a read-only classification of the slot a flip would activate
 // - the complement of the ACTIVE slot, since that is the bit a flip moves. The Target
 // fields are absent when gpt0 could not be read, leaving a flip with no direction.
+//
+// GptError carries mlflash's reason for an unknown GptActive and is empty otherwise. The reasons
+// (no gpt0 partition, an unreadable one, no GPT inside it, a malformed entry array, an A/B set with
+// no active bit) are different devices in different states, which one "unknown" cannot tell apart.
 type SlotReport struct {
 	Running        string `json:"running"`
 	GptActive      string `json:"gpt_active"`
+	GptError       string `json:"gpt_error"`
 	Consistent     bool   `json:"consistent"`
 	TargetSlot     string `json:"target_slot"`
 	TargetContent  string `json:"target_content"`
@@ -90,6 +95,7 @@ type SlotReport struct {
 type PreflightReport struct {
 	Running         string   `json:"running"`
 	GptActive       string   `json:"gpt_active"`
+	GptError        string   `json:"gpt_error"`
 	Consistent      bool     `json:"consistent"`
 	FlashSlot       string   `json:"flash_slot"`
 	Targets         []Target `json:"targets"`

@@ -34,15 +34,20 @@ const SlotA = mlflash.SlotA
 // The rest are ordered as classify() tests them, most fundamental first - an
 // undetermined slot state hides everything below it, and a device on the wrong slot
 // is worth reporting before the partition layout of a slot it will not write yet.
+//
+// The two undetermined states are separate blockers because they are separate sentences: a device
+// that never named its running slot and a device that named it but whose gpt0 could not be read
+// are in different conditions, and one message covering both states a falsehood about one of them.
 type Blocker int
 
 const (
-	BlockerUnprobed    Blocker = iota // the gate was never run
-	BlockerSlotUnknown                // the running or active slot could not be determined
-	BlockerFlashBoot                  // the running slot is not the active slot
-	BlockerNotOnSlotA                 // the device is running slot B
-	BlockerTargetUnfit                // a partition of the slot a flash would write is unusable
-	BlockerNone                       // nothing is in the way
+	BlockerUnprobed       Blocker = iota // the gate was never run
+	BlockerRunningUnknown                // the device did not name the slot it is running
+	BlockerActiveUnknown                 // the active slot could not be read from gpt0
+	BlockerFlashBoot                     // the running slot is not the active slot
+	BlockerNotOnSlotA                    // the device is running slot B
+	BlockerTargetUnfit                   // a partition of the slot a flash would write is unusable
+	BlockerNone                          // nothing is in the way
 )
 
 // PreflightTarget is one partition of the slot a flash would write, as mlflash judged
@@ -62,6 +67,7 @@ type PreflightTarget struct {
 type Preflight struct {
 	Running         string
 	Active          string
+	ActiveError     string
 	Consistent      bool
 	FlashSlot       string
 	Targets         []PreflightTarget
@@ -101,8 +107,11 @@ func (p *Preflight) unfitTargets() []PreflightTarget {
 // them all would bury the one step the user has to take next.
 func (p *Preflight) classify() {
 	switch {
-	case p.Running == "" || p.Running == mlflash.SlotUnknown || p.Active == "" || p.Active == mlflash.SlotUnknown:
-		p.Blocker = BlockerSlotUnknown
+	case isSlotUnknown(p.Running):
+		p.Blocker = BlockerRunningUnknown
+
+	case isSlotUnknown(p.Active):
+		p.Blocker = BlockerActiveUnknown
 
 	case !p.Consistent:
 		p.Blocker = BlockerFlashBoot
@@ -137,9 +146,20 @@ func (p *Preflight) Reason() string {
 		return "The device's boot slot was never read, so this tool cannot tell which slot a flash " +
 			"would write."
 
-	case BlockerSlotUnknown:
+	case BlockerRunningUnknown:
 		return "The device did not report which boot slot it is running, so this tool cannot tell " +
 			"which slot a flash would write."
+
+	case BlockerActiveUnknown:
+		// The finding is an unreadable gpt0, but when the running slot is known and is not A that
+		// is the fact the user needs, and the shorter sentence. mlflash's reason for the
+		// unreadable gpt0 is a diagnosis, and goes to the log rather than the card.
+		if !strings.EqualFold(p.Running, SlotA) {
+			return fmt.Sprintf("This device is running slot %s, which is not expected on a stock unit.",
+				p.Running)
+		}
+
+		return "The active boot slot could not be read from this device."
 
 	case BlockerFlashBoot:
 		return fmt.Sprintf("This boot is running slot %s while slot %s is the active one (as after a "+
@@ -161,6 +181,12 @@ func (p *Preflight) Reason() string {
 	}
 
 	return "This device cannot be flashed in its current state."
+}
+
+// isSlotUnknown reports whether a slot letter names no slot. An empty string counts: a report
+// that never carried the field is as undetermined as one that carried mlflash's "unknown".
+func isSlotUnknown(slot string) bool {
+	return slot == "" || slot == mlflash.SlotUnknown
 }
 
 // unfitSummary lists the failed partitions and what is wrong with each, as a clause
@@ -214,6 +240,7 @@ func runPreflight(tool *mlflash.Tool) (*Preflight, error) {
 	report := &Preflight{
 		Running:         wire.Running,
 		Active:          wire.GptActive,
+		ActiveError:     wire.GptError,
 		Consistent:      wire.Consistent,
 		FlashSlot:       wire.FlashSlot,
 		TargetsResolved: wire.TargetsResolved,
@@ -235,9 +262,16 @@ func fillPreflight(tool *mlflash.Tool, info *DeviceInfo, emit Emit) {
 	report, err := runPreflight(tool)
 	if err != nil {
 		emit(Event{Level: LevelWarn, Msg: fmt.Sprintf("flash preflight failed: %v", err)})
-		info.Preflight = &Preflight{Blocker: BlockerSlotUnknown}
+		info.Preflight = &Preflight{Blocker: BlockerRunningUnknown}
 
 		return
+	}
+
+	// An unreadable gpt0 is a state no healthy unit is in, and the reason mlflash gives for it is
+	// the whole diagnosis. The card says only that the device cannot be flashed, so this is where
+	// the reason is recorded.
+	if report.ActiveError != "" {
+		emit(Event{Level: LevelWarn, Msg: "the active boot slot could not be read: " + report.ActiveError})
 	}
 
 	info.Preflight = report

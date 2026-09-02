@@ -243,8 +243,13 @@ func nextStep(info *flow.DeviceInfo) string {
 	case flow.BlockerFlashBoot:
 		return "Power-cycle the device so it boots its active slot, then re-scan."
 
-	case flow.BlockerSlotUnknown:
+	case flow.BlockerRunningUnknown:
 		return "Power-cycle the device and re-scan."
+
+	case flow.BlockerActiveUnknown:
+		// No step is offered: power-cycling does not change which slot a device boots, and the
+		// switch that would is the thing an unreadable active slot has taken away.
+		return ""
 
 	case flow.BlockerTargetUnfit:
 		return "The device needs recovery before it can be flashed."

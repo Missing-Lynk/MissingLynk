@@ -66,8 +66,9 @@ static const char *slot_letter(int slot)
  */
 static int cmd_slots(void)
 {
+    const char *gpt_why = NULL;
     int running = running_slot();
-    int gpt = gpt_active_slot();
+    int gpt = gpt_active_slot_why(&gpt_why);
     int consistent = (running >= 0 && gpt >= 0 && running == gpt);
     int target = (gpt >= 0) ? !gpt : -1;
 
@@ -76,6 +77,9 @@ static int cmd_slots(void)
 
     printf("{\"running\":\"%s\",\"gpt_active\":\"%s\",\"consistent\":%s",
            slot_letter(running), slot_letter(gpt), consistent ? "true" : "false");
+    if (gpt_why) {
+        printf(",\"gpt_error\":\"%s\"", gpt_why);
+    }
     if (probed) {
         printf(",\"target_slot\":\"%s\",\"target_content\":\"%s\",\"target_model\":\"%s\","
                "\"target_kernel\":%s,\"target_rootfs\":%s,\"target_complete\":%s",
@@ -104,14 +108,18 @@ static int cmd_slots(void)
  */
 static int cmd_preflight(void)
 {
+    const char *gpt_why = NULL;
     int running = running_slot();
-    int gpt = gpt_active_slot();
+    int gpt = gpt_active_slot_why(&gpt_why);
     int consistent = (running >= 0 && gpt >= 0 && running == gpt);
     int target = (running >= 0) ? !running : -1;
 
     printf("{\"running\":\"%s\",\"gpt_active\":\"%s\",\"consistent\":%s,\"flash_slot\":\"%s\"",
            slot_letter(running), slot_letter(gpt), consistent ? "true" : "false",
            slot_letter(target));
+    if (gpt_why) {
+        printf(",\"gpt_error\":\"%s\"", gpt_why);
+    }
 
     /* The target list is reported only once the flash slot is known: without it there is no
      * partition to name, and naming the other slot's would be a lie. */

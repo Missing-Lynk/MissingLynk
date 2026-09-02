@@ -168,54 +168,76 @@ static int gpt_pair_slot(const char *name, int *slot)
     return 0;
 }
 
-int gpt_active_slot(void)
+/* Holds the one reason that names a device. gpt_active_slot_why's caller prints the reason before
+ * it asks again, and mlflash is single-threaded. */
+static char gpt_reason_buf[64];
+
+int gpt_active_slot_why(const char **why)
 {
+    /* Every reason is a plain ASCII sentence with no quote or backslash, so a caller may print it
+     * into a JSON string with no escaping. */
+    const char *reason = NULL;
+    int active = -1;
     int mtd_num = -1;
     unsigned long mtd_size = 0;
+
     if (mtd_by_name("gpt0", &mtd_num, &mtd_size) != 0) {
-        return -1;
-    }
+        reason = "no gpt0 partition in /proc/mtd";
+    } else {
+        char dev[32];
+        snprintf(dev, sizeof dev, "/dev/mtdblock%d", mtd_num);
 
-    char dev[32];
-    snprintf(dev, sizeof dev, "/dev/mtdblock%d", mtd_num);
+        size_t len = 0;
+        unsigned char *buf = read_all(dev, &len);
+        if (!buf) {
+            snprintf(gpt_reason_buf, sizeof gpt_reason_buf, "%s could not be read", dev);
+            reason = gpt_reason_buf;
+        } else {
+            reason = "no EFI PART signature in gpt0";
+            for (size_t i = 0; i + GPT_SIG_LEN <= len; i++) {
+                if (memcmp(buf + i, GPT_SIG, GPT_SIG_LEN) != 0) {
+                    continue;
+                }
 
-    size_t len = 0;
-    unsigned char *buf = read_all(dev, &len);
-    if (!buf) {
-        return -1;
-    }
+                const unsigned char *header = buf + i;
+                uint64_t pte_lba = rd64(header + GPT_HDR_PTE_LBA);
+                uint32_t num_entries = rd32(header + GPT_HDR_NUM_ENT);
+                uint32_t entry_size = rd32(header + GPT_HDR_ENT_SIZE);
+                long array_off = (long)pte_lba * GPT_LBA_SIZE;
+                if (array_off < 0 || array_off + (long)num_entries * entry_size > (long)len) {
+                    reason = "the GPT partition-entry array lies outside gpt0";
+                    break;
+                }
 
-    int active = -1;
-    for (size_t i = 0; i + GPT_SIG_LEN <= len; i++) {
-        if (memcmp(buf + i, GPT_SIG, GPT_SIG_LEN) != 0) {
-            continue;
-        }
+                reason = "no A/B partition in the GPT carries the active bit";
+                for (uint32_t j = 0; j < num_entries && active < 0; j++) {
+                    const unsigned char *entry = buf + array_off + (long)j * entry_size;
+                    char name[GPT_ENT_NAME_LEN / 2 + 1];
+                    gpt_entry_name(entry, name, sizeof name);
 
-        const unsigned char *header = buf + i;
-        uint64_t pte_lba = rd64(header + GPT_HDR_PTE_LBA);
-        uint32_t num_entries = rd32(header + GPT_HDR_NUM_ENT);
-        uint32_t entry_size = rd32(header + GPT_HDR_ENT_SIZE);
-        long array_off = (long)pte_lba * GPT_LBA_SIZE;
-        if (array_off < 0 || array_off + (long)num_entries * entry_size > (long)len) {
-            break;
-        }
+                    int slot;
+                    if (gpt_pair_slot(name, &slot) && (rd64(entry + GPT_ENT_ATTR) & GPT_ACTIVE_BIT)) {
+                        active = slot;
+                    }
+                }
 
-        for (uint32_t j = 0; j < num_entries && active < 0; j++) {
-            const unsigned char *entry = buf + array_off + (long)j * entry_size;
-            char name[GPT_ENT_NAME_LEN / 2 + 1];
-            gpt_entry_name(entry, name, sizeof name);
-
-            int slot;
-            if (gpt_pair_slot(name, &slot) && (rd64(entry + GPT_ENT_ATTR) & GPT_ACTIVE_BIT)) {
-                active = slot;
+                break;
             }
-        }
 
-        break;
+            free(buf);
+        }
     }
 
-    free(buf);
+    if (why) {
+        *why = (active < 0) ? reason : NULL;
+    }
+
     return active;
+}
+
+int gpt_active_slot(void)
+{
+    return gpt_active_slot_why(NULL);
 }
 
 /* Edit the primary GPT in `buf` so the active bit marks slot `slot`: set it on that slot's A/B

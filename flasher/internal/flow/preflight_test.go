@@ -39,12 +39,19 @@ func TestClassifyPicksTheBlocker(t *testing.T) {
 		{
 			name:   "the running slot could not be read",
 			report: Preflight{Running: "unknown", Active: "A", FlashSlot: "unknown"},
-			want:   BlockerSlotUnknown,
+			want:   BlockerRunningUnknown,
 		},
 		{
+			// Separate from the running slot: this device did say which slot it runs, so a
+			// message about that would be false.
 			name:   "the GPT active bit could not be read",
 			report: Preflight{Running: "A", Active: "unknown", FlashSlot: "B"},
-			want:   BlockerSlotUnknown,
+			want:   BlockerActiveUnknown,
+		},
+		{
+			name:   "a field the device never sent counts as unknown",
+			report: Preflight{Running: "B", Active: "", FlashSlot: "A"},
+			want:   BlockerActiveUnknown,
 		},
 		{
 			name: "a partition of the flash slot is unusable",
@@ -58,7 +65,7 @@ func TestClassifyPicksTheBlocker(t *testing.T) {
 			name: "an unknown slot outranks an unfit target",
 			report: Preflight{Running: "unknown", Active: "unknown", TargetsResolved: false,
 				FlashSlot: "unknown"},
-			want: BlockerSlotUnknown,
+			want: BlockerRunningUnknown,
 		},
 		{
 			// The user's next step is the reboot, not the slot switch that would follow it.
@@ -304,5 +311,82 @@ func TestTheRefusalMarksTheFallbackSlotAsAnAssumption(t *testing.T) {
 
 	if !strings.Contains(reason, "slot a") || !strings.Contains(reason, "running slot b") {
 		t.Errorf("Reason() = %q, want it to name both slots", reason)
+	}
+}
+
+// The sentence for an unreadable gpt0 must not claim the running slot is unknown: the device in
+// hand reported it, and a report that contradicts the device sends the reader after the wrong
+// fault. When that slot is not A, saying so is the whole message; mlflash's reason for the
+// unreadable gpt0 is a diagnosis and stays out of the card.
+func TestReasonForAnUnreadableGPT(t *testing.T) {
+	report := &Preflight{Running: "B", Active: "unknown", FlashSlot: "A",
+		ActiveError: "no gpt0 partition in /proc/mtd"}
+	report.classify()
+
+	reason := report.Reason()
+	if !strings.Contains(reason, "running slot B") {
+		t.Errorf("Reason() = %q, want it to name the running slot", reason)
+	}
+
+	for _, unwanted := range []string{"did not report which boot slot it is running", "/proc/mtd", "gpt0"} {
+		if strings.Contains(reason, unwanted) {
+			t.Errorf("Reason() = %q, want it not to contain %q", reason, unwanted)
+		}
+	}
+}
+
+// Running slot A with an unreadable gpt0 is the other half: there is no wrong-slot fact to lead
+// with, so the unreadable slot is the sentence.
+func TestReasonForAnUnreadableGPTOnSlotA(t *testing.T) {
+	report := &Preflight{Running: "A", Active: "unknown", FlashSlot: "B"}
+	report.classify()
+
+	if reason := report.Reason(); !strings.Contains(reason, "active boot slot could not be read") {
+		t.Errorf("Reason() = %q, want the unreadable active slot stated", reason)
+	}
+}
+
+// A real capture from a goggle that boots slot B and whose gpt0 read comes back empty. The device
+// answered both probes and named its running slot; the gate must refuse on the fact that is
+// actually missing, and must not offer a switch it has no direction for.
+func TestDetectOnSlotBWithAnUnreadableGPT(t *testing.T) {
+	const preflight = `{"running":"B","gpt_active":"unknown","gpt_error":"no A/B partition in the GPT carries the active bit",` +
+		`"consistent":false,"flash_slot":"A","targets":[{"name":"uboot0","status":"ok","mtd":11,"bytes":786432},` +
+		`{"name":"env0","status":"ok","mtd":9,"bytes":393216},{"name":"kernel0","status":"ok","mtd":13,"bytes":6291456},` +
+		`{"name":"dtb0","status":"ok","mtd":15,"bytes":393216},{"name":"userapp0","status":"ok","mtd":17,"bytes":47185920}],` +
+		`"targets_resolved":true}`
+
+	client := newFakeClient().
+		on("--preflight", preflight, nil).
+		on("--slots", `{"running":"B","gpt_active":"unknown","consistent":false}`,
+			errors.New("Process exited with status 1"))
+
+	(&harness{client: client}).install(t)
+
+	emit, events := collect()
+	info, err := Detect(context.Background(), Options{}, emit)
+	if err != nil {
+		t.Fatalf("Detect() = %v, want the device reported", err)
+	}
+
+	if info.FlashBlocker() != BlockerActiveUnknown {
+		t.Errorf("FlashBlocker() = %v, want BlockerActiveUnknown", info.FlashBlocker())
+	}
+
+	if info.IsFlashable() {
+		t.Error("IsFlashable() = true, want a refusal while the flash target would be slot A")
+	}
+
+	if info.Switchable {
+		t.Error("Switchable = true, want no switch offered with no readable active slot")
+	}
+
+	if reason := info.Preflight.Reason(); !strings.Contains(reason, "running slot B") {
+		t.Errorf("Reason() = %q, want it to name the running slot", reason)
+	}
+
+	// The reason gpt0 could not be read is a diagnosis: it belongs in the log, not on the card.
+	if log := logOf(events); !strings.Contains(log, "no A/B partition in the GPT") {
+		t.Errorf("Detect() log = %q, want mlflash's reason recorded", log)
 	}
 }

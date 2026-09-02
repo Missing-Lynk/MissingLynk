@@ -25,6 +25,18 @@ int running_slot(void);
 int gpt_active_slot(void);
 
 /**
+ * @brief The GPT-active slot, plus why it could not be read.
+ *
+ * The five failures are distinct states of the device (no gpt0 partition, an unreadable gpt0, no
+ * GPT in it, a malformed entry array, an A/B set with no active bit) and a caller that only sees
+ * "unknown" cannot tell a unit needing recovery from one this tool does not understand.
+ * @param why set to a static reason sentence when the slot is undetermined, NULL otherwise. Pass
+ *        NULL to ignore it. The sentence is plain ASCII with no quote or backslash.
+ * @return 0 = A, 1 = B, -1 if undetermined.
+ */
+int gpt_active_slot_why(const char **why);
+
+/**
  * @brief Set the GPT active bit to `slot` (0/1): edit the A/B pair entries in the primary GPT of
  *        gpt0, recompute the entry-array and header CRC32, and write the partition back
  *        (byte-exact readback-verified). Mirrors mtdtool's setslot.
