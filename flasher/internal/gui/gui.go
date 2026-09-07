@@ -17,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/Missing-Lynk/MissingLynk/flasher/internal/clipboard"
 	"github.com/Missing-Lynk/MissingLynk/flasher/internal/present"
 )
 
@@ -96,7 +97,7 @@ func newUI(win fyne.Window) *ui {
 	u.logView.TextStyle = fyne.TextStyle{Monospace: true}
 	u.logScroll = container.NewVScroll(u.logView)
 	u.copyButton = widget.NewButtonWithIcon("Copy log", theme.ContentCopyIcon(), func() {
-		fyne.CurrentApp().Clipboard().SetContent(u.logText())
+		fyne.CurrentApp().Clipboard().SetContent(clipboard.Prepare(u.logText()))
 	})
 
 	// The status section is a fixed two-line-high slot: a transparent spacer pins
