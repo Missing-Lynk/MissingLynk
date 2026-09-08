@@ -1,4 +1,4 @@
-// Package netcfg is the only platform-specific code: it finds the USB-ethernet
+// Package netcfg is the platform-specific half of the device link: it finds the USB-ethernet
 // gadget interface(s) an Artosyn unit presents and assigns the host-side static
 // IP the stock firmware needs (it runs no DHCP). One Backend per OS.
 package netcfg
