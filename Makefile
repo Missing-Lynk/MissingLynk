@@ -313,9 +313,9 @@ check-native:
 # build tag, so a Linux-only vet compiles neither it nor its tests, and a break in it surfaces only
 # in the release container. The tests themselves still run on Linux alone: cross-compiling type-checks
 # that code, it does not execute it.
-GO_CHECK_PKGS := ./internal/device/... ./internal/devconf/... ./internal/flow/... \
-                 ./internal/manifest/... ./internal/netcfg/... ./internal/present/... \
-                 ./internal/whitelist/...
+GO_CHECK_PKGS := ./internal/clipboard/... ./internal/device/... ./internal/devconf/... \
+                 ./internal/flow/... ./internal/manifest/... ./internal/netcfg/... \
+                 ./internal/present/... ./internal/whitelist/...
 
 # The toolchain: a host `go` is used when present, otherwise the same pinned image
 # flasher/docker/Dockerfile builds with, so a machine with only Docker can still run this. Keep the

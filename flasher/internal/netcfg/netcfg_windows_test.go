@@ -3,6 +3,7 @@
 package netcfg
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -219,5 +220,48 @@ func TestIsLikelyGadget(t *testing.T) {
 		if isLikelyGadget(device) {
 			t.Errorf("isLikelyGadget(%q, %q) = true, want false", device.Name, device.InstanceID)
 		}
+	}
+}
+
+// PowerShell's output crosses the process boundary base64-encoded, so a code page cannot corrupt
+// it. Decoding is the half that runs here.
+func TestDecodeBase64Output(t *testing.T) {
+	const german = `{"Name":"Unbekanntes USB-Gerät","Class":null}`
+
+	got, err := decodeBase64Output(base64.StdEncoding.EncodeToString([]byte(german)))
+	if err != nil {
+		t.Fatalf("decodeBase64Output() = %v", err)
+	}
+
+	if got != german {
+		t.Fatalf("decodeBase64Output() = %q, want %q", got, german)
+	}
+
+	// PowerShell appends a newline to what it prints, and prints nothing at all for an empty run.
+	padded, err := decodeBase64Output("  " + base64.StdEncoding.EncodeToString([]byte("x")) + "\r\n")
+	if err != nil || padded != "x" {
+		t.Fatalf("decodeBase64Output(padded) = %q, %v; want \"x\", nil", padded, err)
+	}
+
+	if empty, err := decodeBase64Output("   "); err != nil || empty != "" {
+		t.Fatalf("decodeBase64Output(empty) = %q, %v; want \"\", nil", empty, err)
+	}
+
+	if _, err := decodeBase64Output("not base64!"); err == nil {
+		t.Fatal("decodeBase64Output(garbage) = nil error, want a decode failure")
+	}
+}
+
+// The umlaut has to survive the whole way to a parsed field, not just the decode.
+func TestNonASCIIDeviceNameSurvives(t *testing.T) {
+	const wire = `{"Name":"Unbekanntes USB-Gerät","Class":"","Status":"Error","InstanceId":"USB\\X"}`
+
+	devices, err := parseJSONList[pnpDevice](wire)
+	if err != nil {
+		t.Fatalf("parseJSONList() = %v", err)
+	}
+
+	if devices[0].Name != "Unbekanntes USB-Gerät" {
+		t.Fatalf("Name = %q, want the umlaut intact", devices[0].Name)
 	}
 }

@@ -113,7 +113,7 @@ func (windows) Assign(iface, hostCIDR string) (func() error, error) {
 
 // listAdapters reads every network adapter Windows has a started driver for.
 func listAdapters() ([]adapter, error) {
-	out, err := powershell("Get-NetAdapter | Select-Object Name,InterfaceDescription,MacAddress,Status | ConvertTo-Json -Compress")
+	out, err := powershellText("Get-NetAdapter | Select-Object Name,InterfaceDescription,MacAddress,Status | ConvertTo-Json -Compress")
 	if err != nil {
 		return nil, fmt.Errorf("Get-NetAdapter failed: %v", err)
 	}
@@ -137,7 +137,7 @@ func listProblemDevices() ([]pnpDevice, error) {
 			}
 		} | ConvertTo-Json -Compress`
 
-	out, err := powershell(script)
+	out, err := powershellText(script)
 	if err != nil {
 		return nil, fmt.Errorf("Get-PnpDevice failed: %v", err)
 	}
@@ -362,6 +362,46 @@ func netshElevated(args string) (string, error) {
 // psQuote escapes a value for a single-quoted PowerShell string: apostrophes double.
 func psQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
+}
+
+// powershellText runs a script whose output is text to be read, and returns it as exact UTF-8.
+//
+// Windows PowerShell writes stdout in the console's code page (CP850 or CP1252 on a stock Windows),
+// which is not UTF-8, so any non-ASCII it prints - a German device name like "Unbekanntes
+// USB-Gerät", an adapter someone called "Büro-LAN" - arrives here as bytes Go reads as invalid
+// UTF-8 and replaces with U+FFFD. The script's output is therefore base64-encoded inside PowerShell
+// and decoded here: base64 is ASCII, so no code page can touch it on the way out. The command going
+// the other way is already immune, being sent as -EncodedCommand.
+//
+// The pipeline output is joined rather than passed through Out-String, which wraps at a width and
+// would split a long JSON line in two.
+func powershellText(script string) (string, error) {
+	wrapped := fmt.Sprintf(
+		"$mlOutput = @(& { %s }) -join \"`n\"; "+
+			"[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($mlOutput))", script)
+
+	out, err := powershell(wrapped)
+	if err != nil {
+		return "", err
+	}
+
+	return decodeBase64Output(out)
+}
+
+// decodeBase64Output turns what powershellText asked PowerShell to print back into text. An empty
+// run prints nothing, which is an empty result and not a decode failure.
+func decodeBase64Output(out string) (string, error) {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(out)
+	if err != nil {
+		return "", fmt.Errorf("decoding PowerShell output: %w", err)
+	}
+
+	return string(decoded), nil
 }
 
 // powershell runs a script via -EncodedCommand (base64 of UTF-16LE), which avoids
