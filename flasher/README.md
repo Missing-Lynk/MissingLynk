@@ -70,6 +70,12 @@ A scan that finds nothing prints what the host itself saw before it fails: on Wi
 
 The common Windows case is the second: `Get-NetAdapter` lists an adapter only after Windows has bound and started a network driver for it, so a stock gadget Windows did not bind RNDIS to is not on the list at all, and shows in Device Manager with a yellow warning and problem 28. Bind it by hand: right-click the device, Update driver, Browse my computer for drivers, Let me pick from a list, Network adapters, manufacturer Microsoft, model **Remote NDIS Compatible Device**. It then appears as an adapter and a re-scan finds it.
 
+An adapter counts as the gadget when its `PnPDeviceID` carries the open firmware's hardware id (`VID_1D6B&PID_0104`), or when its driver description contains one of `rndis`, `remote ndis`, `usb ethernet`, `usb-ethernet`, `cdc ethernet`. The hardware id is what identifies an open unit whatever driver bound to it; the description list is what identifies a stock one, which enumerates under its own ids. Every adapter's hardware id is printed in the report, so an adapter that is present but unmatched can be told from a gadget that never became an adapter.
+
+A device listed under `USB\VID_0000&PID_0002` with problem 43 is a different failure. `VID_0000` is the placeholder Windows files a device under when the device never answered `GET_DESCRIPTOR`, so Windows has no vendor or product id for it and nothing to match a driver against. The device is unidentified rather than unbound: no driver choice reaches it, and it can never become an adapter. Move it to a USB 2.0 port on the machine itself rather than a hub or a front-panel header, try another cable, and check whether the same port enumerates the stock firmware; if it does, the fault is in the gadget on the device.
+
+Windows ships an in-box driver for RNDIS ("Remote NDIS Compatible Device") and none for CDC-ECM. The stock gadget is RNDIS and so binds. An ECM-only gadget enumerates and then sits in Device Manager with problem 28, with no in-box model to pick from the driver list.
+
 ## Debug output
 
 Set `ML_FLASHER_DEBUG` to any value and every read-only `mlflash` call relays its raw stdout and exit status into the log pane. The read-only modes normally print nothing unless they fail, so this is what to turn on when the device answers but its answer is not what the card describes (an unknown slot, an unresolved target). The tool has no command line, so the switch is an environment variable:
