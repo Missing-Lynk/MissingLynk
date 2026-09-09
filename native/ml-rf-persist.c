@@ -32,7 +32,7 @@
  * variants, and it is re-emitted minified because the chip stages it verbatim at insmod and an
  * oversized config stalls the boot with no error.
  *
- * Usage: ml-rf-persist [--air] <mac>   where <mac> is 8 lowercase hex digits (e.g. e515815c).
+ * Usage: ml-rf-persist [--air] <mac>   where <mac> is 8 lowercase hex digits (e.g. deadbeef).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
                      : sizeof CFG_FILES / sizeof CFG_FILES[0];
 
     if (mac == NULL || !mac_valid(mac)) {
-        fprintf(stderr, "usage: " PROG " [--air] <mac>   (8 lowercase hex digits, e.g. e515815c)\n"
+        fprintf(stderr, "usage: " PROG " [--air] <mac>   (8 lowercase hex digits, e.g. deadbeef)\n"
                         "  default: the goggle's AP candidate list\n"
                         "  --air:   the air unit's DEV peer (baseband.basic.dev.ap_mac)\n");
         return 2;

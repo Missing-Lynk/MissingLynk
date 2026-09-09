@@ -21,6 +21,7 @@ type adapter struct {
 	InterfaceDescription string
 	MacAddress           string
 	Status               string
+	PnPDeviceID          string
 }
 
 // pnpDevice mirrors the Get-PnpDevice fields Diagnose reports. Class is empty and
@@ -38,6 +39,13 @@ type pnpDevice struct {
 // USB gadget. Diagnose names them when nothing matched, so the list it prints and the
 // list isUSBNet tests are the same one.
 var usbNetMarkers = []string{"rndis", "remote ndis", "usb ethernet", "usb-ethernet", "cdc ethernet"}
+
+// gadgetHardwareID is the USB identity the open firmware's gadget reports: Linux Foundation
+// (0x1d6b), Multifunction Composite Gadget (0x0104), written by the device's usb-gadget service.
+// Windows puts it in the adapter's PnPDeviceID whatever driver ends up bound, so it identifies the
+// device where a driver description cannot: a third-party CDC-ECM driver is free to call itself
+// anything, and several call themselves nothing that names USB at all.
+const gadgetHardwareID = `VID_1D6B&PID_0104`
 
 // New returns the Windows backend.
 func New() Backend { return windows{} }
@@ -58,7 +66,7 @@ func (windows) Candidates() ([]Candidate, error) {
 
 	var candidates []Candidate
 	for _, a := range adapters {
-		if isUSBNet(a.InterfaceDescription) {
+		if isGadgetAdapter(a) {
 			candidates = append(candidates, Candidate{Name: a.Name, MAC: a.MacAddress})
 		}
 	}
@@ -113,7 +121,7 @@ func (windows) Assign(iface, hostCIDR string) (func() error, error) {
 
 // listAdapters reads every network adapter Windows has a started driver for.
 func listAdapters() ([]adapter, error) {
-	out, err := powershellText("Get-NetAdapter | Select-Object Name,InterfaceDescription,MacAddress,Status | ConvertTo-Json -Compress")
+	out, err := powershellText("Get-NetAdapter | Select-Object Name,InterfaceDescription,MacAddress,Status,PnPDeviceID | ConvertTo-Json -Compress")
 	if err != nil {
 		return nil, fmt.Errorf("Get-NetAdapter failed: %v", err)
 	}
@@ -156,19 +164,25 @@ func adapterLines(adapters []adapter) []string {
 	matched := false
 	for _, a := range adapters {
 		mark := ""
-		if isUSBNet(a.InterfaceDescription) {
+		if isGadgetAdapter(a) {
 			mark = "  <- matches a USB gadget"
 			matched = true
 		}
 
-		lines = append(lines, fmt.Sprintf("  %q - %s [%s]%s",
-			a.Name, a.InterfaceDescription, a.Status, mark))
+		hardware := a.PnPDeviceID
+		if hardware == "" {
+			hardware = "(no PnP device id)"
+		}
+
+		lines = append(lines, fmt.Sprintf("  %q - %s [%s] %s%s",
+			a.Name, a.InterfaceDescription, a.Status, hardware, mark))
 	}
 
 	if !matched {
 		lines = append(lines, fmt.Sprintf(
-			"No adapter description contains any of: %s. A gadget with no driver bound is not an "+
-				"adapter at all and is listed below instead.", strings.Join(usbNetMarkers, ", ")))
+			"No adapter carries hardware id %s, and no adapter description contains any of: %s. "+
+				"A gadget with no driver bound is not an adapter at all and is listed below instead.",
+			gadgetHardwareID, strings.Join(usbNetMarkers, ", ")))
 	}
 
 	return lines
@@ -184,10 +198,14 @@ func problemLines(devices []pnpDevice) []string {
 
 	lines := []string{fmt.Sprintf("%d device(s) Windows could not start:", len(devices))}
 	gadget := false
+	descriptorFailure := false
 	for _, d := range devices {
 		lines = append(lines, "  "+problemLine(d))
 		if isLikelyGadget(d) {
 			gadget = true
+		}
+		if isDescriptorFailure(d) {
+			descriptorFailure = true
 		}
 	}
 
@@ -198,6 +216,17 @@ func problemLines(devices []pnpDevice) []string {
 				"right-click the device, Update driver, Browse my computer for drivers, Let me pick "+
 				"from a list, Network adapters, manufacturer Microsoft, model Remote NDIS Compatible "+
 				"Device. Then re-scan.")
+	}
+
+	if descriptorFailure {
+		lines = append(lines,
+			"One of those is a USB device whose descriptors Windows could not read, so Windows "+
+				"invented the VID_0000 id for it and knows nothing else about it. That is an "+
+				"enumeration failure on the wire, before any driver is chosen, so installing a "+
+				"driver cannot fix it and the device can never appear as an adapter. Try a USB 2.0 "+
+				"port on the machine itself rather than a hub or a front-panel header, and a "+
+				"different cable. If it persists on a port that enumerates the stock firmware, the "+
+				"gadget on the device is at fault, not this host.")
 	}
 
 	return lines
@@ -288,6 +317,28 @@ func isLikelyGadget(device pnpDevice) bool {
 	}
 
 	return false
+}
+
+// isDescriptorFailure reports whether Windows failed to read the device's USB descriptors.
+// A device that never answered GET_DESCRIPTOR has no vendor or product id to be filed under,
+// so Windows files it under the placeholder VID_0000 with a synthetic product id. Such a
+// device is a different failure from a driverless gadget: it is unidentified rather than
+// unbound, and no driver choice reaches it.
+func isDescriptorFailure(device pnpDevice) bool {
+	id := strings.ToUpper(device.InstanceID)
+	return strings.HasPrefix(id, `USB\`) && strings.Contains(id, "VID_0000")
+}
+
+// isGadgetAdapter reports whether an adapter is an Artosyn unit's USB gadget. The hardware id is
+// the authority, since it comes from the device itself and survives any driver choice; the driver
+// description is what identifies a stock unit, whose RNDIS gadget Windows binds under its own
+// vendor and product ids.
+func isGadgetAdapter(a adapter) bool {
+	if strings.Contains(strings.ToUpper(a.PnPDeviceID), gadgetHardwareID) {
+		return true
+	}
+
+	return isUSBNet(a.InterfaceDescription)
 }
 
 // isUSBNet reports whether an adapter's driver description marks it as a USB

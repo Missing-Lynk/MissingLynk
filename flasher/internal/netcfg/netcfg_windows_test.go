@@ -265,3 +265,100 @@ func TestNonASCIIDeviceNameSurvives(t *testing.T) {
 		t.Fatalf("Name = %q, want the umlaut intact", devices[0].Name)
 	}
 }
+
+// A device Windows could not read the descriptors of is filed under the placeholder
+// VID_0000, and needs the enumeration explanation rather than the driver fix.
+func TestIsDescriptorFailure(t *testing.T) {
+	yes := []pnpDevice{
+		{InstanceID: `USB\VID_0000&PID_0002\7&63B41E3&0&1`},
+		{InstanceID: `usb\vid_0000&pid_0001\x`},
+	}
+	for _, device := range yes {
+		if !isDescriptorFailure(device) {
+			t.Errorf("isDescriptorFailure(%q) = false, want true", device.InstanceID)
+		}
+	}
+
+	no := []pnpDevice{
+		{InstanceID: `USB\VID_1D6B&PID_0104\6&1`},
+		{InstanceID: `PCI\VEN_0000&DEV_0002`},
+		{InstanceID: ""},
+	}
+	for _, device := range no {
+		if isDescriptorFailure(device) {
+			t.Errorf("isDescriptorFailure(%q) = true, want false", device.InstanceID)
+		}
+	}
+}
+
+// The descriptor-failure report must say the driver fix does not apply, and must not
+// offer the RNDIS one alongside it.
+func TestProblemLinesDescriptorFailure(t *testing.T) {
+	code := 43
+	lines := strings.Join(problemLines([]pnpDevice{{
+		Name:       "Unbekanntes USB-Gerät (Fehler beim Anfordern einer Gerätebeschreibung.)",
+		Status:     "Error",
+		InstanceID: `USB\VID_0000&PID_0002\7&63B41E3&0&1`,
+		Problem:    &code,
+	}}), "\n")
+
+	for _, want := range []string{"problem 43", "enumeration failure", "installing a driver cannot fix it"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("problemLines() = %q, want it to contain %q", lines, want)
+		}
+	}
+
+	if strings.Contains(lines, "Remote NDIS Compatible") {
+		t.Errorf("problemLines() = %q, want no RNDIS driver fix for a descriptor failure", lines)
+	}
+}
+
+// The hardware id identifies the gadget whatever driver bound to it, which is the case a
+// description-only match misses: a third-party CDC-ECM driver names itself whatever it likes.
+func TestIsGadgetAdapter(t *testing.T) {
+	yes := []adapter{
+		{InterfaceDescription: "Remote NDIS Compatible Device", PnPDeviceID: `PCI\VEN_8086`},
+		{InterfaceDescription: "CDC ECM Device", PnPDeviceID: `USB\VID_1D6B&PID_0104\6&1&2`},
+		{InterfaceDescription: "Vendor Networking Adapter", PnPDeviceID: `usb\vid_1d6b&pid_0104\x`},
+	}
+	for _, a := range yes {
+		if !isGadgetAdapter(a) {
+			t.Errorf("isGadgetAdapter(%q, %q) = false, want true", a.InterfaceDescription, a.PnPDeviceID)
+		}
+	}
+
+	no := []adapter{
+		{InterfaceDescription: "Realtek Gaming 2.5GbE Family Controller", PnPDeviceID: `PCI\VEN_10EC`},
+		{InterfaceDescription: "Hyper-V Virtual Ethernet Adapter", PnPDeviceID: `ROOT\VMS_MP\0000`},
+		{InterfaceDescription: "Some USB Dock", PnPDeviceID: `USB\VID_0BDA&PID_8153\1`},
+	}
+	for _, a := range no {
+		if isGadgetAdapter(a) {
+			t.Errorf("isGadgetAdapter(%q, %q) = true, want false", a.InterfaceDescription, a.PnPDeviceID)
+		}
+	}
+}
+
+// The adapter report has to carry the hardware id of every adapter, so a gadget the description
+// match missed can be recognized from the report alone.
+func TestAdapterLinesReportHardwareID(t *testing.T) {
+	lines := strings.Join(adapterLines([]adapter{
+		{Name: "Ethernet 4", InterfaceDescription: "CDC ECM Device", Status: "Up",
+			PnPDeviceID: `USB\VID_1D6B&PID_0104\6&1&2`},
+	}), "\n")
+
+	for _, want := range []string{`USB\VID_1D6B&PID_0104\6&1&2`, "matches a USB gadget"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("adapterLines() = %q, want it to contain %q", lines, want)
+		}
+	}
+
+	unmatched := strings.Join(adapterLines([]adapter{
+		{Name: "Ethernet", InterfaceDescription: "Realtek Gaming 2.5GbE Family Controller",
+			Status: "Up", PnPDeviceID: `PCI\VEN_10EC`},
+	}), "\n")
+
+	if !strings.Contains(unmatched, gadgetHardwareID) {
+		t.Errorf("adapterLines() = %q, want the hardware id named when nothing matched", unmatched)
+	}
+}
